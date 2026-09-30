@@ -58,3 +58,134 @@ class FakeSession:
         if isinstance(item, Exception):
             raise item
         return item
+
+
+def ts(minute, hour=10):
+    """A Notion-style timestamp on 2026-09-30."""
+    return f"2026-09-30T{hour:02d}:{minute:02d}:00.000Z"
+
+
+def make_page(page_id, edited, in_trash=False, title="Title"):
+    return {
+        "object": "page",
+        "id": page_id,
+        "created_time": ts(0, hour=8),
+        "last_edited_time": edited,
+        "created_by": {"object": "user", "id": "u1"},
+        "last_edited_by": {"object": "user", "id": "u1"},
+        "in_trash": in_trash,
+        "parent": {"type": "workspace", "workspace": True},
+        "url": f"https://www.notion.so/{page_id}",
+        "public_url": None,
+        "properties": {"Name": {"type": "title", "title": [{"plain_text": title}]}},
+    }
+
+
+def make_data_source(source_id, edited, in_trash=False, title="Source"):
+    return {
+        "object": "data_source",
+        "id": source_id,
+        "created_time": ts(0, hour=8),
+        "last_edited_time": edited,
+        "in_trash": in_trash,
+        "parent": {"type": "database_id", "database_id": f"db-{source_id}"},
+        "url": f"https://www.notion.so/{source_id}",
+        "title": [{"plain_text": title}],
+    }
+
+
+def make_block(block_id, type="paragraph", has_children=False, edited=None, **extra):
+    block = {
+        "object": "block",
+        "id": block_id,
+        "type": type,
+        "has_children": has_children,
+        "created_time": ts(0, hour=8),
+        "last_edited_time": edited or ts(0, hour=9),
+        "in_trash": False,
+        "parent": {"type": "page_id", "page_id": "unknown"},
+        type: {},
+    }
+    block.update(extra)
+    return block
+
+
+def make_user(user_id, name="User", email=None):
+    if email:
+        return {"object": "user", "id": user_id, "type": "person", "name": name, "person": {"email": email}}
+    return {"object": "user", "id": user_id, "type": "bot", "name": name, "bot": {}}
+
+
+class FakeNotion:
+    """An in-memory Notion workspace that answers the endpoints the connector calls.
+
+    Use it as the ``session`` of a NotionClient. ``blocks`` maps a parent id
+    (page or block) to its list of child blocks. Set ``errors[path]`` to a
+    FakeResponse to make that path fail.
+    """
+
+    def __init__(self, pages=(), data_sources=(), blocks=None, users=(), page_size=100):
+        self.pages = list(pages)
+        self.data_sources = list(data_sources)
+        self.blocks = dict(blocks or {})
+        self.users = list(users)
+        self.page_size = page_size
+        self.calls = []
+        self.errors = {}
+
+    def request(self, method, url, headers=None, json=None, params=None, timeout=None):
+        path = url.replace("https://api.notion.com", "")
+        self.calls.append((method, path, json, params))
+        if path in self.errors:
+            return self.errors[path]
+        if path == "/v1/users/me":
+            return FakeResponse(200, {"object": "user", "id": "bot", "type": "bot"})
+        if path == "/v1/users":
+            return self._listing(self.users, params or {})
+        if path == "/v1/search":
+            wanted = json["filter"]
+            pool = self.pages if wanted["value"] == "page" else self.data_sources
+            trashed = bool(wanted.get("in_trash", False))
+            # Objects without last_edited_time model partial responses; they sort last.
+            items = [o for o in pool if bool(o.get("in_trash", False)) == trashed]
+            items.sort(key=lambda o: o.get("last_edited_time", ""), reverse=True)
+            return self._listing(items, json)
+        if path.startswith("/v1/blocks/") and path.endswith("/children"):
+            parent_id = path.split("/")[3]
+            if parent_id in self.blocks:
+                return self._listing(self.blocks[parent_id], params or {})
+            if any(p["id"] == parent_id for p in self.pages):
+                return self._listing([], params or {})
+            return error_response(404, "object_not_found", "Could not find block")
+        return error_response(404, "object_not_found", f"no route for {path}")
+
+    def _listing(self, items, args):
+        size = min(int(args.get("page_size", 100)), self.page_size)
+        start = int(args.get("start_cursor") or 0)
+        chunk = items[start : start + size]
+        more = start + size < len(items)
+        return FakeResponse(
+            200,
+            {
+                "object": "list",
+                "results": chunk,
+                "has_more": more,
+                "next_cursor": str(start + size) if more else None,
+            },
+        )
+
+    def search_calls(self, value=None):
+        calls = [body for method, path, body, _ in self.calls if path == "/v1/search"]
+        if value is None:
+            return calls
+        return [body for body in calls if body["filter"]["value"] == value]
+
+    def block_calls(self):
+        return [path.split("/")[3] for _, path, _, _ in self.calls if path.endswith("/children")]
+
+
+def client_for(fake):
+    from notion_connector.client import NotionClient
+
+    fake_time = FakeTime()
+    return NotionClient("secret_token", session=fake, sleep=fake_time.sleep, clock=fake_time.clock)
