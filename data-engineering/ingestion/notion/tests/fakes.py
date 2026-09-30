@@ -255,3 +255,84 @@ class FakeSpark:
     def createDataFrame(self, data, schema=None):
         self.schemas.append(schema)
         return _FakeFrame(self, list(data), schema)
+
+
+def _dedupe(rows, key, order_by):
+    best = {}
+    for row in rows:
+        identity = tuple(row[column] for column in key)
+        current = best.get(identity)
+        if current is None or row[order_by] >= current[order_by]:
+            best[identity] = row
+    return list(best.values())
+
+
+class InMemoryWriter:
+    """Same methods and semantics as load.Writer, holding tables as lists of dicts."""
+
+    def __init__(self):
+        self.tables = {}
+        self.schema_ensured = False
+        self.fail_on = set()
+        self.operations = []
+
+    def ensure_schema(self):
+        self.schema_ensured = True
+
+    def _consume(self, operation, name, rows, columns):
+        rows = list(rows)
+        expected = [column for column, _ in columns]
+        for row in rows:
+            assert list(row) == expected, f"{name}: row keys do not match the declared columns"
+        if name in self.fail_on:
+            raise RuntimeError(f"write to {name} failed")
+        self.operations.append((operation, name, len(rows)))
+        return rows
+
+    def overwrite(self, name, rows, columns, key=("id",), order_by="_ingested_at"):
+        rows = self._consume("overwrite", name, rows, columns)
+        self.tables[name] = _dedupe(rows, key, order_by)
+        return len(rows)
+
+    def merge(self, name, rows, columns, key=("id",), order_by="last_edited_time"):
+        rows = self._consume("merge", name, rows, columns)
+        incoming = _dedupe(rows, key, order_by)
+        touched = {tuple(row[column] for column in key) for row in incoming}
+        kept = [r for r in self.tables.get(name, []) if tuple(r[column] for column in key) not in touched]
+        self.tables[name] = kept + incoming
+        return len(rows)
+
+    def replace_pages(self, name, rows, columns, page_ids, key=("page_id", "id"), order_by="last_edited_time"):
+        rows = self._consume("replace_pages", name, rows, columns)
+        replaced = set(page_ids)
+        kept = [r for r in self.tables.get(name, []) if r["page_id"] not in replaced]
+        self.tables[name] = kept + _dedupe(rows, key, order_by)
+        return len(rows)
+
+    def ids(self, name):
+        return sorted(row["id"] for row in self.tables.get(name, []))
+
+
+class InMemoryState:
+    def __init__(self):
+        self.rows = {}
+        self.ensured = False
+
+    def ensure(self):
+        self.ensured = True
+
+    def get(self, object_name):
+        row = self.rows.get(object_name)
+        return row["watermark"] if row else None
+
+    def record_success(self, object_name, mode, rows, watermark, run_at):
+        self.rows[object_name] = {
+            "watermark": watermark, "last_mode": mode, "last_status": "SUCCESS",
+            "last_rows": rows, "last_run_at": run_at, "last_error": None,
+        }
+
+    def record_failure(self, object_name, mode, error, run_at):
+        self.rows[object_name] = {
+            "watermark": self.get(object_name), "last_mode": mode, "last_status": "FAILED",
+            "last_rows": 0, "last_run_at": run_at, "last_error": error,
+        }

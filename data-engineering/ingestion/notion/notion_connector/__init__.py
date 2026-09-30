@@ -3,5 +3,15 @@
 """Notion -> Oracle AI Data Platform ingestion sample."""
 
 from .config import Config, ConfigError, load_config, parse_config
+from .runner import NotionAuthError, format_summary, raise_on_failure, run
 
-__all__ = ["Config", "ConfigError", "load_config", "parse_config"]
+__all__ = [
+    "Config",
+    "ConfigError",
+    "NotionAuthError",
+    "format_summary",
+    "load_config",
+    "parse_config",
+    "raise_on_failure",
+    "run",
+]
