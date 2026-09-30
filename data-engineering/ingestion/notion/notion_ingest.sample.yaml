@@ -1,0 +1,44 @@
+# =====================================================================
+#  Notion -> AIDP ingestion: deployment configuration
+#
+#  Copy to notion_ingest.yaml and edit. Holds NO secret: the Notion
+#  token is read at run time from the AIDP Credential Store (or, for
+#  local runs, from an environment variable). Safe to version and share.
+# =====================================================================
+
+notion:
+  # AIDP Credential Store entry that holds the Notion integration secret.
+  # Leave it out to read the token from the environment variable below.
+  credential_name: notion_token
+  credential_key: secret
+
+  # Used only when credential_name is not set.
+  token_env: NOTION_TOKEN
+
+  # Keep the quotes: an unquoted date is still accepted, but quoting avoids surprises.
+  api_version: "2026-03-11"
+
+  # Notion allows 3 requests/second per integration (10 on Business and Enterprise).
+  requests_per_second: 3
+
+target:
+  catalog: my_catalog        # must already exist
+  schema: notion_raw         # created if missing
+  table_prefix: ""           # e.g. "notion_" gives notion_pages, notion_blocks, ...
+
+sync:
+  # cdc  - only what changed since the last successful run (default)
+  # full - reload everything and purge what is gone from Notion
+  # A job parameter MODE overrides this for a single run.
+  mode: cdc
+
+  # Any of: pages, data_sources, blocks, users
+  objects:
+    - pages
+    - data_sources
+    - blocks
+    - users
+
+  # CDC re-reads this many seconds before the last watermark. Notion rounds
+  # edit times to the minute, so keep it at 120 or more.
+  overlap_seconds: 120
