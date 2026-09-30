@@ -189,3 +189,69 @@ def client_for(fake):
 
     fake_time = FakeTime()
     return NotionClient("secret_token", session=fake, sleep=fake_time.sleep, clock=fake_time.clock)
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def collect(self):
+        return list(self._rows)
+
+
+class _FakeWriter:
+    def __init__(self, spark, rows):
+        self._spark = spark
+        self._rows = rows
+        self._mode = None
+
+    def format(self, _name):
+        return self
+
+    def mode(self, mode):
+        self._mode = mode
+        return self
+
+    def saveAsTable(self, table):
+        self._spark.saved.append((table, self._rows, self._mode))
+
+
+class _FakeFrame:
+    def __init__(self, spark, rows, schema):
+        self._spark = spark
+        self.rows = rows
+        self.schema = schema
+
+    @property
+    def write(self):
+        return _FakeWriter(self._spark, self.rows)
+
+    def createOrReplaceTempView(self, name):
+        self._spark.views[name] = self.rows
+
+
+class FakeSpark:
+    """Records SQL and DataFrame writes. ``results`` is a list of
+    (substring, rows): the first entry whose substring occurs in a statement
+    supplies what ``.collect()`` returns for it."""
+
+    def __init__(self, results=()):
+        self.statements = []
+        self.saved = []
+        self.views = {}
+        self.schemas = []
+        self.fail_on = None
+        self._results = list(results)
+
+    def sql(self, statement):
+        self.statements.append(statement)
+        if self.fail_on and self.fail_on in statement:
+            raise RuntimeError(f"simulated failure: {self.fail_on}")
+        for fragment, rows in self._results:
+            if fragment in statement:
+                return _FakeResult(rows)
+        return _FakeResult([])
+
+    def createDataFrame(self, data, schema=None):
+        self.schemas.append(schema)
+        return _FakeFrame(self, list(data), schema)
