@@ -1,0 +1,19 @@
+{
+  "connector": "jira",
+  "row": 1,
+  "date": "2026-09-30",
+  "status": "PASS",
+  "checks": {
+    "row_count_matches_jira_ui": "pass",
+    "no_duplicates_small_page_size": "pass",
+    "incremental_rerun_single_row_updated": "pass",
+    "no_errors_no_credential_leak": "pass"
+  },
+  "not_captured": {
+    "spark_version": null,
+    "python_version": null,
+    "java_version": null,
+    "credential_method": null
+  },
+  "notes": "Reported by the user as \"works end to end\"; the four LIVE_TEST_GUIDE.md Step 4 checks were individually confirmed as passing, but runtime versions and credential method (plain env vars vs. OCI Vault) were not captured this run."
+}
