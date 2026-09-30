@@ -101,6 +101,13 @@ def test_server_error_is_retried_with_backoff():
     assert 1 in fake_time.sleeps and 2 in fake_time.sleeps
 
 
+def test_default_retry_budget_rides_out_a_minute_of_errors():
+    client, session, fake_time = make([error_response(503, "service_unavailable")] * 7 + [FakeResponse(200, {"ok": 1})])
+    assert client.request("GET", "/v1/users/me") == {"ok": 1}
+    assert len(session.calls) == 8
+    assert sum(fake_time.sleeps) >= 60
+
+
 def test_server_error_exhausts_attempts():
     client, session, _ = make([error_response(500, "internal_server_error")] * 3, max_attempts=3)
     with pytest.raises(NotionApiError) as caught:

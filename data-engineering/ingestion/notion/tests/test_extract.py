@@ -2,7 +2,10 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 from datetime import datetime, timezone
 
-from fakes import FakeNotion, client_for, make_block, make_data_source, make_page, make_user, ts
+import pytest
+
+from fakes import FakeNotion, client_for, error_response, make_block, make_data_source, make_page, make_user, ts
+from notion_connector.client import NotionApiError
 from notion_connector.extract import iter_page_blocks, iter_search, iter_users
 
 
@@ -96,6 +99,24 @@ def test_block_walk_ignores_a_block_seen_twice():
     looping = make_block("loop", has_children=True)
     fake = FakeNotion(blocks={"page": [looping], "loop": [looping]})
     assert ids(b for b, _, _ in iter_page_blocks(client_for(fake), "page")) == ["loop"]
+
+
+def test_unreadable_nested_block_skips_only_its_subtree():
+    fake = FakeNotion(
+        blocks={
+            "page": [make_block("b1", has_children=True), make_block("b2", has_children=True)],
+            "b2": [make_block("b2a")],
+        }
+    )
+    fake.errors["/v1/blocks/b1/children"] = error_response(404, "object_not_found")
+    assert ids(b for b, _, _ in iter_page_blocks(client_for(fake), "page")) == ["b1", "b2", "b2a"]
+
+
+def test_unreadable_page_root_raises():
+    fake = FakeNotion()
+    with pytest.raises(NotionApiError) as caught:
+        list(iter_page_blocks(client_for(fake), "missing-page"))
+    assert caught.value.status == 404
 
 
 def test_iter_users():

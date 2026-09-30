@@ -32,7 +32,7 @@ class NotionClient:
         session: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
-        max_attempts: int = 5,
+        max_attempts: int = 8,
         max_rate_limit_waits: int = 20,
         timeout: int = 60,
     ):

@@ -271,6 +271,19 @@ def test_page_that_vanishes_before_its_walk_is_skipped():
     assert harness.writer.ids("blocks") == ["b1"]
 
 
+def test_unreadable_nested_block_keeps_the_rest_of_the_page():
+    fake = FakeNotion(
+        pages=[make_page("p1", ts(5))],
+        blocks={"p1": [make_block("b1", has_children=True), make_block("b2")]},
+    )
+    fake.errors["/v1/blocks/b1/children"] = error_response(404, "object_not_found")
+    harness = Harness(fake)
+    result = harness.run(["blocks"])
+    assert result["blocks"]["status"] == "SUCCESS"
+    assert result["blocks"]["note"] == "first run"
+    assert harness.writer.ids("blocks") == ["b1", "b2"]
+
+
 def test_block_walk_server_error_fails_the_object():
     fake = FakeNotion(pages=[make_page("p1", ts(5))])
     fake.errors["/v1/blocks/p1/children"] = error_response(400, "validation_error")

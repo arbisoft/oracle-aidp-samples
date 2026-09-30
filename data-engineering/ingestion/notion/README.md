@@ -60,11 +60,13 @@ Unknown keys and unknown object names are rejected, so a typo fails fast instead
 
 ## Known limits
 
-- **Speed.** Requests run on the Spark driver, one at a time, within Notion's rate limit. Blocks need at least one request per page: a first load of 10,000 pages takes roughly an hour at 3 requests/second.
+- **Speed.** Requests run on the Spark driver, one at a time, within Notion's rate limit. Blocks need at least one request per page: a first load of 10,000 pages takes roughly an hour at 3 requests/second. There is no checkpoint inside an object: if a load fails part-way, the next run starts that object again. Server errors and dropped connections are retried for about a minute and a half before a request gives up.
 - **Deletes.** CDC sees trashing, but not permanent deletion or content that was un-shared from the integration. Run a full refresh periodically to purge.
 - **Users.** No change tracking, and Notion's user list does not include guests.
 - **Comments** are not ingested.
-- **Search lag.** Notion search is eventually consistent; an edit made seconds before a run may arrive on the next run.
+- **Search lag.** Notion search is eventually consistent. An edit made shortly before a run arrives on the next run, as long as it is indexed within `sync.overlap_seconds` of any newer edit the connector has already seen. An edit indexed later than that is missed by CDC and only picked up by a full refresh. Raise `overlap_seconds` if you see this (each run then re-reads more), and schedule a periodic full refresh.
+- **One run at a time.** Do not let two runs for the same target overlap: set the job's concurrency to 1. Staging tables are per run, but both runs would still write the same target tables and watermarks.
+- **Unreadable nested blocks.** If Notion returns 403 or 404 for the children of a block inside a readable page, that block is kept and its children are skipped.
 - **Block replacement** in CDC is a delete followed by an insert. If a run dies between the two, the watermark is not advanced and the next run repeats it.
 - **Synced blocks.** The original synced block's children are ingested; references to it are recorded without their children.
 - **Schema changes.** Table schemas are fixed. If a later version adds a column, drop the tables and run a full refresh.

@@ -7,12 +7,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Iterator, Optional, Tuple
 
+from .client import NotionApiError
 from .records import parse_time
 
 SEARCH_PATH = "/v1/search"
 USERS_PATH = "/v1/users"
 # Their content belongs to another page or data source, which search returns on its own.
 _NEVER_DESCEND = ("child_page", "child_database")
+_UNREADABLE_STATUSES = (403, 404)
 
 
 def iter_search(
@@ -46,19 +48,29 @@ def iter_search(
 
 
 def iter_page_blocks(client: Any, page_id: str) -> Iterator[Tuple[Dict[str, Any], int, int]]:
-    """Yield ``(block, depth, position)`` for every block under a page, depth-first."""
+    """Yield ``(block, depth, position)`` for every block under a page, depth-first.
+
+    A 403 or 404 on the page itself is raised: the page is gone or no longer
+    shared. The same error on a nested block only skips that block's children,
+    so one unreadable subtree does not cost the page the rest of its blocks.
+    """
     seen = set()
 
     def walk(parent_id: str, depth: int) -> Iterator[Tuple[Dict[str, Any], int, int]]:
         children = client.paginate("GET", f"/v1/blocks/{parent_id}/children")
-        for position, block in enumerate(children):
-            block_id = block.get("id")
-            if block_id in seen:
-                continue
-            seen.add(block_id)
-            yield block, depth, position
-            if block.get("has_children") and _should_descend(block):
-                yield from walk(block_id, depth + 1)
+        try:
+            for position, block in enumerate(children):
+                block_id = block.get("id")
+                if block_id in seen:
+                    continue
+                seen.add(block_id)
+                yield block, depth, position
+                if block.get("has_children") and _should_descend(block):
+                    yield from walk(block_id, depth + 1)
+        except NotionApiError as exc:
+            if depth > 0 and exc.status in _UNREADABLE_STATUSES:
+                return
+            raise
 
     yield from walk(page_id, 0)
 

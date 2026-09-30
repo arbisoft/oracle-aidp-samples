@@ -13,7 +13,8 @@ values always travel through DataFrames.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Sequence, Tuple
+import uuid
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
 Column = Tuple[str, str]
 
@@ -23,10 +24,13 @@ def ddl(columns: Sequence[Column]) -> str:
 
 
 class Writer:
-    def __init__(self, spark: Any, target: Any, batch_size: int = 5000):
+    def __init__(self, spark: Any, target: Any, batch_size: int = 5000, run_id: Optional[str] = None):
         self._spark = spark
         self._target = target
         self._batch_size = batch_size
+        # Staging tables carry a per-run suffix so two overlapping runs cannot
+        # drop or read each other's staging data.
+        self._run_id = run_id or uuid.uuid4().hex[:8]
 
     def ensure_schema(self) -> None:
         self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self._target.qualified_schema}")
@@ -41,7 +45,7 @@ class Writer:
     ) -> int:
         """Replace the whole table with ``rows``."""
         table = self._target.table(name)
-        staging = table + "__staging"
+        staging = f"{table}__staging_{self._run_id}"
         self._create(table, columns)
         try:
             count = self._stage(staging, rows, columns)
@@ -61,7 +65,7 @@ class Writer:
     ) -> int:
         """Upsert ``rows`` into the table on ``key``."""
         table = self._target.table(name)
-        staging = table + "__staging"
+        staging = f"{table}__staging_{self._run_id}"
         self._create(table, columns)
         try:
             count = self._stage(staging, rows, columns)
@@ -91,13 +95,17 @@ class Writer:
         caller does not advance its watermark, so the next run repeats this.
         """
         table = self._target.table(name)
-        staging = table + "__staging"
-        ids_staging = table + "__pages_staging"
+        staging = f"{table}__staging_{self._run_id}"
+        ids_staging = f"{table}__pages_staging_{self._run_id}"
         self._create(table, columns)
         try:
             count = self._stage(staging, rows, columns)
             self._stage(ids_staging, ({"page_id": page_id} for page_id in page_ids), (("page_id", "STRING"),))
-            self._spark.sql(f"DELETE FROM {table} WHERE page_id IN (SELECT page_id FROM {ids_staging})")
+            # Delta rejects a subquery in a DELETE condition, so delete through a MERGE.
+            self._spark.sql(
+                f"MERGE INTO {table} t USING (SELECT DISTINCT page_id FROM {ids_staging}) s "
+                "ON t.page_id = s.page_id WHEN MATCHED THEN DELETE"
+            )
             self._spark.sql(f"INSERT INTO {table} {self._deduplicated(staging, columns, key, order_by)}")
         finally:
             self._drop(staging)

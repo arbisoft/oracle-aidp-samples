@@ -21,16 +21,16 @@ def test_ddl():
 
 def test_ensure_schema():
     spark = FakeSpark()
-    Writer(spark, TARGET).ensure_schema()
+    Writer(spark, TARGET, run_id="r1").ensure_schema()
     assert spark.statements == ["CREATE SCHEMA IF NOT EXISTS lake.notion_raw"]
 
 
 def test_overwrite_stages_in_batches_then_swaps():
     spark = FakeSpark()
-    count = Writer(spark, TARGET, batch_size=2).overwrite("pages", iter(rows(5)), COLUMNS)
+    count = Writer(spark, TARGET, batch_size=2, run_id="r1").overwrite("pages", iter(rows(5)), COLUMNS)
     assert count == 5
     assert [len(batch) for _, batch, _ in spark.saved] == [2, 2, 1]
-    assert {table for table, _, _ in spark.saved} == {"lake.notion_raw.n_pages__staging"}
+    assert {table for table, _, _ in spark.saved} == {"lake.notion_raw.n_pages__staging_r1"}
     assert {mode for _, _, mode in spark.saved} == {"append"}
     assert spark.saved[0][1][0] == ("r0", 0, 0)  # tuples in column order
     assert spark.schemas[0] == ddl(COLUMNS)
@@ -39,19 +39,19 @@ def test_overwrite_stages_in_batches_then_swaps():
     final = [s for s in spark.statements if s.startswith("INSERT OVERWRITE TABLE lake.notion_raw.n_pages ")]
     assert len(final) == 1
     assert "PARTITION BY id ORDER BY _ingested_at DESC" in final[0]
-    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging"
+    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging_r1"
 
 
 def test_overwrite_with_no_rows_still_empties_the_table():
     spark = FakeSpark()
-    assert Writer(spark, TARGET).overwrite("pages", [], COLUMNS) == 0
+    assert Writer(spark, TARGET, run_id="r1").overwrite("pages", [], COLUMNS) == 0
     assert spark.saved == []
     assert any(s.startswith("INSERT OVERWRITE TABLE lake.notion_raw.n_pages ") for s in spark.statements)
 
 
 def test_merge_deduplicates_the_source():
     spark = FakeSpark()
-    assert Writer(spark, TARGET).merge("pages", rows(3), COLUMNS) == 3
+    assert Writer(spark, TARGET, run_id="r1").merge("pages", rows(3), COLUMNS) == 3
     merge = [s for s in spark.statements if s.startswith("MERGE INTO")]
     assert len(merge) == 1
     assert merge[0].startswith("MERGE INTO lake.notion_raw.n_pages t USING (SELECT id, last_edited_time, _ingested_at FROM (")
@@ -65,34 +65,47 @@ def test_merge_deduplicates_the_source():
 def test_replace_pages_deletes_then_inserts():
     spark = FakeSpark()
     block_rows = [{"id": "b1", "page_id": "p1", "last_edited_time": 1}]
-    count = Writer(spark, TARGET).replace_pages("blocks", block_rows, BLOCK_COLUMNS, ["p1", "p2"])
+    count = Writer(spark, TARGET, run_id="r1").replace_pages("blocks", block_rows, BLOCK_COLUMNS, ["p1", "p2"])
     assert count == 1
-    ids_table = "lake.notion_raw.n_blocks__pages_staging"
+    ids_table = "lake.notion_raw.n_blocks__pages_staging_r1"
     assert (ids_table, [("p1",), ("p2",)], "append") in spark.saved
-    delete = f"DELETE FROM lake.notion_raw.n_blocks WHERE page_id IN (SELECT page_id FROM {ids_table})"
+    # Delta rejects a subquery in a DELETE condition, so the delete is a MERGE.
+    delete = (
+        f"MERGE INTO lake.notion_raw.n_blocks t USING (SELECT DISTINCT page_id FROM {ids_table}) s "
+        "ON t.page_id = s.page_id WHEN MATCHED THEN DELETE"
+    )
+    assert not any(statement.startswith("DELETE") for statement in spark.statements)
     insert = [s for s in spark.statements if s.startswith("INSERT INTO lake.notion_raw.n_blocks ")]
     assert delete in spark.statements
     assert len(insert) == 1
     assert "PARTITION BY page_id, id ORDER BY last_edited_time DESC" in insert[0]
     assert spark.statements.index(delete) < spark.statements.index(insert[0])
     assert spark.statements[-2:] == [
-        "DROP TABLE IF EXISTS lake.notion_raw.n_blocks__staging",
+        "DROP TABLE IF EXISTS lake.notion_raw.n_blocks__staging_r1",
         f"DROP TABLE IF EXISTS {ids_table}",
     ]
 
 
 def test_replace_pages_with_no_rows_still_deletes():
     spark = FakeSpark()
-    Writer(spark, TARGET).replace_pages("blocks", [], BLOCK_COLUMNS, ["p1"])
-    assert any(s.startswith("DELETE FROM lake.notion_raw.n_blocks ") for s in spark.statements)
+    Writer(spark, TARGET, run_id="r1").replace_pages("blocks", [], BLOCK_COLUMNS, ["p1"])
+    assert any(s.endswith("WHEN MATCHED THEN DELETE") for s in spark.statements)
+
+
+def test_staging_names_differ_between_runs():
+    first, second = FakeSpark(), FakeSpark()
+    Writer(first, TARGET).overwrite("pages", rows(1), COLUMNS)
+    Writer(second, TARGET).overwrite("pages", rows(1), COLUMNS)
+    assert first.saved[0][0].startswith("lake.notion_raw.n_pages__staging_")
+    assert first.saved[0][0] != second.saved[0][0]
 
 
 def test_staging_is_dropped_when_the_final_statement_fails():
     spark = FakeSpark()
     spark.fail_on = "MERGE INTO"
     with pytest.raises(RuntimeError, match="simulated failure"):
-        Writer(spark, TARGET).merge("pages", rows(1), COLUMNS)
-    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging"
+        Writer(spark, TARGET, run_id="r1").merge("pages", rows(1), COLUMNS)
+    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging_r1"
 
 
 def test_staging_is_dropped_when_the_row_source_fails():
@@ -102,6 +115,6 @@ def test_staging_is_dropped_when_the_row_source_fails():
 
     spark = FakeSpark()
     with pytest.raises(RuntimeError, match="notion went away"):
-        Writer(spark, TARGET).overwrite("pages", broken(), COLUMNS)
+        Writer(spark, TARGET, run_id="r1").overwrite("pages", broken(), COLUMNS)
     assert not any(s.startswith("INSERT OVERWRITE") for s in spark.statements)
-    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging"
+    assert spark.statements[-1] == "DROP TABLE IF EXISTS lake.notion_raw.n_pages__staging_r1"
