@@ -80,4 +80,4 @@ python -m venv .venv && .venv/bin/pip install pytest requests pyyaml
 
 The unit tests need no network and no Spark. They cover configuration, the HTTP client, extraction, row mapping, the generated SQL, watermark handling and the full/CDC logic, using an in-memory Notion and in-memory tables.
 
-**Validation status:** unit-tested only. The Delta statements in `load.py` and `state.py` and an end-to-end run against a real Notion workspace have not yet been exercised on an AIDP cluster.
+**Validation status:** unit-tested, and the full/CDC flow (first load, edit, trash, no-change, full refresh) has been run against local open-source Spark 3.5.3 with Delta Lake 3.2.1 using a simulated Notion API. It has not yet been run on an AIDP cluster or against a live Notion workspace.
