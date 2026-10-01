@@ -49,8 +49,14 @@ data-engineering/ingestion/<Source>/
 ```
 
 `<Source>` in `Title_Snake_Case`, the same for folder and notebook
-(`Jira_Cloud/Jira_Cloud.ipynb`, `MongoDB_Atlas/MongoDB_Atlas.ipynb`). No
-helper modules, `tests/`, `pytest.ini` or `requirements-dev.txt`.
+(`Jira_Cloud/Jira_Cloud.ipynb`, `MongoDB_Atlas/MongoDB_Atlas.ipynb`). This
+exact layout is **proposed here**, not taken from `main`: no merged sample
+uses it yet. The closest is `Read_excel_data/` (its own folder, a notebook
+plus README and `requirements.txt`, but `read_excel.ipynb` named
+differently); `Connect_Using_Custom_JDBC_Driver.ipynb` and
+`Ingest_from_Multi_Cloud.ipynb` are single files with no folder. The same
+name for folder and notebook keeps the catalog link and the checker simple.
+No helper modules, `tests/`, `pytest.ini` or `requirements-dev.txt`.
 
 ## Notebook template
 
@@ -139,7 +145,7 @@ Verified on AIDP 2026-10-01 (MongoDB live run):
 
 Read secrets from the **AIDP Credential Store**, with a placeholder name:
 ```python
-<SECRET> = aidputils.secrets.get(name="<CREDENTIAL_NAME>", key="<KEY>")
+secret = aidputils.secrets.get(name="<CREDENTIAL_NAME>", key="<KEY>")
 ```
 Prerequisites: "Create a **Secret Token** credential in the Credential Store
 with key `<KEY>`." Verified on AIDP 2026-10-01: `aidputils.secrets.get(name,
@@ -177,8 +183,9 @@ environment-variable setting. No OCI Vault / `oci` SDK path.
 python3 .claude/skills/format-samples-connector/check_sample_notebook.py \
   data-engineering/ingestion/<Source>/<Source>.ipynb
 ```
-Checks the folder layout, the UPL code cell, title, section headings, the
-options table, metadata, empty outputs and placeholder-only credentials, and
+Checks the folder layout, the UPL code cell, title, section headings, a
+`## Prerequisites` section for pattern samples, the options table, metadata,
+empty outputs on every code cell and placeholder-only credentials, and
 warns about parentheses next to inline code in markdown. It
 also accepts Oracle's built-in layout, and passes 17 of the 19 built-in
 connector notebooks on `main` (2026-10-01); the other two are Oracle's own

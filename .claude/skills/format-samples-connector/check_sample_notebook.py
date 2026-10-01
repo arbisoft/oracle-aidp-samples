@@ -53,7 +53,8 @@ def check(path):
         problems.append("file name must be Title_Snake_Case, e.g. Jira_Cloud.ipynb")
     siblings = sorted(p.name for p in path.parent.iterdir()
                       if p != path and not p.name.startswith("."))
-    if path.parent.name in CATEGORIES:  # Oracle's built-in connector layout
+    pattern_sample = path.parent.name not in CATEGORIES
+    if not pattern_sample:  # Oracle's built-in connector layout
         extra = [n for n in siblings if not n.endswith(".ipynb")]
         if extra:
             problems.append("built-in connector folders hold only notebooks; found " + ", ".join(extra))
@@ -80,18 +81,23 @@ def check(path):
     if cells[1]["cell_type"] != "markdown" or not re.fullmatch(r"# .+ Connector Samples", title[0] if title else ""):
         problems.append('cell 2 must be markdown starting "# <Source> Connector Samples"')
 
+    if pattern_sample and not any(c["cell_type"] == "markdown" and _text(c).startswith("## Prerequisites")
+                                  for c in cells):
+        problems.append('a pattern sample needs a "## Prerequisites" markdown section')
+
     last = _text(cells[-1])
     if cells[-1]["cell_type"] != "markdown" or not last.startswith("## Connector Options") \
             or OPTIONS_HEADER not in last:
         problems.append('last cell must be "## Connector Options" with the four-column options table')
 
+    for i, cell in enumerate(cells, start=1):
+        if cell["cell_type"] == "code" and (cell.get("outputs") or cell.get("execution_count") is not None):
+            problems.append("cell {}: clear outputs and execution_count".format(i))
     for i, cell in enumerate(cells[2:], start=3):
         text = _text(cell)
         if cell["cell_type"] == "markdown" and not text.startswith(("## ", "### ")):
             problems.append("cell {}: markdown sections must start with a '## ' or '### ' heading".format(i))
         if cell["cell_type"] == "code":
-            if cell.get("outputs") or cell.get("execution_count") is not None:
-                problems.append("cell {}: clear outputs and execution_count".format(i))
             if SECRET_VALUE.search(text) or CREDENTIAL_URI.search(text):
                 problems.append("cell {}: a credential is not a <PLACEHOLDER>".format(i))
         if cell["cell_type"] == "raw":
