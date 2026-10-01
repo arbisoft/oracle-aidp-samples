@@ -113,7 +113,8 @@ Keep the table's alphabetical order.
 ## Dependencies
 
 - **Jars:** Prerequisites list each jar with its Maven Central link and
-  SHA-256, then: upload to a workspace folder through the UI → cluster
+  SHA-256, then: put them in a workspace folder (uploaded through the UI,
+  or downloaded there by a notebook cell that checks the SHA-256) → cluster
   **Library** tab → **Install Library** → **Workspace** → select →
   **Install**, one at a time → **Actions → Restart**.
 - **Python packages:** a `requirements.txt` in the sample folder, installed
@@ -126,8 +127,6 @@ Keep the table's alphabetical order.
 Verified on AIDP 2026-10-01 (MongoDB live run):
 - `addJar` is not enough for a Spark DataSource: the driver loaded it, every
   executor task failed with `UnknownReason`.
-- Jars written by the driver to `/Workspace/...` did not show in the
-  **Install Library** file picker; jars uploaded through the UI did.
 - Only one library change runs at a time per cluster ("ongoing operation").
 
 ## Credentials
