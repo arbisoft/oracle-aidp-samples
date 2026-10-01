@@ -1,0 +1,2 @@
+# No PyPI packages needed: the MongoDB Spark Connector jars are downloaded at runtime.
+# oci  # only needed for OCI Vault credentials
