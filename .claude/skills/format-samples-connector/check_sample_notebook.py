@@ -28,6 +28,24 @@ def _text(cell):
     return "".join(cell["source"]).strip()
 
 
+CODE_WITH_PARENS = re.compile(r"`[^`\n]*\([^`\n]*`")
+PARENS_WITH_CODE = re.compile(r"\([^()\n]*`[^`\n]*`[^()\n]*\)")
+
+
+def markdown_warnings(cells):
+    """Parentheses inside or around inline code: the AIDP notebook renderer
+    turned these into broken links with URL-encoded text (seen 2026-10-01)."""
+    found = []
+    for i, cell in enumerate(cells, start=1):
+        if cell["cell_type"] != "markdown":
+            continue
+        prose = re.sub(r"```.*?```", "", "".join(cell["source"]), flags=re.S)
+        for match in CODE_WITH_PARENS.findall(prose) + PARENS_WITH_CODE.findall(prose):
+            found.append("cell {}: parentheses next to inline code may render as a broken link: {}"
+                         .format(i, match[:60]))
+    return found
+
+
 def check(path):
     path = Path(path)
     problems = []
@@ -89,6 +107,8 @@ def main(paths):
         print("{}: {}".format(p, "OK" if not problems else "{} problem(s)".format(len(problems))))
         for problem in problems:
             print("  - " + problem)
+        for warning in markdown_warnings(json.loads(Path(p).read_text(encoding="utf-8")).get("cells", [])):
+            print("  warning: " + warning)
     return 1 if failed or not paths else 0
 
 

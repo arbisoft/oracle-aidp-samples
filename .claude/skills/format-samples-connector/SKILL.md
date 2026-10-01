@@ -90,6 +90,12 @@ Cells, in order:
 - DataFrame names `<source>_df`, `<source>_df_pushdown`.
 - Placeholders are `<UPPER_SNAKE_CASE>`. Never a real host, user, catalog,
   OCID, IP or token — not in a comment, not in a saved output.
+- In markdown cells, no parentheses inside inline code and no inline code
+  inside parentheses. The AIDP notebook renderer turned both into broken
+  links with URL-encoded text: `decimal(38, >=10)` showed as
+  `decimal(38,%20%3E=10)`, and a parenthesised code span showed its
+  backticks as `%60` (seen 2026-10-01). Reword without the parentheses, or
+  move code to a fenced block. The checker warns about it.
 - Keep everything the source needs to work correctly (paging, 429 retry,
   timezone handling, a watermark): it moves into cells, compacted, not
   dropped. Drop only scaffolding the notebook has no use for (CLI wrappers,
@@ -172,7 +178,8 @@ python3 .claude/skills/format-samples-connector/check_sample_notebook.py \
   data-engineering/ingestion/<Source>/<Source>.ipynb
 ```
 Checks the folder layout, the UPL code cell, title, section headings, the
-options table, metadata, empty outputs and placeholder-only credentials. It
+options table, metadata, empty outputs and placeholder-only credentials, and
+warns about parentheses next to inline code in markdown. It
 also accepts Oracle's built-in layout, and passes 17 of the 19 built-in
 connector notebooks on `main` (2026-10-01); the other two are Oracle's own
 slips — `DB2.ipynb` (markdown UPL cell) and `Autonomous_AI_Lakehouse.ipynb`
