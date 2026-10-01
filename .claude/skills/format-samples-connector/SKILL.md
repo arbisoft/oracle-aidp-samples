@@ -134,11 +134,20 @@ Keep the table's alphabetical order.
   the notebook — it does not survive a scheduled job
   (`adw-iceberg-external-table-sync/README.md`).
 - Packages already on the cluster need no prerequisite (`requests`).
-- **No runtime jar loading** (`SparkContext.addJar`, class-loader tricks).
+- **A Spark DataSource jar** (a connector read with `format("<name>")`) must
+  be a cluster library, not loaded at runtime with `SparkContext.addJar` or a
+  class-loader helper. Verified on AIDP 2026-10-01 (MongoDB): runtime loading
+  made the connector usable on the driver, but every executor task failed
+  with `UnknownReason`, even a one-row read.
+- **A JDBC driver:** the repo's spark-connectors plugin
+  (`ai/claude-code-plugins/oracle-ai-data-platform-workbench-spark-connectors`,
+  skill `aidp-jdbc-custom`, `runtime_load.py`) recommends loading it at
+  runtime. That is not verified either way here; samples still use cluster
+  libraries, as the existing samples do. Don't present the two as
+  conflicting rules: this skill covers samples, the plugin covers
+  interactive use.
 
-Verified on AIDP 2026-10-01 (MongoDB live run):
-- `addJar` is not enough for a Spark DataSource: the driver loaded it, every
-  executor task failed with `UnknownReason`.
+Also verified on AIDP 2026-10-01:
 - Only one library change runs at a time per cluster ("ongoing operation").
 
 ## Credentials
@@ -183,10 +192,13 @@ environment-variable setting. No OCI Vault / `oci` SDK path.
 python3 .claude/skills/format-samples-connector/check_sample_notebook.py \
   data-engineering/ingestion/<Source>/<Source>.ipynb
 ```
-Checks the folder layout, the UPL code cell, title, section headings, a
-`## Prerequisites` section for pattern samples, the options table, metadata,
-empty outputs on every code cell and placeholder-only credentials, and
-warns about parentheses next to inline code in markdown. It
+Checks that the notebook is under `data-engineering/ingestion/`, the folder
+layout, the UPL code cell, title, section headings, a `## Prerequisites`
+section and the exact kernelspec for pattern samples, the options table,
+empty outputs on every code cell and placeholder-only credentials (option
+names, dictionary keys and variables that look secret), and warns about
+parentheses next to inline code in markdown. `--self-test` runs its
+regression cases. It
 also accepts Oracle's built-in layout, and passes 17 of the 19 built-in
 connector notebooks on `main` (2026-10-01); the other two are Oracle's own
 slips — `DB2.ipynb` (markdown UPL cell) and `Autonomous_AI_Lakehouse.ipynb`
