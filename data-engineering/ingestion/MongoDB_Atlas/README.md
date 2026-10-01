@@ -18,6 +18,7 @@ Install these five jars as cluster libraries, then restart the cluster. The note
 
 Observed on 2026-10-01 on an AIDP cluster (Spark 3.5.0, Python 3.11.13):
 
+- This notebook ran top to bottom against Atlas's `sample_mflix.comments`: the first run loaded 41,079 documents into a new Delta table, and a second run of the incremental load merged into it with no duplicates, 41,079 rows and 41,079 distinct `_id` values.
 - Loading the jars at runtime with `SparkContext.addJar` is not enough: the driver reads, but every executor task fails with `UnknownReason`. Install them as cluster libraries.
 - Only one library change runs at a time per cluster: installing a jar while another install is still running fails with "ongoing operation".
 - Executors cannot resolve `mongodb+srv://` (`Failed looking up TXT record`); the notebook resolves it on the driver.
