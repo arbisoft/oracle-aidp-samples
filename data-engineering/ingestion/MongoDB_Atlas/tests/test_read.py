@@ -105,13 +105,15 @@ def _raising(text):
 
 
 @pytest.mark.parametrize("root, cls, hint", [
-    ("java.lang.ClassNotFoundException: mongodb.DefaultSource", m.MongoError, "load_mongo_connector"),
+    ("java.lang.ClassNotFoundException: mongodb.DefaultSource", m.MongoError, "cluster libraries"),
     ("com.mongodb.MongoCommandException: Command failed with error 8000 (AtlasError): "
      "'bad auth : authentication failed'", m.MongoAuthError, "authentication failed"),
     ("com.mongodb.MongoTimeoutException: Timed out ... {javax.net.ssl.SSLException: (internal_error) "
      "Received fatal alert: internal_error}", m.MongoError, "IP access list"),
     ("com.mongodb.MongoTimeoutException: Timed out ... srvResolutionException="
      "com.mongodb.MongoConfigurationException: Failed looking up SRV record", m.MongoError, "SRV"),
+    ("com.mongodb.MongoConfigurationException: Failed looking up TXT record for host ***",
+     m.MongoError, "resolve_srv"),
     ("com.mongodb.MongoTimeoutException: Timed out while waiting for a server", m.MongoError,
      "could not reach"),
 ])

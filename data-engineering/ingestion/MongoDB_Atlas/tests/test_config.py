@@ -6,23 +6,31 @@ URI = "mongodb+srv://spikeuser:S3cr%40t@cluster0.abcde.mongodb.net/?retryWrites=
 
 
 def test_credentials_from_env_returns_the_uri(monkeypatch):
-    monkeypatch.delenv("OCI_VAULT_ID", raising=False)
     monkeypatch.setenv("MONGODB_URI", URI)
     assert m.credentials_from_env() == URI
 
 
 def test_credentials_from_env_missing_raises_without_leaking(monkeypatch):
-    monkeypatch.delenv("OCI_VAULT_ID", raising=False)
     monkeypatch.delenv("MONGODB_URI", raising=False)
     with pytest.raises(m.MongoError, match="MONGODB_URI"):
         m.credentials_from_env()
 
 
 def test_credentials_from_env_rejects_a_non_mongodb_uri_without_echoing_it(monkeypatch):
-    monkeypatch.delenv("OCI_VAULT_ID", raising=False)
     monkeypatch.setenv("MONGODB_URI", "https://user:pw@example.com")
     with pytest.raises(m.MongoError) as exc:
         m.credentials_from_env()
+    assert "pw" not in str(exc.value) and "example.com" not in str(exc.value)
+
+
+def test_validate_uri_strips_a_credential_store_value():
+    assert m.validate_uri("  mongodb+srv://u:p@h/\n") == "mongodb+srv://u:p@h/"
+
+
+@pytest.mark.parametrize("bad", [None, "", "   ", "https://user:pw@example.com"])
+def test_validate_uri_rejects_a_missing_or_non_mongodb_value_without_echoing_it(bad):
+    with pytest.raises(m.MongoError) as exc:
+        m.validate_uri(bad)
     assert "pw" not in str(exc.value) and "example.com" not in str(exc.value)
 
 

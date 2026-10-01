@@ -1,27 +1,23 @@
 """MongoDB Atlas reader for AIDP notebooks, via the MongoDB Spark Connector.
 
-Read-only. Needs no PyPI package: the connector and driver jars are fetched
-from Maven Central at runtime, SHA-256-pinned, and loaded into the running
-SparkSession. The connection URI comes from OCI Vault or an environment
-variable and is never logged. Upload this single file to a workspace folder,
-put that folder on ``sys.path`` and ``import mongodb_client``; the example
-notebook shows the steps.
+Read-only. The MongoDB Spark Connector and driver jars are installed on the
+cluster as libraries (see README.md). The connection URI comes from the AIDP Credential Store (read in the notebook with
+``aidputils.secrets.get``) or, for local runs, an environment variable, and is
+never logged. Upload this single file to a workspace folder, put that folder
+on ``sys.path`` and ``import mongodb_client``; the example notebook shows the
+steps.
 
-Sections: credential lookup, runtime jar loading, and the MongoDB read
-(pipeline, schema widening, error explanation).
+Sections: connection URI, and the MongoDB read (SRV resolution, pipeline,
+schema widening, error explanation).
 """
 
 from __future__ import annotations
 
-import base64
 import copy
-import hashlib
 import json
 import os
 import re
-import urllib.request
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
 from urllib.parse import unquote
 
 ENV_URI = "MONGODB_URI"
@@ -36,187 +32,23 @@ class MongoAuthError(MongoError):
 
 
 # --------------------------------------------------------------------------
-# Credential lookup: OCI Vault, then environment, then default
+# Connection URI
 # --------------------------------------------------------------------------
 
-_MISSING = object()
-
-
-class SecretNotFoundError(KeyError):
-    """No value found anywhere; ``vault_error`` holds the Vault failure, if any."""
-
-    def __init__(self, message, vault_error=None):
-        super().__init__(message)
-        self.vault_error = vault_error
-
-
-def get_secret(name: str, default: Any = _MISSING, vault_id: Optional[str] = None) -> str:
-    """Resolve ``name`` from OCI Vault, then an environment variable, then ``default``.
-
-    Args:
-        name: The secret name. Used as the Vault secret name (case-sensitive)
-            and, uppercased, as the environment-variable fallback.
-        default: Returned if the secret can't be resolved anywhere. Raises
-            ``KeyError`` instead if left unspecified.
-        vault_id: OCI Vault OCID. Defaults to the ``OCI_VAULT_ID`` environment
-            variable; if neither is set, the Vault step is skipped entirely.
-
-    Returns:
-        The resolved secret value.
-
-    Raises:
-        KeyError: If no value can be resolved and ``default`` is not provided.
-    """
-    vault_id = vault_id or os.environ.get("OCI_VAULT_ID")
-    vault_error = None
-    if vault_id:
-        try:
-            return _get_from_vault(name, vault_id)
-        except Exception as exc:
-            vault_error = exc  # Vault is best-effort; fall through to the environment.
-
-    env_value = os.environ.get(name.upper())
-    if env_value is not None:
-        return env_value
-
-    if default is _MISSING:
-        detail = " (Vault lookup failed: {})".format(vault_error) if vault_error else ""
-        raise SecretNotFoundError(
-            "secret {!r} not found in OCI Vault, environment, or default{}".format(name, detail),
-            vault_error,
-        )
-    return default
-
-
-def _get_from_vault(name: str, vault_id: str) -> str:
-    """Look up ``name`` as a secret in the given OCI Vault.
-
-    Imported lazily so unit tests never need the ``oci`` package installed
-    unless they actually reach this path.
-    """
-    import oci
-
-    config = oci.config.from_file()
-    vaults_client = oci.vault.VaultsClient(config)
-    secrets_client = oci.secrets.SecretsClient(config)
-
-    secrets = oci.pagination.list_call_get_all_results(
-        vaults_client.list_secrets,
-        compartment_id=os.environ.get("OCI_COMPARTMENT_ID") or config.get("tenancy"),
-        vault_id=vault_id,
-    ).data
-    match = next(
-        (s for s in secrets
-         if s.secret_name == name and getattr(s, "lifecycle_state", "ACTIVE") == "ACTIVE"),
-        None,
-    )
-    if match is None:
-        raise KeyError("secret {!r} not in vault {!r}".format(name, vault_id))
-
-    bundle = secrets_client.get_secret_bundle(secret_id=match.id).data
-    content = bundle.secret_bundle_content.content  # base64-encoded
-    return base64.b64decode(content).decode("utf-8")
-
-
-def credentials_from_env() -> str:
-    """Return the ``MONGODB_URI`` connection string (Vault first, then env).
-
-    Secrets are looked up in ``OCI_COMPARTMENT_ID`` if set, else the tenancy
-    root. The value is stripped and never echoed in an error.
-    """
-    try:
-        uri = get_secret(ENV_URI).strip()
-    except KeyError as exc:
-        vault_error = getattr(exc, "vault_error", None)
-        hint = " (Vault lookup failed: {})".format(vault_error) if vault_error else ""
-        raise MongoError("missing environment variable: " + ENV_URI + hint) from None
+def validate_uri(uri) -> str:
+    """Return ``uri`` stripped, or raise MongoError without echoing it."""
+    uri = str(uri or "").strip()
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
-        raise MongoError(ENV_URI + " must start with mongodb:// or mongodb+srv://")
+        raise MongoError("the connection URI must start with mongodb:// or mongodb+srv://")
     return uri
 
 
-# --------------------------------------------------------------------------
-# Runtime jar loading
-# --------------------------------------------------------------------------
-
-# Connector 10.7.0 accepts driver [5.1.1, 5.1.99); these five are its complete
-# non-optional runtime set.
-MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
-JARS = (
-    ("org/mongodb/spark/mongo-spark-connector_2.12/10.7.0/mongo-spark-connector_2.12-10.7.0.jar",
-     "1b0908775a41d72621944a43e36ed83df4dbaff5bf8581811f0b5e9eabeb7cbe"),
-    ("org/mongodb/mongodb-driver-sync/5.1.4/mongodb-driver-sync-5.1.4.jar",
-     "341880078296edd762756440e9d6b1d6d2bf4d6b91975c2638e3da611f28b1c2"),
-    ("org/mongodb/mongodb-driver-core/5.1.4/mongodb-driver-core-5.1.4.jar",
-     "ae3dbfd439d5afe9e0d6abbd61ef27d858ca2d38083bb7361f69e243aff31dec"),
-    ("org/mongodb/bson/5.1.4/bson-5.1.4.jar",
-     "bba556a8acd4e87545c1b9a1cb25c12ce9587ed5bf01685f236c5d92abf1e676"),
-    ("org/mongodb/bson-record-codec/5.1.4/bson-record-codec-5.1.4.jar",
-     "698b2b9a10fdd49a3ed99ad2b7bcc8e797639c8c4a5c974de7f6fc8654bda655"),
-)
-PROVIDER_CLASS = "com.mongodb.spark.sql.connector.MongoTableProvider"
-
-
-class JarIntegrityError(Exception):
-    """A downloaded jar's SHA-256 didn't match the pinned value."""
-
-
-def _sha256_of(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def download_jar(url: str, target_path: str, expected_sha256: str) -> str:
-    """Fetch ``url`` to ``target_path`` unless a file with the pinned SHA-256 is
-    already there. A mismatching download is removed and raises
-    ``JarIntegrityError``, so a jar is never loaded unless it matches its pin."""
-    if os.path.exists(target_path) and _sha256_of(target_path) == expected_sha256:
-        return target_path
-    urllib.request.urlretrieve(url, target_path)
-    actual = _sha256_of(target_path)
-    if actual != expected_sha256:
-        os.remove(target_path)
-        raise JarIntegrityError(
-            "downloaded jar's sha256 ({}) does not match the pinned value ({})"
-            " - refusing to load it".format(actual, expected_sha256)
-        )
-    return target_path
-
-
-def install_jars(spark, jar_paths, verify_class: str) -> None:
-    """Make ``jar_paths`` loadable in the running session without a restart.
-
-    The driver gets a ``URLClassLoader`` over the jars, set as the thread
-    context class loader (which Spark's DataSource lookup uses); executors get
-    the jars through ``addJar``. ``verify_class`` is loaded first, so a missing
-    class fails before anything is distributed.
-    """
-    jar_paths = list(jar_paths)
-    jvm = spark._jvm
-    urls = spark.sparkContext._gateway.new_array(jvm.java.net.URL, len(jar_paths))
-    for i, p in enumerate(jar_paths):
-        urls[i] = jvm.java.io.File(p).toURI().toURL()
-    thread = jvm.java.lang.Thread.currentThread()
-    loader = jvm.java.net.URLClassLoader(urls, thread.getContextClassLoader())
-    thread.setContextClassLoader(loader)
-    loader.loadClass(verify_class)  # raises if missing
-    for p in jar_paths:
-        spark._jsc.addJar(p)
-
-
-def load_mongo_connector(spark, jar_dir="/tmp/aidp_mongodb_jars"):
-    """Download the pinned jar set (skipped when already present and matching)
-    and install it into the running session. Safe to call again on a re-run."""
-    os.makedirs(jar_dir, exist_ok=True)
-    paths = [
-        download_jar(MAVEN_CENTRAL + path, os.path.join(jar_dir, path.rsplit("/", 1)[1]), sha256)
-        for path, sha256 in JARS
-    ]
-    install_jars(spark, paths, PROVIDER_CLASS)
-    return paths
+def credentials_from_env() -> str:
+    """Return ``MONGODB_URI`` from the environment, for runs outside AIDP.
+    On AIDP, read the URI from the Credential Store instead (see the notebook)."""
+    if not os.environ.get(ENV_URI, "").strip():
+        raise MongoError("missing environment variable: " + ENV_URI)
+    return validate_uri(os.environ[ENV_URI])
 
 
 # --------------------------------------------------------------------------
@@ -226,22 +58,29 @@ def load_mongo_connector(spark, jar_dir="/tmp/aidp_mongodb_jars"):
 # Checked in order against the whole Java cause chain; first match wins.
 _HINTS = (
     ("ClassNotFoundException: mongodb.DefaultSource", MongoError,
-     "MongoDB Spark connector is not loaded: call load_mongo_connector(spark) first."),
+     "MongoDB Spark connector is not installed: install the five jars listed in README.md "
+     "as cluster libraries and restart the cluster."),
     ("bad auth", MongoAuthError,
      "authentication failed: check the user and password in MONGODB_URI."),
     ("internal_error", MongoError,
      "TLS handshake aborted: on Atlas this usually means this cluster's IP is not on "
      "the project's IP access list (changes take a minute or two to apply)."),
+    ("Failed looking up TXT record", MongoError,
+     "DNS TXT lookup failed. On AIDP, executors cannot resolve mongodb+srv:// URIs: pass "
+     "the URI through resolve_srv(spark, uri) first."),
     ("Failed looking up SRV record", MongoError,
      "SRV DNS lookup failed: check the host in MONGODB_URI and that DNS works from here."),
     ("MongoTimeoutException", MongoError,
      "could not reach MongoDB within serverSelectionTimeoutMS."),
     ("UnknownReason", MongoError,
-     "a Spark task failed; with an inferred schema this is often a field whose type "
-     "differs from the sampled one - pass it in string_fields=, or pass a schema."),
+     "a Spark task failed and Spark could not report why. If even df.limit(1).collect() "
+     "fails, the executors cannot use the connector: install the jars as cluster libraries "
+     "and restart. Otherwise it is often a field whose type differs from the sampled one - "
+     "pass it in string_fields=, or pass a schema."),
 )
 _ATLAS_HOST = re.compile(r"[\w.-]+\.mongodb\.net")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_OCI_PATH = re.compile(r"oci://[^\s'\"]+")
 _DECIMAL = re.compile(r"decimal\((\d+),\s*(\d+)\)")
 
 
@@ -258,7 +97,84 @@ def redact_uri(text: str, uri: str) -> str:
     for secret in sorted(secrets, key=len, reverse=True):
         if secret:
             text = text.replace(secret, "***")
+    text = _OCI_PATH.sub("<oci-path>", text)  # storage paths name the tenancy's bucket
     return _IPV4.sub("<ip>", _ATLAS_HOST.sub("<host>", text))
+
+
+_TXT_OPTIONS = ("authSource", "replicaSet", "loadBalanced")  # the only ones the SRV spec allows
+
+
+def build_standard_uri(uri: str, srv_records, txt_records) -> str:
+    """Turn a ``mongodb+srv://`` URI plus its DNS records into the equivalent
+    ``mongodb://`` URI: hosts from the SRV records, options from the TXT
+    record, ``tls=true`` unless the URI sets TLS itself. Options in the URI
+    win over TXT options. ``srvMaxHosts`` and ``srvServiceName`` are not
+    supported.
+
+    ``srv_records`` are ``"priority weight port target."`` strings. Every
+    target must share the SRV host's parent domain, as the driver itself
+    requires, so a spoofed record cannot redirect the credentials elsewhere.
+    """
+    rest = uri[len("mongodb+srv://"):]
+    rest, _, query = rest.partition("?")
+    authority, _, path = rest.partition("/")
+    userinfo, _, host = authority.rpartition("@")
+    parent = host.split(".", 1)[-1].lower()
+    hosts = []
+    for record in srv_records:
+        _, _, port, target = record.split()
+        target = target.rstrip(".")
+        if not target.lower().endswith("." + parent):
+            raise MongoError("SRV record target is not in the SRV host's domain")
+        hosts.append("{}:{}".format(target, port))
+    if not hosts:
+        raise MongoError("SRV lookup returned no hosts")
+    options = {}
+    for record in txt_records:
+        for pair in record.strip('"').split("&"):
+            key, _, value = pair.partition("=")
+            if key in _TXT_OPTIONS:
+                options[key] = value
+    for pair in filter(None, query.split("&")):
+        key, _, value = pair.partition("=")
+        options[key] = value
+    if not any(k.lower() in ("tls", "ssl") for k in options):
+        options["tls"] = "true"
+    return "mongodb://{}{}/{}?{}".format(
+        userinfo + "@" if userinfo else "", ",".join(hosts), path,
+        "&".join("{}={}".format(k, v) for k, v in options.items()))
+
+
+def _dns_records(spark, name: str, kind: str):
+    """``kind`` records for ``name``, looked up by the driver JVM's own DNS
+    client (the one the MongoDB driver uses)."""
+    jvm = spark._jvm
+    env = jvm.java.util.Hashtable()
+    env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory")
+    kinds = spark.sparkContext._gateway.new_array(jvm.java.lang.String, 1)
+    kinds[0] = kind
+    attr = jvm.javax.naming.directory.InitialDirContext(env).getAttributes(name, kinds).get(kind)
+    return [str(attr.get(i)) for i in range(attr.size())] if attr is not None else []
+
+
+def resolve_srv(spark, uri: str) -> str:
+    """Resolve a ``mongodb+srv://`` URI on the driver into a standard
+    ``mongodb://`` URI; any other URI is returned unchanged.
+
+    On AIDP the driver can look up SRV and TXT records but executors cannot:
+    reads failed on every executor with ``Failed looking up TXT record``
+    (verified 2026-10-01). Resolving on each run keeps up with Atlas host
+    changes, which a hard-coded host list would not.
+    """
+    if not uri.startswith("mongodb+srv://"):
+        return uri
+    host = uri[len("mongodb+srv://"):].split("/", 1)[0].split("?", 1)[0].rpartition("@")[2]
+    try:
+        srv = _dns_records(spark, "_mongodb._tcp." + host, "SRV")
+        txt = _dns_records(spark, host, "TXT")
+    except Exception as exc:
+        raise explain_error(exc, uri) from None
+    return build_standard_uri(uri, srv, txt)
 
 
 def with_timeout(uri: str, timeout_ms: int) -> str:
