@@ -12,6 +12,7 @@
 
 Observed on 2026-10-01 on an AIDP cluster:
 
+- This notebook ran top to bottom against a real Jira Cloud site: the first run loaded 4 issues into a new Delta table, matching Jira's count. After one issue was added in Jira, the incremental load read 2 issues, the new one and one inside the overlap, and the table held 5.
 - `requests` is already installed; the cluster reaches Jira Cloud over HTTPS.
 - The cluster UI had no environment-variable setting, and notebooks cannot prompt for input, so the credentials come from the Credential Store.
 - An issue edited less than a minute before a run is picked up by the next run: query bounds are rounded to the minute. Nothing is lost.
