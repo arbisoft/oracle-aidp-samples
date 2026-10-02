@@ -22,12 +22,15 @@ Observed on 2026-10-01 on an AIDP cluster (Spark 3.5.0, Python 3.11.13):
 - Loading the jars at runtime with `SparkContext.addJar` is not enough: the driver reads, but every executor task fails with `UnknownReason`. Install them as cluster libraries.
 - Only one library change runs at a time per cluster: installing a jar while another install is still running fails with "ongoing operation".
 - Executors cannot resolve `mongodb+srv://` (`Failed looking up TXT record`); the notebook resolves it on the driver.
+- An outbound IP missing from the Atlas access list fails after the server-selection timeout with `SSLException: Received fatal alert: internal_error`. Check the IP again after a cluster restart.
+- If even a one-row read fails with `UnknownReason`, the executors are missing the jars: check they are installed as cluster libraries and the cluster was restarted.
 - Notebooks cannot prompt for input (`getpass` fails); use the Credential Store.
 
 ## Limits
 
 - A watermark does not see deletes in MongoDB.
-- `WATERMARK_FIELD` must hold BSON Dates; a string field never matches a Date bound.
+- Later runs only pick up documents whose `WATERMARK_FIELD` moves forward, so it should be a last-modified time the application sets on every write. A creation time does not catch edits.
+- `WATERMARK_FIELD` must hold BSON Dates. The first run loads every document, but a document whose field is missing, null or not a Date is never re-read by later runs.
 - Later runs reuse the target table's schema, so fields that first appear later are not added.
 - `df.filter(col.isNull())` is pushed down to MongoDB and counts only server-side nulls; count on the written table instead.
 - The SRV resolution does not support the `srvMaxHosts` and `srvServiceName` URI options.
