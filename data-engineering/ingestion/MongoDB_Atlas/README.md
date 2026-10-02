@@ -18,7 +18,7 @@ Install these five jars as cluster libraries, then restart the cluster. The note
 
 Observed on 2026-10-01 on an AIDP cluster (Spark 3.5.0, Python 3.11.13):
 
-- This notebook ran top to bottom against Atlas's `sample_mflix.comments`: the first run loaded 41,079 documents into a new Delta table, and a second run of the incremental load merged into it with no duplicates, 41,079 rows and 41,079 distinct `_id` values.
+- This notebook ran top to bottom against a sample Atlas collection of about 41,000 documents: the first run loaded every document into a new Delta table, and a second run of the incremental load merged into it with no duplicates, as many rows as distinct `_id` values.
 - Loading the jars at runtime with `SparkContext.addJar` is not enough: the driver reads, but every executor task fails with `UnknownReason`. Install them as cluster libraries.
 - Only one library change runs at a time per cluster: installing a jar while another install is still running fails with "ongoing operation".
 - Executors cannot resolve `mongodb+srv://` (`Failed looking up TXT record`); the notebook resolves it on the driver.
@@ -26,9 +26,14 @@ Observed on 2026-10-01 on an AIDP cluster (Spark 3.5.0, Python 3.11.13):
 - If even a one-row read fails with `UnknownReason`, the executors are missing the jars: check they are installed as cluster libraries and the cluster was restarted.
 - Notebooks cannot prompt for input (`getpass` fails); use the Credential Store.
 
+## Loading several collections
+
+One run loads one collection into one Delta table. To load several, run the notebook once per collection with its own `COLLECTION`, `TARGET`, `WATERMARK_FIELD` and `STRING_FIELDS`, or schedule one job per collection. Each collection needs its own settings: whether it has a Date field to use as the watermark, and which fields mix types between documents.
+
 ## Limits
 
 - A watermark does not see deletes in MongoDB.
+- A collection with no last-modified Date field: set `WATERMARK_FIELD = None`. Every run then re-reads the whole collection and merges it on `_id`.
 - Later runs only pick up documents whose `WATERMARK_FIELD` moves forward, so it should be a last-modified time the application sets on every write. A creation time does not catch edits.
 - `WATERMARK_FIELD` must hold BSON Dates. The first run loads every document, but a document whose field is missing, null or not a Date is never re-read by later runs.
 - Later runs reuse the target table's schema, so fields that first appear later are not added.
