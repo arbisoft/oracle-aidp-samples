@@ -76,6 +76,13 @@ class GcpClient:
             raise _error(response)
         return response.json() if response.content else {}
 
+    def get_text(self, url: str, params: dict | None = None) -> str:
+        """A GET whose body is text, not JSON: a Cloud Storage object's content."""
+        response = self.session.get(url, params=params or {}, timeout=self.timeout)
+        if response.status_code >= 400:
+            raise _error(response)
+        return response.text
+
     def pages(self, url: str, key: str, params: dict | None = None) -> list[dict]:
         """Every item of a list call, following nextPageToken."""
         items: list[dict] = []

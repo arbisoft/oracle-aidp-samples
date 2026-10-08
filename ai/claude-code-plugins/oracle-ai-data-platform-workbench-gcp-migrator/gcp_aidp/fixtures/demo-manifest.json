@@ -1726,49 +1726,180 @@
     "dataproc": {
       "summary": {
         "clusters": 2,
-        "jobs": 4
+        "jobs": 5,
+        "batches": 1,
+        "workflow_templates": 1
       },
       "items": {
         "clusters": [
           {
             "name": "etl-nightly",
             "region": "us-central1",
+            "state": "RUNNING",
             "image_version": "2.2-debian12",
+            "master_machine_type": "n2-standard-4",
+            "machine_type": "n2-standard-8",
             "worker_count": 8,
-            "machine_type": "n2-standard-8"
+            "secondary_worker_count": 4,
+            "autoscaling_policy": "projects/northwind-analytics-demo/regions/us-central1/autoscalingPolicies/etl",
+            "properties": {
+              "spark:spark.executor.memory": "12g",
+              "spark:spark.sql.shuffle.partitions": "400"
+            },
+            "init_actions": [
+              "gs://northwind-landing/init/install-deps.sh"
+            ]
           },
           {
             "name": "adhoc-analytics",
             "region": "us-central1",
+            "state": "RUNNING",
             "image_version": "2.1-debian11",
+            "master_machine_type": "n2-standard-4",
+            "machine_type": "n2-standard-4",
             "worker_count": 2,
-            "machine_type": "n2-standard-4"
+            "optional_components": [
+              "JUPYTER"
+            ]
           }
         ],
         "jobs": [
           {
-            "id": "job-sessionize-01",
+            "id": "us-central1/etl-nightly/sessionize.py",
+            "region": "us-central1",
             "cluster": "etl-nightly",
             "job_type": "pyspark",
-            "main_file": "gs://northwind-landing/jobs/sessionize.py"
+            "main_file": "gs://northwind-landing/jobs/sessionize.py",
+            "args": [
+              "2026-10-07"
+            ],
+            "jars": [
+              "gs://spark-lib/bigquery/spark-bigquery-with-dependencies_2.12-0.45.0.jar"
+            ],
+            "runs": 412,
+            "last_run": "2026-10-08T02:00:41Z",
+            "last_state": "DONE",
+            "last_run_id": "sessionize-1001",
+            "args_vary": true,
+            "code": "from pyspark.sql import SparkSession, functions as F\nimport sys\n\nrun_date = sys.argv[1]\nspark = SparkSession.builder.appName(\"sessionize\").getOrCreate()\n\nvisits = (spark.read.format(\"bigquery\")\n          .option(\"table\", \"northwind-analytics-demo.sales.store_visits\")\n          .load()\n          .where(F.col(\"visit_date\") == run_date))\nevents = spark.read.json(f\"gs://northwind-landing/clickstream/dt={run_date}/\")\n\nsessions = (events.groupBy(\"customer_id\", F.window(\"event_ts\", \"30 minutes\"))\n            .agg(F.count(\"*\").alias(\"events\")))\nsessions.write.mode(\"overwrite\").parquet(f\"gs://northwind-landing/sessions/dt={run_date}/\")\n"
           },
           {
-            "id": "job-dedupe-events",
+            "id": "us-central1/etl-nightly/dedupe_events.py",
+            "region": "us-central1",
             "cluster": "etl-nightly",
             "job_type": "pyspark",
-            "main_file": "gs://northwind-landing/jobs/dedupe_events.py"
+            "main_file": "gs://northwind-landing/jobs/dedupe_events.py",
+            "properties": {
+              "spark.executor.cores": "4"
+            },
+            "runs": 412,
+            "last_run": "2026-10-08T02:41:10Z",
+            "last_state": "DONE",
+            "last_run_id": "dedupe-1001",
+            "code": "from pyspark.sql import SparkSession\n\nspark = SparkSession.builder.getOrCreate()\nspark.conf.set(\"temporaryGcsBucket\", \"northwind-landing\")\n\nraw = spark.read.format(\"bigquery\").load(\"northwind-analytics-demo.logs.app_events\")\nclean = raw.dropDuplicates([\"event_id\"])\nclean.write.format(\"bigquery\").option(\"table\", \"logs.app_events_clean\").mode(\"overwrite\").save()\nspark.sql(\"SELECT COUNT(*) FROM logs.app_events_clean\").show()\n"
           },
           {
-            "id": "job-gl-export",
+            "id": "us-central1/etl-nightly/gl-export.jar",
+            "region": "us-central1",
             "cluster": "etl-nightly",
             "job_type": "spark",
-            "main_file": "gs://northwind-landing/jobs/gl-export.jar"
+            "main_file": "gs://northwind-landing/jobs/gl-export.jar",
+            "args": [
+              "--month",
+              "2026-09"
+            ],
+            "runs": 13,
+            "last_run": "2026-10-01T05:00:12Z",
+            "last_state": "DONE",
+            "last_run_id": "gl-export-13",
+            "args_vary": true
           },
           {
-            "id": "job-cohort-sql",
+            "id": "us-central1/adhoc-analytics/cohorts.sql",
+            "region": "us-central1",
             "cluster": "adhoc-analytics",
             "job_type": "spark_sql",
-            "main_file": "gs://northwind-landing/jobs/cohorts.sql"
+            "main_file": "gs://northwind-landing/jobs/cohorts.sql",
+            "runs": 30,
+            "last_run": "2026-10-06T09:15:00Z",
+            "last_state": "DONE",
+            "last_run_id": "cohorts-30",
+            "code": "CREATE OR REPLACE TEMPORARY VIEW first_orders AS\nSELECT customer_id, MIN(order_date) AS first_order\nFROM sales.orders\nGROUP BY customer_id;\n\nINSERT OVERWRITE DIRECTORY 'gs://northwind-landing/reports/cohorts/'\nUSING parquet\nSELECT date_trunc('MONTH', first_order) AS cohort, COUNT(*) AS customers\nFROM first_orders\nGROUP BY 1;\n"
+          },
+          {
+            "id": "us-central1/adhoc-analytics/legacy_rollup.hql",
+            "region": "us-central1",
+            "cluster": "adhoc-analytics",
+            "job_type": "hive",
+            "main_file": "gs://northwind-landing/jobs/legacy_rollup.hql",
+            "runs": 4,
+            "last_run": "2026-09-14T11:00:00Z",
+            "last_state": "ERROR",
+            "last_run_id": "rollup-4"
+          }
+        ],
+        "batches": [
+          {
+            "id": "us-central1/serverless/score_returns.py",
+            "region": "us-central1",
+            "job_type": "pyspark",
+            "main_file": "gs://northwind-landing/jobs/score_returns.py",
+            "runtime_version": "2.2",
+            "runs": 9,
+            "last_run": "2026-10-05T07:30:00Z",
+            "last_state": "SUCCEEDED",
+            "last_run_id": "score-9",
+            "code": "from pyspark.sql import SparkSession\n\nspark = SparkSession.builder.getOrCreate()\nreturns = spark.read.format(\"bigquery\").load(\"sales.returns\")\nreturns.groupBy(\"reason\").count().write.mode(\"overwrite\").csv(\"gs://northwind-landing/reports/returns/\")\n"
+          }
+        ],
+        "workflow_templates": [
+          {
+            "id": "month-end-close",
+            "region": "us-central1",
+            "cluster": "month-end-ephemeral",
+            "managed_cluster": {
+              "name": "month-end-ephemeral",
+              "region": "us-central1",
+              "image_version": "2.2-debian12",
+              "machine_type": "n2-highmem-8",
+              "worker_count": 4
+            },
+            "parameters": [
+              "MONTH"
+            ],
+            "steps": [
+              {
+                "step_id": "extract",
+                "prerequisites": [],
+                "job_type": "pyspark",
+                "main_file": "gs://northwind-landing/jobs/dedupe_events.py",
+                "code": "from pyspark.sql import SparkSession\n\nspark = SparkSession.builder.getOrCreate()\nspark.conf.set(\"temporaryGcsBucket\", \"northwind-landing\")\n\nraw = spark.read.format(\"bigquery\").load(\"northwind-analytics-demo.logs.app_events\")\nclean = raw.dropDuplicates([\"event_id\"])\nclean.write.format(\"bigquery\").option(\"table\", \"logs.app_events_clean\").mode(\"overwrite\").save()\nspark.sql(\"SELECT COUNT(*) FROM logs.app_events_clean\").show()\n"
+              },
+              {
+                "step_id": "ledger",
+                "prerequisites": [
+                  "extract"
+                ],
+                "job_type": "spark",
+                "main_class": "com.northwind.finance.LedgerClose",
+                "jars": [
+                  "gs://northwind-landing/jobs/finance-close.jar"
+                ],
+                "args": [
+                  "--month",
+                  "${MONTH}"
+                ]
+              },
+              {
+                "step_id": "report",
+                "prerequisites": [
+                  "ledger"
+                ],
+                "job_type": "spark_sql",
+                "main_file": "gs://northwind-landing/jobs/cohorts.sql",
+                "code": "CREATE OR REPLACE TEMPORARY VIEW first_orders AS\nSELECT customer_id, MIN(order_date) AS first_order\nFROM sales.orders\nGROUP BY customer_id;\n\nINSERT OVERWRITE DIRECTORY 'gs://northwind-landing/reports/cohorts/'\nUSING parquet\nSELECT date_trunc('MONTH', first_order) AS cohort, COUNT(*) AS customers\nFROM first_orders\nGROUP BY 1;\n"
+              }
+            ]
           }
         ]
       }

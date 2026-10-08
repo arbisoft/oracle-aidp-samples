@@ -5,6 +5,16 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added (0.2, in progress)
+- Dataproc inventory: job definitions grouped from the run history (region, type, main
+  file or class or query, cluster; the newest run's arguments, a run count, the last run,
+  and whether the arguments vary between runs), serverless batches grouped the same way,
+  workflow templates with their steps and prerequisites, and cluster configuration
+  (machine types, workers, autoscaling, Spark properties, init actions). The `.py` or
+  `.sql` file of each PySpark and Spark SQL definition is read from Cloud Storage, at most
+  1 MB; JARs are recorded, not read. Still planned as SKIP until the 0.2 translation lands.
+- The demo fixture's Dataproc estate carries that shape and real job code.
+
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.
 - `inventory --fixture demo`: the bundled Northwind Retail estate, built by
@@ -95,6 +105,8 @@ All notable changes to this project are documented here. Format loosely follows
   `AIDP_` and `OCI_` keys, and reads the working directory's `.env`, then the
   plugin folder's.
 - `references/dialect-translation.md` lists `G97_LEGACY_SQL`.
+- Plan ids use the right singular: `dataform.repository.…` (was `repositorie`), and the
+  new `dataproc.batch.…` and `dataproc.workflow_template.…`.
 - Inventory has one module per service (`inventory/gcs.py`, `dataproc.py`, `composer.py`,
   `dataform.py`, `dataflow.py`, `vertex.py`) instead of one `services.py`; behaviour is
   unchanged.

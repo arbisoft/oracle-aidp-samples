@@ -46,7 +46,7 @@ _REQUIRED = {
         "pipelines": ("id", "name"),
     },
     "gcs": {"buckets": ("name",)},
-    "dataproc": {"clusters": ("name",), "jobs": ("id",)},
+    "dataproc": {"clusters": ("name",), "jobs": ("id",), "batches": ("id",), "workflow_templates": ("id",)},
     "composer": {"environments": ("name",), "dags": ("environment", "dag_id")},
     "dataform": {"repositories": ("name",)},
     "dataflow": {"jobs": ("id", "name")},
@@ -283,11 +283,17 @@ def _gcs(it, ns):
                  chain=["copy_gcs_to_oci"]) for b in it["buckets"]]
 
 
+_SINGULAR = {"batches": "batch", "repositories": "repository", "workflow_templates": "workflow_template"}
+
+
 def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
     """Sources migrated after 0.1: one SKIP row per asset."""
     spec = {  # collection: (source type, target type, version, kind, id field, name field)
         "dataproc": {"clusters": ("dataproc_cluster", "aidp_spark_cluster", "0.2", "setup", "name", "name"),
-                     "jobs": ("dataproc_job", "aidp_job", "0.2", "code+setup", "id", "id")},
+                     "jobs": ("dataproc_job", "aidp_job", "0.2", "code+setup", "id", "id"),
+                     "batches": ("dataproc_batch", "aidp_job", "0.2", "code+setup", "id", "id"),
+                     "workflow_templates": ("dataproc_workflow_template", "aidp_job", "0.2", "code+setup",
+                                            "id", "id")},
         "composer": {"environments": ("composer_environment", "aidp_workflow", "0.3", "setup", "name", "name"),
                      "dags": ("composer_dag", "aidp_workflow", "0.3", "code+setup", "dag_id", "dag_id")},
         "dataform": {"repositories": ("dataform_repository", "aidp_job", "0.3", "code", "name", "name")},
@@ -300,7 +306,8 @@ def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
     for collection, (stype, ttype, version, kind, id_f, name_f) in spec.items():
         for row in it[collection]:
             prefix = f"{row['environment']}." if collection == "dags" else ""
-            out.append(_skip(f"{source}.{collection[:-1]}.{prefix}{row[id_f]}", kind, version,
+            out.append(_skip(f"{source}.{_SINGULAR.get(collection, collection[:-1])}.{prefix}{row[id_f]}",
+                             kind, version,
                              {**row, "type": stype}, ttype, row[name_f]))
     return out
 

@@ -112,6 +112,102 @@ class OneRefusedDataset(unittest.TestCase):
         self.assertIn("dataset restricted", bq["summary"]["not_scanned"])
 
 
+DP = f"https://dataproc.googleapis.com/v1/projects/{P}"
+OBJ = "https://storage.googleapis.com/storage/v1/b/landing/o/"
+NIGHTLY_PY = "import sys\nspark.read.json(f'gs://landing/in/{sys.argv[1]}')\n"
+DATAPROC_RESPONSES = {
+    f"{DP}/regions/us-central1/clusters": {"clusters": [{
+        "clusterName": "etl", "status": {"state": "RUNNING"},
+        "config": {"softwareConfig": {"imageVersion": "2.2-debian12", "properties": {"spark:spark.executor.memory": "8g"}},
+                   "masterConfig": {"machineTypeUri": "https://www.googleapis.com/compute/v1/projects/proj/zones/us-central1-a/machineTypes/n2-standard-4"},
+                   "workerConfig": {"numInstances": 4, "machineTypeUri": "zones/us-central1-a/machineTypes/n2-standard-8"},
+                   "initializationActions": [{"executableFile": "gs://landing/init.sh"}]}}]},
+    # Three runs of one nightly job (a new date each run), one Spark SQL query list, one JAR job.
+    f"{DP}/regions/us-central1/jobs": {"jobs": [
+        {"reference": {"jobId": f"nightly-{d}"}, "placement": {"clusterName": "etl"},
+         "status": {"state": "DONE", "stateStartTime": f"2026-10-0{d}T02:00:00Z"},
+         "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py", "args": [f"2026-10-0{d}"]}}
+        for d in (3, 1, 2)] + [
+        {"reference": {"jobId": "sql-1"}, "placement": {"clusterName": "etl"}, "status": {"state": "DONE"},
+         "sparkSqlJob": {"queryList": {"queries": ["SELECT 1"]}, "scriptVariables": {"d": "x"}}},
+        {"reference": {"jobId": "jar-1"}, "placement": {"clusterName": "etl"}, "status": {"state": "ERROR"},
+         "sparkJob": {"mainJarFileUri": "gs://landing/jobs/export.jar", "args": ["--all"]}}]},
+    f"{DP}/locations/us-central1/batches": {"batches": [
+        {"name": f"projects/{P}/locations/us-central1/batches/b-1", "state": "SUCCEEDED",
+         "createTime": "2026-10-05T00:00:00Z", "runtimeConfig": {"version": "2.2"},
+         "pysparkBatch": {"mainPythonFileUri": "gs://landing/jobs/huge.py"}}]},
+    f"{DP}/regions/us-central1/workflowTemplates": {"templates": [
+        {"id": "month-end", "parameters": [{"name": "MONTH"}],
+         "placement": {"managedCluster": {"clusterName": "ephemeral",
+                                          "config": {"workerConfig": {"numInstances": 2}}}},
+         "jobs": [{"stepId": "extract", "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py"}},
+                  {"stepId": "close", "prerequisiteStepIds": ["extract"],
+                   "sparkJob": {"mainClass": "com.x.Close", "jarFileUris": ["gs://landing/close.jar"]}}]}]},
+    OBJ + "jobs%2Fnightly.py": {"size": str(len(NIGHTLY_PY))},
+    OBJ + "jobs%2Fnightly.py?alt=media": NIGHTLY_PY,
+    OBJ + "jobs%2Fhuge.py": {"size": "5000000"},
+}
+
+
+class DataprocClient(FakeClient):
+    """Serves the Dataproc and Cloud Storage responses above; GET only."""
+
+    def get(self, url, params=None):
+        key = url + ("?" + "&".join(f"{k}={v}" for k, v in sorted(params.items())) if params else "")
+        self.calls.append(key)
+        if key not in DATAPROC_RESPONSES:
+            raise GcpError(f"HTTP 404 notFound: {key}", status=404, reason="notFound")
+        return DATAPROC_RESPONSES[key]
+
+    def get_text(self, url, params=None):
+        return self.get(url, params)
+
+
+class DataprocInventory(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from gcp_aidp.inventory import dataproc
+        cls.client = DataprocClient()
+        cls.dp = dataproc.scan(cls.client, regions=("us-central1",))["items"]
+
+    def test_runs_become_one_definition_with_the_newest_settings(self):
+        nightly = next(j for j in self.dp["jobs"] if j["job_type"] == "pyspark")
+        self.assertEqual(nightly["id"], "us-central1/etl/nightly.py")
+        self.assertEqual((nightly["runs"], nightly["last_run_id"], nightly["args"]), (3, "nightly-3", ["2026-10-03"]))
+        self.assertTrue(nightly["args_vary"])
+        self.assertEqual(len(self.dp["jobs"]), 3)  # nightly, the SQL query list, the JAR job
+
+    def test_code_is_read_for_what_migrate_translates(self):
+        by_type = {j["job_type"]: j for j in self.dp["jobs"]}
+        self.assertEqual(by_type["pyspark"]["code"], NIGHTLY_PY)
+        self.assertNotIn("code", by_type["spark"])  # a JAR is recorded, not read
+        self.assertEqual(by_type["spark_sql"]["queries"], ["SELECT 1"])
+        self.assertEqual(by_type["spark_sql"]["variables"], {"d": "x"})
+        huge = self.dp["batches"][0]
+        self.assertIn("over the 1000000-byte limit", huge["code_not_read"])
+
+    def test_batches_templates_and_clusters(self):
+        batch = self.dp["batches"][0]
+        self.assertEqual((batch["id"], batch["runtime_version"]), ("us-central1/serverless/huge.py", "2.2"))
+        t = self.dp["workflow_templates"][0]
+        self.assertEqual([(s["step_id"], s["prerequisites"]) for s in t["steps"]], [("extract", []), ("close", ["extract"])])
+        self.assertEqual(t["steps"][0]["code"], NIGHTLY_PY)
+        self.assertEqual((t["cluster"], t["parameters"], t["managed_cluster"]["worker_count"]), ("ephemeral", ["MONTH"], 2))
+        c = self.dp["clusters"][0]
+        self.assertEqual((c["machine_type"], c["master_machine_type"], c["worker_count"]), ("n2-standard-8", "n2-standard-4", 4))
+        self.assertEqual(c["init_actions"], ["gs://landing/init.sh"])
+
+    def test_metadata_and_object_reads_only(self):
+        self.assertTrue(all(c.startswith(("https://dataproc.googleapis.com/", OBJ)) for c in self.client.calls))
+
+    def test_plan_lists_every_definition(self):
+        from gcp_aidp.inventory.manifest import build_manifest
+        m = build_manifest(DataprocClient(), ("dataproc",), scan_services=True, service_client=DataprocClient())
+        ids = {a["id"] for a in build_plan(m)["assets"]}
+        self.assertTrue({"dataproc.job.us-central1/etl/nightly.py", "dataproc.batch.us-central1/serverless/huge.py",
+                         "dataproc.workflow_template.month-end", "dataproc.cluster.etl"} <= ids)
+
+
 class LiveInventory(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -147,7 +243,8 @@ class LiveInventory(unittest.TestCase):
         self.assertIn("notebooks", self.bq["summary"]["not_scanned"])
         sources = self.manifest["sources"]
         self.assertTrue(sources["dataproc"]["summary"]["api_disabled"])
-        self.assertEqual(sources["dataproc"]["items"], {"clusters": [], "jobs": []})
+        self.assertEqual(sources["dataproc"]["items"],
+                         {"clusters": [], "jobs": [], "batches": [], "workflow_templates": []})
         self.assertIn("environments", sources["composer"]["summary"]["not_scanned"])
         # DAGs are found through the environments, so they are not "0": they are unknown.
         self.assertEqual(sources["composer"]["summary"]["not_scanned"]["dags"], "environments were not scanned")

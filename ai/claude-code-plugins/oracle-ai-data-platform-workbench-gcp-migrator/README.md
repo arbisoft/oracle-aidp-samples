@@ -38,7 +38,8 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 |---|---|---|
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
-| `inventory`: Dataproc, Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
+| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2; planned as SKIP until 0.2's translation lands | offline only |
+| `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
 | GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
 | Type mapping and table layout | ✅ built | live: 7 tables created and read back against the plan |
@@ -262,7 +263,11 @@ Google refuses any write. Dataproc, Composer, Dataform, Dataflow and Vertex AI
 refuse a read-only token, so they are listed only with `--scan-services`. That
 flag asks for a `cloud-platform` token for those five services only, and read-only
 then rests on the client sending GETs only and on the service account's
-viewer roles. Without it, they are recorded as *not scanned*. No query runs, and no bytes are billed. Row counts
+viewer roles. Without it, they are recorded as *not scanned*. For Dataproc, the scan
+also reads the `.py` or `.sql` file each PySpark and Spark SQL job runs from Cloud
+Storage (an object read, at most 1 MB), so it can be translated; JARs are recorded, not
+read. Dataproc's run history is grouped into job definitions: one per main file and
+cluster, with its newest arguments and a run count. No query runs, and no bytes are billed. Row counts
 come from table metadata. Anything the scan could not read is recorded as *not
 scanned* and shown at the top of the plan: saved queries (pass
 `--saved-queries-dir` instead), BigQuery Studio notebooks and pipelines in 0.1,
@@ -408,9 +413,10 @@ commented out.
 
 ## Safety posture
 
-- **Read-only against Google Cloud.** Inventory makes metadata `GET` calls with a
-  `cloud-platform.read-only` token. No query runs and no bytes are billed; row counts
-  come from table metadata. The one exception is a maintainer script outside the
+- **Read-only against Google Cloud.** Inventory makes `GET` calls only: metadata, and
+  for Dataproc the job's own code file in Cloud Storage. It uses a
+  `cloud-platform.read-only` token wherever the API accepts one. No query runs and no
+  bytes are billed; row counts come from table metadata. The one exception is a maintainer script outside the
   verbs, `scripts/probe_bigquery_semantics.py`: it runs zero-byte queries on literals,
   each dry-run first, to check the translator's BigQuery side.
 - **No hidden writes in BigQuery.** The copy reads tables only. Reading a view or a
