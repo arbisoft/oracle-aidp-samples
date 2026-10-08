@@ -78,16 +78,31 @@ class _Writer:
         return self.out_dir / rel
 
     def sql(self, category: str, name: str, asset_id: str, findings: list[dict], body: str,
-            *, blocked: bool = False) -> str:
-        lines = [f"-- gcp-aidp: {asset_id}", f"-- status: {_status(findings)}"]
-        lines += [f"-- {f['severity'].upper()} {f['rule']}: {_one_line(f['detail'])}"
+            *, blocked: bool = False, comment: str = "--", suffix: str = ".sql",
+            original: str = "GoogleSQL") -> str:
+        c = comment
+        lines = [f"{c} gcp-aidp: {asset_id}", f"{c} status: {_status(findings)}"]
+        lines += [f"{c} {f['severity'].upper()} {f['rule']}: {_one_line(f['detail'])}"
                   for f in findings if f["severity"] != "rewrite"]
         if blocked:
-            lines.append("-- NOT TRANSLATED. The original GoogleSQL follows, commented out.")
-            body = "\n".join(f"-- {line}" for line in body.splitlines())
-        p = self.path(category, name, ".sql", asset_id)
+            lines.append(f"{c} NOT TRANSLATED. The original {original} follows, commented out.")
+            body = "\n".join(f"{c} {line}" if line else c for line in body.splitlines())
+        p = self.path(category, name, suffix, asset_id)
         write_text_atomic(p, "\n".join(lines) + "\n\n" + body.rstrip() + "\n")
         return p.relative_to(self.out_dir).as_posix()
+
+
+_DATAPROC = ("dataproc_job", "dataproc_batch", "dataproc_workflow_template")
+_SETTINGS = ("step_id", "prerequisites", "job_type", "cluster", "main_file", "main_class", "args", "python_files",
+             "jars", "files", "archives", "properties", "variables", "runtime_version", "code_not_read")
+
+
+def _dataproc_original(spec: dict) -> str:
+    """A job or step as inventoried: its settings, then its code (or its query list)."""
+    lines = [f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}" for k in _SETTINGS
+             if (v := spec.get(k)) not in (None, [], {})]
+    code = spec.get("code") or ";\n".join(spec.get("queries") or [])
+    return "\n".join(lines + ([""] + code.splitlines() if code else []))
 
 
 def _one_line(text: str) -> str:
@@ -107,7 +122,7 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
     findings: list[dict] = []
     source_sql = translated = ""
     t = tgt["type"]
-    stem = f"{src.get('dataset', '')}.{src['name']}".lstrip(".")
+    stem = f"{src.get('dataset', '')}.{src.get('name') or src.get('id', '')}".lstrip(".")
 
     if t == "aidp_schema":
         translated = ddl.create_schema(tgt["catalog"], tgt["name"], src.get("description", ""))
@@ -183,6 +198,16 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             translated, more = ddl.create_function(tgt, src.get("arguments", []), src.get("return_type"), r.sql)
             findings += [_f(*f) for f in more]
             path = w.sql("functions", stem, aid, findings, translated)
+    elif src["type"] in _DATAPROC:
+        # ponytail: a placeholder until 0.2's PySpark and Spark SQL translation; the original is kept.
+        findings = [_f("DP00_NOT_TRANSLATED", "block", "the Dataproc translation is not built yet; the original "
+                       "settings and code are kept for review")]
+        steps = src.get("steps") or [src]
+        python = all(st.get("job_type") == "pyspark" for st in steps)
+        body = "\n\n".join(_dataproc_original(st) for st in steps)
+        source_sql = body
+        path = w.sql("dataproc", tgt["name"], aid, findings, body, blocked=True, comment="#" if python else "--",
+                     suffix=".py" if python else (".sql" if len(steps) == 1 else ".txt"), original="Dataproc job")
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"
         r = translate(src["query"], ctx)

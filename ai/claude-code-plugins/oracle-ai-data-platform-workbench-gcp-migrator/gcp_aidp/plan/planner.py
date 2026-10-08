@@ -283,17 +283,77 @@ def _gcs(it, ns):
                  chain=["copy_gcs_to_oci"]) for b in it["buckets"]]
 
 
+# 0.2 translates PySpark and Spark SQL. A JAR job needs a JAR_TASK, which no migration
+# has run on AIDP yet; the other engines have no translation in 0.2.
+_DATAPROC_MIGRATE = ("pyspark", "spark_sql")
+_DATAPROC_REASONS = {"spark": "Spark JAR job: an AIDP JAR_TASK is not yet proven on AIDP; recreate it by hand "
+                              "with the JAR copied to OCI"}
+
+
+def _dataproc_definition(row: dict, collection: str) -> dict:
+    stype = {"jobs": "dataproc_job", "batches": "dataproc_batch"}[collection]
+    id_ = f"dataproc.{_SINGULAR.get(collection, collection[:-1])}.{row['id']}"
+    source = {**row, "type": stype}
+    kind = row.get("job_type", "unknown")
+    if kind not in _DATAPROC_MIGRATE:
+        return _row(id_, "code+setup", "0.2", REPORT, source, {"type": "report"},
+                    reason=_DATAPROC_REASONS.get(kind, f"{kind} job: not translated in 0.2"),
+                    effort=effort_band(row.get("code")) if row.get("code") else "M")
+    name = row["main_file"].rstrip("/").rsplit("/", 1)[-1] if row.get("main_file") else row["id"]
+    notes = [f"runs {row['runs']} times; last run {row.get('last_run')} ({row.get('last_state')})"] if row.get("runs") else []
+    if row.get("args_vary"):
+        notes.append(f"arguments differ between runs (latest: {row.get('args')}): the job takes them as parameters")
+    if row.get("code_not_read"):
+        notes.append(f"code not read: {row['code_not_read']}")
+    chain = ["pyspark_to_aidp" if kind == "pyspark" else "spark_sql_to_aidp", "create_job_unscheduled"]
+    return _row(id_, "code+setup", "0.2", MIGRATE, source,
+                {"type": "aidp_job", "name": job_name(f"{row.get('cluster') or 'serverless'}_{name}")},
+                chain=chain, notes=notes)
+
+
+def _cluster_sizing(c: dict) -> list[str]:
+    """The source cluster's size, to size the AIDP cluster from (no AIDP shape is invented)."""
+    notes = [f"{c.get('worker_count', '?')} workers {c.get('machine_type', '?')}, master "
+             f"{c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
+    if c.get("secondary_worker_count"):
+        notes.append(f"{c['secondary_worker_count']} secondary workers")
+    if c.get("autoscaling_policy"):
+        notes.append(f"autoscaling policy {c['autoscaling_policy'].rsplit('/', 1)[-1]}")
+    if c.get("properties"):
+        notes.append("Spark properties: " + ", ".join(f"{k}={v}" for k, v in sorted(c["properties"].items())))
+    if c.get("init_actions"):
+        notes.append(f"{len(c['init_actions'])} init action(s) to recreate as cluster libraries or setup")
+    return notes
+
+
+def _dataproc(it: dict[str, list[dict]]) -> list[dict]:
+    """0.2: job definitions and templates migrate; clusters and other engines are reported."""
+    out = [_row(f"dataproc.cluster.{c['name']}", "setup", "0.2", REPORT,
+                {**c, "type": "dataproc_cluster"}, {"type": "aidp_spark_cluster", "name": c["name"]},
+                reason="cluster: create an AIDP cluster sized from the notes", notes=_cluster_sizing(c), effort="S")
+           for c in it["clusters"]]
+    out += [_dataproc_definition(r, "jobs") for r in it["jobs"]]
+    out += [_dataproc_definition(r, "batches") for r in it["batches"]]
+    for t in it["workflow_templates"]:
+        kinds = sorted({s.get("job_type", "unknown") for s in t.get("steps", [])} - set(_DATAPROC_MIGRATE))
+        notes = [f"{len(t.get('steps', []))} steps as tasks, prerequisites as dependsOn"]
+        if kinds:
+            notes.append(f"steps of type {', '.join(kinds)} are not translated: the job is not created until they are")
+        if t.get("managed_cluster"):
+            notes += [f"managed cluster: {n}" for n in _cluster_sizing(t["managed_cluster"])]
+        out.append(_row(f"dataproc.workflow_template.{t['id']}", "code+setup", "0.2", MIGRATE,
+                        {**t, "type": "dataproc_workflow_template"},
+                        {"type": "aidp_job", "name": job_name(f"template_{t['id']}")},
+                        chain=["dataproc_template_to_aidp", "create_job_unscheduled"], notes=notes))
+    return out
+
+
 _SINGULAR = {"batches": "batch", "repositories": "repository", "workflow_templates": "workflow_template"}
 
 
 def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
     """Sources migrated after 0.1: one SKIP row per asset."""
     spec = {  # collection: (source type, target type, version, kind, id field, name field)
-        "dataproc": {"clusters": ("dataproc_cluster", "aidp_spark_cluster", "0.2", "setup", "name", "name"),
-                     "jobs": ("dataproc_job", "aidp_job", "0.2", "code+setup", "id", "id"),
-                     "batches": ("dataproc_batch", "aidp_job", "0.2", "code+setup", "id", "id"),
-                     "workflow_templates": ("dataproc_workflow_template", "aidp_job", "0.2", "code+setup",
-                                            "id", "id")},
         "composer": {"environments": ("composer_environment", "aidp_workflow", "0.3", "setup", "name", "name"),
                      "dags": ("composer_dag", "aidp_workflow", "0.3", "code+setup", "dag_id", "dag_id")},
         "dataform": {"repositories": ("dataform_repository", "aidp_job", "0.3", "code", "name", "name")},
@@ -382,6 +442,8 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
             assets += _bigquery(items[source], catalog, mapping)
         elif source == "gcs":
             assets += _gcs(items[source], oci_namespace)
+        elif source == "dataproc":
+            assets += _dataproc(items[source])
         else:
             assets += _later(source, items[source])
 

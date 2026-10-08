@@ -14,6 +14,13 @@ All notable changes to this project are documented here. Format loosely follows
   `.sql` file of each PySpark and Spark SQL definition is read from Cloud Storage, at most
   1 MB; JARs are recorded, not read. Still planned as SKIP until the 0.2 translation lands.
 - The demo fixture's Dataproc estate carries that shape and real job code.
+- Dataproc plan rows: PySpark and Spark SQL definitions (jobs and batches) and workflow
+  templates are MIGRATE (version 0.2) to unscheduled AIDP jobs named after cluster and file
+  (`etl_nightly_sessionize_py`, `template_month_end_close`); Spark JAR jobs are REPORT until
+  an AIDP `JAR_TASK` is proven; Hive, Pig, SparkR and the other engines are REPORT; clusters
+  are REPORT with their sizing (workers, machine types, image, autoscaling, Spark properties,
+  init actions). Until the translator lands, `migrate` writes each as a blocked artifact
+  (`DP00_NOT_TRANSLATED`) holding its settings and original code, commented out.
 
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.

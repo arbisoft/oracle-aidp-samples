@@ -31,8 +31,9 @@ EXPECTED = {
     "bq_column_policy_tag": ("REPORT", "0.1"),
     "bq_dataset_iam": ("REPORT", "0.1"),
     "bq_notebook": ("SKIP", "0.2"),
-    "dataproc_cluster": ("SKIP", "0.2"),
-    "dataproc_job": ("SKIP", "0.2"),
+    "dataproc_cluster": ("REPORT", "0.2"),
+    "dataproc_batch": ("MIGRATE", "0.2"),
+    "dataproc_workflow_template": ("MIGRATE", "0.2"),
     "composer_environment": ("SKIP", "0.3"),
     "composer_dag": ("SKIP", "0.3"),
     "dataform_repository": ("SKIP", "0.3"),
@@ -118,6 +119,46 @@ class Datasets(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         return write_plan_markdown(plan, Path(self._tmp.name) / "plan.md")
+
+
+class DataprocPlan(unittest.TestCase):
+    """0.2: PySpark and Spark SQL definitions migrate; the rest is reported with the reason."""
+
+    def setUp(self):
+        self.by_id = {a["id"]: a for a in build_plan(DEMO)["assets"]}
+
+    def test_job_definitions_by_type(self):
+        def row(name):
+            return self.by_id[f"dataproc.job.us-central1/{name}"]
+        for name in ("etl-nightly/sessionize.py", "adhoc-analytics/cohorts.sql"):
+            self.assertEqual((row(name)["action"], row(name)["version"], row(name)["target"]["type"]),
+                             ("MIGRATE", "0.2", "aidp_job"), name)
+        self.assertEqual(row("etl-nightly/sessionize.py")["target"]["name"], "etl_nightly_sessionize_py")
+        self.assertEqual(row("etl-nightly/gl-export.jar")["action"], "REPORT")
+        self.assertIn("JAR_TASK", row("etl-nightly/gl-export.jar")["reason"])
+        self.assertEqual(row("adhoc-analytics/legacy_rollup.hql")["action"], "REPORT")
+        self.assertIn("hive", row("adhoc-analytics/legacy_rollup.hql")["reason"])
+
+    def test_template_and_cluster(self):
+        t = self.by_id["dataproc.workflow_template.month-end-close"]
+        self.assertEqual((t["action"], t["target"]["name"]), ("MIGRATE", "template_month_end_close"))
+        c = self.by_id["dataproc.cluster.etl-nightly"]
+        self.assertEqual(c["action"], "REPORT")
+        self.assertIn("8 workers n2-standard-8", "; ".join(c["notes"]))
+
+    def test_one_script_on_two_clusters_does_not_collide(self):
+        m = copy.deepcopy(DEMO)
+        jobs = m["sources"]["dataproc"]["items"]["jobs"]
+        twin = {**jobs[0], "id": "us-central1/adhoc-analytics/sessionize.py", "cluster": "adhoc-analytics"}
+        jobs.append(twin)
+        build_plan(m)  # etl_nightly_sessionize_py and adhoc_analytics_sessionize_py
+
+    def test_two_definitions_with_one_job_name_halt(self):
+        m = copy.deepcopy(DEMO)
+        jobs = m["sources"]["dataproc"]["items"]["jobs"]
+        jobs.append({**jobs[0], "id": "us-central1/etl-nightly/sessionize-py", "main_file": "gs://b/sessionize-py"})
+        with self.assertRaisesRegex(ValueError, "etl_nightly_sessionize_py"):
+            build_plan(m)
 
 
 class FailClosed(unittest.TestCase):

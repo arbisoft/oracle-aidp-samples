@@ -32,7 +32,10 @@ EXPECTED = {
     "bigquery.saved_query.Churn_scoring": "REVIEW",     # blocked: ML.PREDICT
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
     "gcs.bucket.northwind-landing": "REVIEW",           # transfer prerequisites
-    "dataproc.cluster.etl-nightly": "SKIP",
+    "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
+    "dataproc.job.us-central1/etl-nightly/sessionize.py": "REVIEW",  # DP00: translation not built yet
+    "dataproc.job.us-central1/etl-nightly/gl-export.jar": "SKIP",    # reported: JAR_TASK unproven
+    "dataproc.workflow_template.month-end-close": "REVIEW",
     "vertex.model.vm-001": "SKIP",
 }
 
@@ -60,7 +63,16 @@ class Demo(unittest.TestCase):
         for r in self.report["results"]:
             if r["status"] == "blocked" and r["kind"] != "bq_table":
                 body = (self.out / r["output_path"]).read_text()
-                self.assertTrue(all(l.startswith("--") or not l.strip() for l in body.splitlines()), r["asset_id"])
+                self.assertTrue(all(l.startswith(("--", "#")) or not l.strip() for l in body.splitlines()),
+                                r["asset_id"])
+
+    def test_DP00_NOT_TRANSLATED_keeps_the_original_for_review(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        job = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
+        self.assertEqual((job["status"], job["findings"][0]["rule"]), ("blocked", "DP00_NOT_TRANSLATED"))
+        body = (self.out / job["output_path"]).read_text()
+        self.assertIn('#           .option("table", "northwind-analytics-demo.sales.store_visits")', body)
+        self.assertIn("# args: 2026-10-07", body)
 
     def test_J01_UNSCHEDULED_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}

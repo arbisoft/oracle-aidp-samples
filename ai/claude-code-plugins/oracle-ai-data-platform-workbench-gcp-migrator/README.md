@@ -38,7 +38,8 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 |---|---|---|
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
-| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2; planned as SKIP until 0.2's translation lands | offline only |
+| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2 | offline only |
+| `plan` / `migrate`: Dataproc (0.2, in progress) | 🚧 PySpark and Spark SQL definitions and workflow templates planned as MIGRATE, written as blocked placeholders (`DP00`) until the translator lands; JAR, Hive and other engines and clusters reported | offline only |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
 | GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
