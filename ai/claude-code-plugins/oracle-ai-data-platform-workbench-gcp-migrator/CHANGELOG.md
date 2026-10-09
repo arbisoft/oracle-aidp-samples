@@ -1,0 +1,173 @@
+# Changelog
+
+All notable changes to this project are documented here. Format loosely follows
+[Keep a Changelog](https://keepachangelog.com/); versions follow semver.
+
+## [Unreleased]
+
+### Added
+- Composer (0.3): each DAG file is planned as `MIGRATE` and becomes one
+  unscheduled AIDP job, one task per Airflow task, with upstream tasks as
+  `dependsOn`. `inventory` now reads each DAG file's text from the environment's
+  bucket (Cloud Storage object read, `GET` only, 1 MB cap); a file it cannot read
+  is kept and recorded as *not scanned*. The manifest and the plan therefore hold
+  DAG source code: do not commit them. The file is parsed with `ast` and is never
+  imported, executed or evaluated. Only `BigQueryInsertJobOperator` with a
+  literal query, `EmptyOperator`/`DummyOperator` and plain dependencies are
+  translated; every other operator, loop, decorator or non-literal value is
+  flagged by name and no job is created for that DAG. Rules `C01`–`C06` and
+  `C89`–`C99`, in `references/airflow-translation.md`. Schedules are recorded in
+  the job description and never applied. Composer environments are `REPORT` rows.
+- `plan --dags a,b`: migrate only those DAGs, in any environment; the others stay
+  in the plan as SKIP. Also on the MCP `plan` tool.
+- `migrate` writes one `composer/<environment>.<dag>.sql` per DAG; a task that
+  does nothing gets a no-op notebook.
+- Dataform (0.3): each repository is planned as `MIGRATE` and becomes one
+  unscheduled AIDP job, with one task per compiled action and Dataform's
+  dependencies as `dependsOn`. `inventory` reads each repository's release and
+  workflow configs and the actions of its compilation result (Dataform v1,
+  `GET` only; it never creates a compilation result or starts a workflow). A
+  repository it cannot read is kept and recorded as *not scanned*. Rules
+  `DF01`–`DF15`, in `references/dataform-translation.md`: tables, views and
+  assertions are translated; incremental tables, operations, notebooks and
+  other relation types are flagged. If any action is flagged or blocked, no job
+  is created for the repository. Schedules are recorded in the job description
+  and never applied.
+- `plan --dataform-repos a,b`: migrate only those Dataform repositories; the
+  others stay in the plan as SKIP. Also on the MCP `plan` tool.
+- `migrate` writes one `dataform/<repository>.sql` per repository, and
+  `write_jobs` accepts a job made of several tasks, one notebook each; an
+  assertion's notebook fails when its query returns a row.
+- `GcpClient.get_text`: a GET that returns the body as text.
+- Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.
+- `inventory --fixture demo`: the bundled Northwind Retail estate, built by
+  `gcp_aidp/fixtures/build_demo_manifest.py`.
+- `plan`: one row per asset with `MIGRATE` / `REPORT` / `SKIP`, the version
+  each source is migrated in, and an approval document (`plan.md`). Halts on
+  duplicate ids and on name collisions.
+- `demo.sh`: the offline demo, inventory through verify.
+- Type mapping (`TY01`–`TY17`, `TY99`) recorded on every planned column, with
+  `--bignumeric string` and `--geography wkt` modes; table layout rules
+  (`D01`–`D04`): liquid `CLUSTER BY` wherever BigQuery partitioning is not an
+  exact Delta partition.
+- GoogleSQL → Spark SQL translator: a lexer plus 27 named rules (rewrite,
+  caveat, flag, block); a blocked statement is never partially translated.
+  Spark-side behaviour checked on Spark 3.5.9.
+- `gs://` → `oci://` rewriting through the bucket map, and an rclone transfer
+  job per bucket.
+- `migrate`: one artifact per asset plus `report.json` / `report.md`; offline.
+- `verify`: PASS / REVIEW / SKIP / FAIL, failing closed on an interrupted run,
+  a count mismatch, or a missing or escaping artifact.
+- Tests for every rule ID, and an optional Spark 3.5 + Delta runtime test.
+- Live inventory: BigQuery (datasets, tables, views, materialized views,
+  external tables, routines, models, row access policies, column policy tags,
+  dataset IAM, scheduled queries), Cloud Storage, and Dataproc, Composer,
+  Dataform, Dataflow and Vertex AI for SKIP reporting. Read-only REST GETs with
+  a `cloud-platform.read-only` token; `google-auth` is the only dependency.
+  Gaps are recorded as *not scanned* and shown in the plan.
+- `--scan-services`: those five APIs refuse a read-only token, so they are
+  listed only on request, with a `cloud-platform` token used for them alone.
+- Run against a seeded sandbox project: every object `seed.sql` creates is
+  listed, and the zero-byte probes confirmed or corrected the BigQuery side of
+  the translator rules (`G02_SAFE_CAST`'s reason was wrong and is fixed).
+- `G97_LEGACY_SQL`: a legacy SQL view is blocked.
+- `test-estate/`: `seed.sql`, `MANUAL_STEPS.md`, `teardown.sql`.
+- `scripts/probe_bigquery_semantics.py`: zero-byte queries that confirm the
+  BigQuery side of the translator rules.
+- Data-plane notebooks generated by `migrate`: `00_diagnose`, `01_structure`,
+  `02_copy_dataset` (one run per dataset), `03_reconcile`. Self-contained,
+  with a PARAMS cell that job parameters override. They read the key from the
+  AIDP credential store, read BigQuery tables only (`viewsEnabled=false`),
+  cast with ANSI on so a value that does not fit fails instead of becoming
+  NULL, and never drop a table. Tested by executing every cell on a local
+  Spark 3.5 + Delta, with the connector replaced by a local reader.
+- Data-plane notebooks run end to end on AIDP (Spark 3.5.0): 7 tables
+  `MIGRATED_VERIFIED`, 3 views created.
+- `publish`: uploads the notebooks to `/Workspace/<prefix>/` and creates the
+  jobs, unscheduled. Dry run by default; `--apply` needs `--prefix`, checks
+  the cluster belongs to the workspace and is not its Default Master, and
+  never overwrites. `run` starts `<prefix>_gcp_aidp_migration` and polls its
+  tasks. Through `aidp-cli`.
+  Run live: 5 notebooks and 2 jobs created, every task succeeded.
+- Jobs from `migrate` (`report["jobs"]`, `notebooks/jobs/`): a refresh job per
+  materialized view, and one per scheduled query without a destination table
+  (`J02` flags those with one). `reconcile` reports `SNAPSHOT_BUILT`.
+- `AIDP_AUTH` sets `--auth`: `aidp-cli` defaults to `security_token`, so an
+  API-key profile needs `AIDP_AUTH=api_key`.
+- MCP server (`gcp_aidp/mcp_server.py`, `gcp-aidp-mcp`, `.mcp.json`) exposing
+  `inventory`, `plan`, `migrate` and `verify` to any MCP client. Each tool runs
+  the CLI. `publish` and `run` stay
+  CLI-only because they change an AIDP workspace. Needs `pip install -e '.[mcp]'`
+  (Python 3.10+, `mcp>=1.2,<2`).
+- Claude Code skill `gcp-aidp-migrator` (with `references/verbs.md`) and slash
+  commands `inventory`, `plan`, `migrate`, `verify`, `publish` and `run`.
+- README: what it does, a status table separating live-tested from offline-only,
+  translator coverage tables, safety posture, layout and roadmap. `TESTING.md`.
+- `plan --datasets a,b`: migrate only those BigQuery datasets. The other
+  datasets' assets stay in the plan as SKIP with the reason, and the plan's first
+  lines name the scope ("Datasets: all 4", or "sales (1 of 4; the rest are SKIP)").
+  A name the inventory does not hold fails the plan. Also on the MCP `plan` tool.
+- README **Setup**: the Google service account, what an administrator sets up once
+  in AIDP (catalog, cluster and connector JAR, credential, a least-privilege
+  migration identity), and this machine (aidp-cli, `~/.oci/config`, finding the IDs,
+  `.env`). The least-privilege grants are not yet tested with a restricted user.
+- README **Run a migration**: the seven commands in order, with what to check before
+  each next step; and a note that the CLI needs no AI, the plugin and MCP server being
+  optional layers.
+- `gcp-aidp-migrator-bootstrap` skill: a read-only readiness check, from the CLI to
+  the cluster's state, that reports shapes and results, never values.
+
+### Changed
+- `G15_QUALIFY` is a rewrite, not a block: a subquery filtered on the
+  condition, with the row carried as a struct so `SELECT *` works. Shapes it
+  does not cover stay blocked with the reason.
+- `CLUSTER BY` keys are written unquoted (AIDP's Delta kept the backticks in
+  the column name), and a rerun of `01_structure` reports existing views as
+  `already_existed`.
+- The `.env` loader takes only `GCP_`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `AIDP_` and `OCI_` keys, and reads the working directory's `.env`, then the
+  plugin folder's.
+- `references/dialect-translation.md` lists `G97_LEGACY_SQL`.
+- Inventory has one module per service (`inventory/gcs.py`, `dataproc.py`, `composer.py`,
+  `dataform.py`, `dataflow.py`, `vertex.py`) instead of one `services.py`; behaviour is
+  unchanged.
+
+### Fixed
+- An empty `.env` line such as `OCI_CLI_PROFILE=` (as `.env.example` ships it) was exported
+  as an empty value, and `aidp-cli` then looked for an OCI profile named `''` and crashed:
+  `publish --apply` and `run` failed for anyone who had copied the example. An empty value
+  now means unset.
+- `G19_CAST_TYPE` rewrote words after a nested CAST's `AS`: in
+  `CAST(COALESCE(CAST(x AS STRING), bytes) AS STRING)` the column `bytes` became
+  `BINARY`, reported clean. A CAST now rewrites only the type after its own
+  top-level `AS`, which also ends a false flag on `CAST(CAST(x AS INT64) AS STRING)`.
+- `G01_REFERENCE` left DML and DDL targets as written: `INSERT INTO d.t`, `MERGE`,
+  `UPDATE`, `DELETE`, `CREATE`/`TRUNCATE TABLE`. A scheduled query's job would have
+  written to `d.t` in the session's default catalog, reported clean. A target in the
+  plan is now rewritten to the AIDP catalog, and one that is not is flagged.
+- `G24_LITERAL` flagged any string starting with the letter b (`'Bought'`) as a
+  bytes literal.
+- Inventory: one dataset, routine or model the account cannot read no longer fails
+  the whole BigQuery scan. It is recorded as *not scanned* and the rest is listed.
+- The data-plane reports name their catalog, and a stage ignores an earlier report
+  for another catalog, so a reused reports folder no longer carries one migration's
+  failures or statuses into the next.
+- `plan` checked duplicate ids in quadratic time; 100,000 tables now plan in about
+  a second.
+- A Cloud Storage bucket name that is not a valid one fails the plan: the name is
+  written into the rclone transfer script.
+- `.gitignore` covers `*.pem` and the default output names at the plugin root.
+- `demo.sh` wiped whatever folder `OUT` named. An `OUT` you set is now wiped only
+  if it is empty or holds an earlier demo.
+- `test-estate/MANUAL_STEPS.md` is written for anyone testing the plugin: it adds
+  the publish-and-run path, and its expected results match the seed (six copyable
+  tables, `v_blocked` blocked, the materialized view's verdict per path).
+
+### Known gaps
+- `EXTRACT(DAY FROM t.col)` is flagged as a relation not in the plan (safe, but
+  noisy).
+- Views are created in plan order, so a view on another view fails the first
+  `01_structure` run and is created on the next.
+- External tables infer their schema on AIDP; the BigQuery column list the
+  inventory reads is not yet carried into the DDL.
+- Scheduled queries are listed only in locations that hold a dataset.

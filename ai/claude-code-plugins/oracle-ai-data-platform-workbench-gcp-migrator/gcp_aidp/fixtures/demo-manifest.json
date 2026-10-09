@@ -1,0 +1,2056 @@
+{
+  "project_id": "northwind-analytics-demo",
+  "scanned_at": "2026-10-01T09:00:00Z",
+  "customer_persona": "Northwind Retail — sample/fixture, no real data",
+  "sources_scanned": [
+    "bigquery",
+    "gcs",
+    "dataproc",
+    "composer",
+    "dataform",
+    "dataflow",
+    "vertex"
+  ],
+  "sources": {
+    "bigquery": {
+      "summary": {
+        "datasets": 4,
+        "tables": 35,
+        "views": 8,
+        "materialized_views": 2,
+        "external_tables": 3,
+        "routines": 5,
+        "models": 2,
+        "saved_queries": 4,
+        "scheduled_queries": 3,
+        "access_policies": 4,
+        "notebooks": 3,
+        "pipelines": 1
+      },
+      "items": {
+        "datasets": [
+          {
+            "name": "sales",
+            "location": "US",
+            "description": "Orders, customers and products"
+          },
+          {
+            "name": "marketing",
+            "location": "US",
+            "description": "Campaigns and web events"
+          },
+          {
+            "name": "finance",
+            "location": "US",
+            "description": "General ledger and payments"
+          },
+          {
+            "name": "logs",
+            "location": "US",
+            "description": "Daily-sharded application logs"
+          }
+        ],
+        "tables": [
+          {
+            "dataset": "sales",
+            "name": "orders",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "order_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "customer_id",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "status",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "order_date",
+                "type": "DATE",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "total",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "created_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 2400000,
+            "num_bytes": 432000000,
+            "description": "One row per order",
+            "labels": {},
+            "partitioning": {
+              "type": "DAY",
+              "field": "order_date"
+            },
+            "clustering": [
+              "customer_id",
+              "status"
+            ]
+          },
+          {
+            "dataset": "sales",
+            "name": "order_items",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "order_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "line_no",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "product_id",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "quantity",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "unit_price",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "discount",
+                "type": "FLOAT",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 7100000,
+            "num_bytes": 1278000000,
+            "description": "",
+            "labels": {},
+            "clustering": [
+              "order_id"
+            ]
+          },
+          {
+            "dataset": "sales",
+            "name": "customers",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "customer_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "name",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "email",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "is_active",
+                "type": "BOOLEAN",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "address",
+                "type": "RECORD",
+                "mode": "NULLABLE",
+                "fields": [
+                  {
+                    "name": "street",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "city",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "postcode",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "country",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  }
+                ]
+              },
+              {
+                "name": "tags",
+                "type": "STRING",
+                "mode": "REPEATED"
+              },
+              {
+                "name": "orders_summary",
+                "type": "RECORD",
+                "mode": "REPEATED",
+                "fields": [
+                  {
+                    "name": "year",
+                    "type": "INTEGER",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "order_count",
+                    "type": "INTEGER",
+                    "mode": "NULLABLE"
+                  }
+                ]
+              }
+            ],
+            "num_rows": 310000,
+            "num_bytes": 55800000,
+            "description": "Customer master",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "products",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "product_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "sku",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "name",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "category",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "list_price",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "thumbnail",
+                "type": "BYTES",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 18000,
+            "num_bytes": 3240000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "returns",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "order_id",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "reason",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refund",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 95000,
+            "num_bytes": 17100000,
+            "description": "",
+            "labels": {},
+            "partitioning": {
+              "type": "DAY",
+              "field": null
+            }
+          },
+          {
+            "dataset": "sales",
+            "name": "store_visits",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "visit_id",
+                "type": "STRING",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "store_location",
+                "type": "GEOGRAPHY",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "payload",
+                "type": "JSON",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "basket_value",
+                "type": "BIGNUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "visited_at_local",
+                "type": "DATETIME",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "opening_time",
+                "type": "TIME",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "dwell",
+                "type": "INTERVAL",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "promo_window",
+                "type": "RANGE",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 1200000,
+            "num_bytes": 216000000,
+            "description": "",
+            "labels": {},
+            "partitioning": {
+              "type": "MONTH",
+              "field": "visited_at_local"
+            }
+          },
+          {
+            "dataset": "marketing",
+            "name": "campaigns",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "campaign_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "name",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "channel",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "budget",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "start_date",
+                "type": "DATE",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "end_date",
+                "type": "DATE",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 1400,
+            "num_bytes": 252000,
+            "description": "",
+            "labels": {
+              "owner": "growth"
+            }
+          },
+          {
+            "dataset": "marketing",
+            "name": "web_events",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "event_id",
+                "type": "STRING",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "event_ts",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "user_pseudo_id",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "event_name",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "params",
+                "type": "RECORD",
+                "mode": "REPEATED",
+                "fields": [
+                  {
+                    "name": "key",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "value",
+                    "type": "RECORD",
+                    "mode": "NULLABLE",
+                    "fields": [
+                      {
+                        "name": "string_value",
+                        "type": "STRING",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "int_value",
+                        "type": "INTEGER",
+                        "mode": "NULLABLE"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "num_rows": 88000000,
+            "num_bytes": 15840000000,
+            "description": "",
+            "labels": {},
+            "partitioning": {
+              "type": "DAY",
+              "field": "event_ts"
+            },
+            "clustering": [
+              "event_name"
+            ],
+            "expiration_ms": 7776000000
+          },
+          {
+            "dataset": "marketing",
+            "name": "audience_segments",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "segment_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "name",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "member_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 640,
+            "num_bytes": 115200,
+            "description": "",
+            "labels": {},
+            "partitioning": {
+              "type": "RANGE",
+              "field": "segment_id",
+              "range": {
+                "start": 0,
+                "end": 1000,
+                "interval": 100
+              }
+            }
+          },
+          {
+            "dataset": "finance",
+            "name": "gl_entries",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "entry_id",
+                "type": "INTEGER",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "account",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "amount",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "currency",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "posted_on",
+                "type": "DATE",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "posted_by",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 5600000,
+            "num_bytes": 1008000000,
+            "description": "",
+            "labels": {},
+            "partitioning": {
+              "type": "MONTH",
+              "field": "posted_on"
+            },
+            "clustering": [
+              "account"
+            ]
+          },
+          {
+            "dataset": "finance",
+            "name": "payments",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "payment_id",
+                "type": "STRING",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "order_id",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "amount",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "method",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "paid_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "card_last4",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 2350000,
+            "num_bytes": 423000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "fx_rates",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "rate_date",
+                "type": "DATE",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "from_ccy",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "to_ccy",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "rate",
+                "type": "BIGNUMERIC",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 52000,
+            "num_bytes": 9360000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "daily_revenue",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 10000,
+            "num_bytes": 1800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "weekly_revenue",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 20000,
+            "num_bytes": 3600000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "monthly_revenue",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 30000,
+            "num_bytes": 5400000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "category_revenue",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 40000,
+            "num_bytes": 7200000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "store_revenue",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 50000,
+            "num_bytes": 9000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "customer_ltv",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 60000,
+            "num_bytes": 10800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "repeat_purchase",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 70000,
+            "num_bytes": 12600000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "sales",
+            "name": "basket_size",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 80000,
+            "num_bytes": 14400000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "campaign_daily",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 10000,
+            "num_bytes": 1800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "channel_mix",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 20000,
+            "num_bytes": 3600000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "attribution_last_touch",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 30000,
+            "num_bytes": 5400000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "attribution_first_touch",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 40000,
+            "num_bytes": 7200000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "email_sends",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 50000,
+            "num_bytes": 9000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "marketing",
+            "name": "email_opens",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 60000,
+            "num_bytes": 10800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "trial_balance",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 10000,
+            "num_bytes": 1800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "ar_aging",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 20000,
+            "num_bytes": 3600000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "ap_aging",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 30000,
+            "num_bytes": 5400000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "cash_position",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 40000,
+            "num_bytes": 7200000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "budget_vs_actual",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 50000,
+            "num_bytes": 9000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "finance",
+            "name": "cost_centres",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "report_date",
+                "type": "DATE",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "dimension",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "metric_value",
+                "type": "NUMERIC",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "row_count",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "refreshed_at",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 60000,
+            "num_bytes": 10800000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "logs",
+            "name": "app_events_20260901",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "ts",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "level",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "message",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "attributes",
+                "type": "JSON",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 4000000,
+            "num_bytes": 720000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "logs",
+            "name": "app_events_20260902",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "ts",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "level",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "message",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "attributes",
+                "type": "JSON",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 4000000,
+            "num_bytes": 720000000,
+            "description": "",
+            "labels": {}
+          },
+          {
+            "dataset": "logs",
+            "name": "app_events_20260903",
+            "type": "TABLE",
+            "columns": [
+              {
+                "name": "ts",
+                "type": "TIMESTAMP",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "level",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "message",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "attributes",
+                "type": "JSON",
+                "mode": "NULLABLE"
+              }
+            ],
+            "num_rows": 4000000,
+            "num_bytes": 720000000,
+            "description": "",
+            "labels": {}
+          }
+        ],
+        "views": [
+          {
+            "dataset": "sales",
+            "name": "v_active_customers",
+            "query": "SELECT customer_id, name, email\nFROM `northwind-analytics-demo.sales.customers`\nWHERE is_active"
+          },
+          {
+            "dataset": "sales",
+            "name": "v_order_kpis",
+            "query": "SELECT order_date,\n       COUNTIF(status = 'RETURNED') AS returned_orders,\n       SAFE_DIVIDE(SUM(total), COUNT(*)) AS avg_order_value,\n       TIMESTAMP_TRUNC(MAX(created_at), DAY) AS last_order_day\nFROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date"
+          },
+          {
+            "dataset": "sales",
+            "name": "v_latest_order_per_customer",
+            "query": "SELECT * FROM `northwind-analytics-demo.sales.orders`\nQUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) = 1"
+          },
+          {
+            "dataset": "sales",
+            "name": "v_customer_tags",
+            "query": "SELECT c.customer_id, tag\nFROM `northwind-analytics-demo.sales.customers` AS c, UNNEST(c.tags) AS tag"
+          },
+          {
+            "dataset": "marketing",
+            "name": "v_campaign_days",
+            "query": "SELECT campaign_id, DATE_DIFF(end_date, start_date, DAY) AS days\nFROM `northwind-analytics-demo.marketing.campaigns`"
+          },
+          {
+            "dataset": "marketing",
+            "name": "v_events_no_params",
+            "query": "SELECT * EXCEPT (params)\nFROM `northwind-analytics-demo.marketing.web_events`"
+          },
+          {
+            "dataset": "finance",
+            "name": "v_payments_masked",
+            "query": "SELECT payment_id, order_id, amount, method,\n       FORMAT_DATE('%Y-%m-%d', DATE(paid_at)) AS paid_on\nFROM `northwind-analytics-demo.finance.payments`"
+          },
+          {
+            "dataset": "logs",
+            "name": "v_all_app_events",
+            "query": "SELECT _TABLE_SUFFIX AS day, *\nFROM `northwind-analytics-demo.logs.app_events_*`"
+          }
+        ],
+        "materialized_views": [
+          {
+            "dataset": "sales",
+            "name": "mv_daily_sales",
+            "query": "SELECT order_date, COUNT(*) AS orders, SUM(total) AS revenue\nFROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date",
+            "refresh_interval_minutes": 60
+          },
+          {
+            "dataset": "marketing",
+            "name": "mv_events_by_name",
+            "query": "SELECT event_name, DATE(event_ts) AS day, COUNT(*) AS events\nFROM `northwind-analytics-demo.marketing.web_events`\nGROUP BY 1, 2",
+            "refresh_interval_minutes": 30
+          }
+        ],
+        "external_tables": [
+          {
+            "dataset": "marketing",
+            "name": "ext_ad_spend",
+            "format": "PARQUET",
+            "source_uris": [
+              "gs://northwind-landing/ad_spend/*.parquet"
+            ]
+          },
+          {
+            "dataset": "finance",
+            "name": "ext_bank_statements",
+            "format": "CSV",
+            "source_uris": [
+              "gs://northwind-landing/bank/*.csv"
+            ]
+          },
+          {
+            "dataset": "logs",
+            "name": "ext_cdn_logs",
+            "format": "NEWLINE_DELIMITED_JSON",
+            "source_uris": [
+              "gs://northwind-logs-archive/cdn/2026/*.json"
+            ]
+          }
+        ],
+        "routines": [
+          {
+            "dataset": "sales",
+            "name": "net_price",
+            "routine_type": "SCALAR_FUNCTION",
+            "language": "SQL",
+            "body": "price * (1 - IFNULL(discount, 0))",
+            "arguments": [
+              {
+                "name": "price",
+                "type": "NUMERIC"
+              },
+              {
+                "name": "discount",
+                "type": "FLOAT64"
+              }
+            ],
+            "return_type": "NUMERIC"
+          },
+          {
+            "dataset": "sales",
+            "name": "safe_ratio",
+            "routine_type": "SCALAR_FUNCTION",
+            "language": "SQL",
+            "body": "SAFE_DIVIDE(a, b)",
+            "arguments": [
+              {
+                "name": "a",
+                "type": "FLOAT64"
+              },
+              {
+                "name": "b",
+                "type": "FLOAT64"
+              }
+            ],
+            "return_type": "FLOAT64"
+          },
+          {
+            "dataset": "marketing",
+            "name": "parse_utm",
+            "routine_type": "SCALAR_FUNCTION",
+            "language": "JAVASCRIPT",
+            "body": "var m = /utm_source=([^&]+)/.exec(url);\nreturn m ? m[1] : null;",
+            "arguments": [
+              {
+                "name": "url",
+                "type": "STRING"
+              }
+            ],
+            "return_type": "STRING"
+          },
+          {
+            "dataset": "sales",
+            "name": "orders_for_customer",
+            "routine_type": "TABLE_VALUED_FUNCTION",
+            "language": "SQL",
+            "body": "SELECT * FROM `northwind-analytics-demo.sales.orders` WHERE customer_id = cid",
+            "arguments": [
+              {
+                "name": "cid",
+                "type": "INT64"
+              }
+            ]
+          },
+          {
+            "dataset": "finance",
+            "name": "close_month",
+            "routine_type": "PROCEDURE",
+            "language": "SQL",
+            "body": "BEGIN\n  DECLARE period DATE DEFAULT DATE_TRUNC(CURRENT_DATE(), MONTH);\n  DELETE FROM `northwind-analytics-demo.finance.trial_balance` WHERE report_date = period;\n  INSERT INTO `northwind-analytics-demo.finance.trial_balance`\n  SELECT period, account, SUM(amount), COUNT(*), CURRENT_TIMESTAMP()\n  FROM `northwind-analytics-demo.finance.gl_entries`\n  WHERE DATE_TRUNC(posted_on, MONTH) = period GROUP BY account;\nEND",
+            "arguments": []
+          }
+        ],
+        "models": [
+          {
+            "dataset": "marketing",
+            "name": "churn_model",
+            "model_type": "LOGISTIC_REG"
+          },
+          {
+            "dataset": "sales",
+            "name": "demand_forecast",
+            "model_type": "ARIMA_PLUS"
+          }
+        ],
+        "saved_queries": [
+          {
+            "name": "Top products last 30 days",
+            "query": "SELECT p.name, SUM(i.quantity) AS units\nFROM `northwind-analytics-demo.sales.order_items` i\nJOIN `northwind-analytics-demo.sales.products` p USING (product_id)\nGROUP BY p.name ORDER BY units DESC LIMIT 20"
+          },
+          {
+            "name": "Refund rate by reason",
+            "query": "SELECT reason, COUNT(*) AS n\nFROM `northwind-analytics-demo.sales.returns`\nGROUP BY reason"
+          },
+          {
+            "name": "Campaign ROI",
+            "query": "SELECT c.name, SAFE_DIVIDE(SUM(o.total), c.budget) AS roi\nFROM `northwind-analytics-demo.marketing.campaigns` c\nJOIN `northwind-analytics-demo.sales.orders` o\n  ON o.order_date BETWEEN c.start_date AND c.end_date\nGROUP BY c.name, c.budget"
+          },
+          {
+            "name": "Churn scoring",
+            "query": "SELECT * FROM ML.PREDICT(MODEL `northwind-analytics-demo.marketing.churn_model`,\n  TABLE `northwind-analytics-demo.sales.customers`)"
+          }
+        ],
+        "scheduled_queries": [
+          {
+            "id": "6512f0a1-0000-2b8e-a1d4-001a11440001",
+            "name": "Refresh daily_revenue",
+            "schedule": "every day 02:00",
+            "destination_dataset": "sales",
+            "query": "SELECT order_date AS report_date, 'all' AS dimension, SUM(total) AS metric_value,\n       COUNT(*) AS row_count, CURRENT_TIMESTAMP() AS refreshed_at\nFROM `northwind-analytics-demo.sales.orders`\nWHERE order_date = DATE_SUB(@run_date, INTERVAL 1 DAY)\nGROUP BY order_date"
+          },
+          {
+            "id": "6512f0a1-0000-2b8e-a1d4-001a11440002",
+            "name": "Refresh channel_mix",
+            "schedule": "every monday 03:00",
+            "destination_dataset": "marketing",
+            "query": "SELECT CURRENT_DATE() AS report_date, channel AS dimension, SUM(budget) AS metric_value,\n       COUNT(*) AS row_count, CURRENT_TIMESTAMP() AS refreshed_at\nFROM `northwind-analytics-demo.marketing.campaigns`\nGROUP BY channel"
+          },
+          {
+            "id": "6512f0a1-0000-2b8e-a1d4-001a11440003",
+            "name": "Month-end close",
+            "schedule": "1 of month 04:00",
+            "destination_dataset": null,
+            "query": "CALL `northwind-analytics-demo.finance.close_month`()"
+          }
+        ],
+        "access_policies": [
+          {
+            "kind": "row_access_policy",
+            "dataset": "finance",
+            "table": "payments",
+            "name": "emea_only",
+            "filter": "region = 'EMEA'",
+            "grantees": [
+              "group:finance-emea@example.com"
+            ]
+          },
+          {
+            "kind": "column_policy_tag",
+            "dataset": "finance",
+            "table": "payments",
+            "column": "card_last4",
+            "policy_tag": "projects/northwind-analytics-demo/locations/us/taxonomies/1/policyTags/pci"
+          },
+          {
+            "kind": "column_policy_tag",
+            "dataset": "sales",
+            "table": "customers",
+            "column": "email",
+            "policy_tag": "projects/northwind-analytics-demo/locations/us/taxonomies/1/policyTags/pii"
+          },
+          {
+            "kind": "dataset_iam",
+            "dataset": "finance",
+            "role": "roles/bigquery.dataViewer",
+            "members": [
+              "group:finance-analysts@example.com"
+            ]
+          }
+        ],
+        "notebooks": [
+          {
+            "name": "Customer segmentation exploration",
+            "id": "nb-0001"
+          },
+          {
+            "name": "Revenue anomaly triage",
+            "id": "nb-0002"
+          },
+          {
+            "name": "Ad spend data checks",
+            "id": "nb-0003"
+          }
+        ],
+        "pipelines": [
+          {
+            "name": "nightly_marketing_rollup",
+            "id": "pl-0001"
+          }
+        ]
+      }
+    },
+    "gcs": {
+      "summary": {
+        "buckets": 4
+      },
+      "items": {
+        "buckets": [
+          {
+            "name": "northwind-landing",
+            "location": "US",
+            "storage_class": "STANDARD"
+          },
+          {
+            "name": "northwind-logs-archive",
+            "location": "US",
+            "storage_class": "COLDLINE"
+          },
+          {
+            "name": "northwind-ml-artifacts",
+            "location": "US-CENTRAL1",
+            "storage_class": "STANDARD"
+          },
+          {
+            "name": "northwind-composer-dags",
+            "location": "US-CENTRAL1",
+            "storage_class": "STANDARD"
+          }
+        ]
+      }
+    },
+    "dataproc": {
+      "summary": {
+        "clusters": 2,
+        "jobs": 4
+      },
+      "items": {
+        "clusters": [
+          {
+            "name": "etl-nightly",
+            "region": "us-central1",
+            "image_version": "2.2-debian12",
+            "worker_count": 8,
+            "machine_type": "n2-standard-8"
+          },
+          {
+            "name": "adhoc-analytics",
+            "region": "us-central1",
+            "image_version": "2.1-debian11",
+            "worker_count": 2,
+            "machine_type": "n2-standard-4"
+          }
+        ],
+        "jobs": [
+          {
+            "id": "job-sessionize-01",
+            "cluster": "etl-nightly",
+            "job_type": "pyspark",
+            "main_file": "gs://northwind-landing/jobs/sessionize.py"
+          },
+          {
+            "id": "job-dedupe-events",
+            "cluster": "etl-nightly",
+            "job_type": "pyspark",
+            "main_file": "gs://northwind-landing/jobs/dedupe_events.py"
+          },
+          {
+            "id": "job-gl-export",
+            "cluster": "etl-nightly",
+            "job_type": "spark",
+            "main_file": "gs://northwind-landing/jobs/gl-export.jar"
+          },
+          {
+            "id": "job-cohort-sql",
+            "cluster": "adhoc-analytics",
+            "job_type": "spark_sql",
+            "main_file": "gs://northwind-landing/jobs/cohorts.sql"
+          }
+        ]
+      }
+    },
+    "composer": {
+      "summary": {
+        "environments": 1,
+        "dags": 6,
+        "not_scanned": {
+          "code of northwind-orchestration/dags/ml_feature_refresh.py": "HTTP 403 PERMISSION_DENIED: storage.objects.get"
+        }
+      },
+      "items": {
+        "environments": [
+          {
+            "name": "northwind-orchestration",
+            "region": "us-central1",
+            "image_version": "composer-2.9.7-airflow-2.9.3",
+            "dag_prefix": "gs://northwind-composer-dags/dags"
+          }
+        ],
+        "dags": [
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "revenue_rollup",
+            "file": "gs://northwind-composer-dags/dags/revenue_rollup.py",
+            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.operators.empty import EmptyOperator\nfrom airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator\n\ndefault_args = {\"owner\": \"data-eng\", \"email\": [\"data-eng@northwind.example\"], \"retries\": 2}\n\nwith DAG(\n    dag_id=\"revenue_rollup\",\n    schedule=\"0 3 * * *\",\n    start_date=datetime(2026, 1, 1),\n    catchup=False,\n    max_active_runs=1,\n    default_args=default_args,\n) as dag:\n    start = EmptyOperator(task_id=\"start\")\n\n    load_daily = BigQueryInsertJobOperator(\n        task_id=\"load_daily_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.daily_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT order_date, 'orders', SUM(total), COUNT(*), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.orders`\n                    GROUP BY order_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    load_shipped = BigQueryInsertJobOperator(\n        task_id=\"load_shipped_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.weekly_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT order_date, 'shipped', SUM(total), COUNT(*), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.orders`\n                    WHERE status = 'SHIPPED'\n                    GROUP BY order_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    combine = BigQueryInsertJobOperator(\n        task_id=\"combine_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.store_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT report_date, 'combined', SUM(metric_value), SUM(row_count), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.daily_revenue`\n                    GROUP BY report_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    start >> [load_daily, load_shipped] >> combine\n"
+          },
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "customer_profiles",
+            "file": "gs://northwind-composer-dags/dags/customer_profiles.py",
+            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.providers.google.cloud.operators.dataproc import DataprocSubmitJobOperator\n\nwith DAG(\"customer_profiles\", schedule=\"@daily\", start_date=datetime(2026, 1, 1), catchup=False) as dag:\n    build_profiles = DataprocSubmitJobOperator(\n        task_id=\"build_profiles\",\n        project_id=\"northwind-analytics-demo\",\n        region=\"us-central1\",\n        job={\"placement\": {\"cluster_name\": \"etl-nightly\"}, \"pyspark_job\": {\"main_python_file_uri\": \"gs://northwind-landing/jobs/sessionize.py\"}},\n    )\n"
+          },
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "regional_exports",
+            "file": "gs://northwind-composer-dags/dags/regional_exports.py",
+            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.operators.empty import EmptyOperator\n\nwith DAG(\"regional_exports\", schedule=\"0 5 * * 1\", start_date=datetime(2026, 1, 1)) as dag:\n    start = EmptyOperator(task_id=\"start\")\n    for region in [\"emea\", \"apac\", \"amer\"]:\n        export = EmptyOperator(task_id=f\"export_{region}\")\n        start >> export\n"
+          },
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "month_end_close",
+            "file": "gs://northwind-composer-dags/dags/month_end_close.py",
+            "code": "from airflow import DAG\n\nwith DAG(\"month_end_close\", schedule=\"0 6 1 * *\"\n    close = None\n"
+          },
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "common_settings",
+            "file": "gs://northwind-composer-dags/dags/common_settings.py",
+            "code": "\"\"\"Shared constants for the DAG files in this folder.\"\"\"\n\nPROJECT = \"northwind-analytics-demo\"\nREGION = \"us-central1\"\n"
+          },
+          {
+            "environment": "northwind-orchestration",
+            "dag_id": "ml_feature_refresh",
+            "file": "gs://northwind-composer-dags/dags/ml_feature_refresh.py",
+            "code": "",
+            "code_not_scanned": "HTTP 403 PERMISSION_DENIED: storage.objects.get"
+          }
+        ]
+      }
+    },
+    "dataform": {
+      "summary": {
+        "repositories": 2
+      },
+      "items": {
+        "repositories": [
+          {
+            "name": "northwind-transformations",
+            "region": "us-central1",
+            "compiled_from": "an enabled release config (production-2026-10-01)",
+            "schedules": [
+              {
+                "kind": "release_config",
+                "name": "production",
+                "cronSchedule": "0 4 * * *",
+                "timeZone": "America/New_York",
+                "disabled": "false"
+              },
+              {
+                "kind": "workflow_config",
+                "name": "nightly",
+                "cronSchedule": "30 4 * * *",
+                "timeZone": "America/New_York",
+                "disabled": "false"
+              }
+            ],
+            "actions": [
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "sales",
+                  "name": "orders"
+                },
+                "filePath": "definitions/sources.js",
+                "declaration": {}
+              },
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "sales",
+                  "name": "order_totals_by_day"
+                },
+                "filePath": "definitions/order_totals_by_day.sqlx",
+                "relation": {
+                  "relationType": "TABLE",
+                  "selectQuery": "SELECT order_date, COUNT(*) AS orders, SUM(total) AS revenue\nFROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date",
+                  "dependencyTargets": [
+                    {
+                      "database": "northwind-analytics-demo",
+                      "schema": "sales",
+                      "name": "orders"
+                    }
+                  ],
+                  "tags": [
+                    "daily"
+                  ]
+                }
+              },
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "sales",
+                  "name": "v_order_totals_nonempty"
+                },
+                "filePath": "definitions/v_order_totals_nonempty.sqlx",
+                "relation": {
+                  "relationType": "VIEW",
+                  "selectQuery": "SELECT order_date, orders, revenue\nFROM `northwind-analytics-demo.sales.order_totals_by_day`\nWHERE orders > 0",
+                  "dependencyTargets": [
+                    {
+                      "database": "northwind-analytics-demo",
+                      "schema": "sales",
+                      "name": "order_totals_by_day"
+                    }
+                  ],
+                  "tags": [
+                    "daily"
+                  ]
+                }
+              },
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "dataform_assertions",
+                  "name": "order_totals_by_day_assertions_uniqueKey_0"
+                },
+                "filePath": "definitions/order_totals_by_day.sqlx",
+                "assertion": {
+                  "selectQuery": "SELECT * FROM (SELECT order_date, COUNT(1) AS index_row_count\nFROM `northwind-analytics-demo.sales.order_totals_by_day`\nGROUP BY order_date) AS data\nWHERE index_row_count > 1",
+                  "dependencyTargets": [
+                    {
+                      "database": "northwind-analytics-demo",
+                      "schema": "sales",
+                      "name": "order_totals_by_day"
+                    }
+                  ]
+                }
+              },
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "sales",
+                  "name": "legacy_order_export"
+                },
+                "filePath": "definitions/legacy_order_export.sqlx",
+                "relation": {
+                  "relationType": "TABLE",
+                  "disabled": true,
+                  "selectQuery": "SELECT * FROM `northwind-analytics-demo.sales.orders`",
+                  "dependencyTargets": [
+                    {
+                      "database": "northwind-analytics-demo",
+                      "schema": "sales",
+                      "name": "orders"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "northwind-events-incremental",
+            "region": "us-central1",
+            "compiled_from": "the newest compilation result (8d1f0c2e)",
+            "schedules": [],
+            "actions": [
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "marketing",
+                  "name": "web_events"
+                },
+                "filePath": "definitions/sources.js",
+                "declaration": {}
+              },
+              {
+                "target": {
+                  "database": "northwind-analytics-demo",
+                  "schema": "marketing",
+                  "name": "events_daily"
+                },
+                "filePath": "definitions/events_daily.sqlx",
+                "relation": {
+                  "relationType": "INCREMENTAL_TABLE",
+                  "selectQuery": "SELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events\nFROM `northwind-analytics-demo.marketing.web_events`\nGROUP BY 1, 2",
+                  "incrementalTableConfig": {
+                    "incrementalSelectQuery": "SELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events\nFROM `northwind-analytics-demo.marketing.web_events`\nWHERE event_ts > (SELECT MAX(event_date) FROM `northwind-analytics-demo.marketing.events_daily`)\nGROUP BY 1, 2",
+                    "uniqueKeyParts": [
+                      "event_date",
+                      "event_name"
+                    ]
+                  },
+                  "dependencyTargets": [
+                    {
+                      "database": "northwind-analytics-demo",
+                      "schema": "marketing",
+                      "name": "web_events"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "dataflow": {
+      "summary": {
+        "jobs": 3
+      },
+      "items": {
+        "jobs": [
+          {
+            "id": "2026-09-01_02_00_00-111",
+            "name": "pubsub-orders-to-bq",
+            "job_type": "JOB_TYPE_STREAMING"
+          },
+          {
+            "id": "2026-09-01_03_00_00-222",
+            "name": "gcs-cdn-logs-to-bq",
+            "job_type": "JOB_TYPE_BATCH"
+          },
+          {
+            "id": "2026-09-01_04_00_00-333",
+            "name": "crm-sync",
+            "job_type": "JOB_TYPE_BATCH"
+          }
+        ]
+      }
+    },
+    "vertex": {
+      "summary": {
+        "models": 2,
+        "endpoints": 1,
+        "pipelines": 1
+      },
+      "items": {
+        "models": [
+          {
+            "name": "propensity-xgb",
+            "id": "vm-001"
+          },
+          {
+            "name": "reco-two-tower",
+            "id": "vm-002"
+          }
+        ],
+        "endpoints": [
+          {
+            "name": "reco-online",
+            "id": "ve-001"
+          }
+        ],
+        "pipelines": [
+          {
+            "name": "propensity-training",
+            "id": "vp-001"
+          }
+        ]
+      }
+    }
+  }
+}

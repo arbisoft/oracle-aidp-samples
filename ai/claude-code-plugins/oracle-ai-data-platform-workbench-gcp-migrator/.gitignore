@@ -1,0 +1,27 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Never commit credentials: a filled-in .env or a service account key.
+.env
+.env.*
+!.env.example
+*.json.key
+*-key.json
+/key.json
+*.pem
+
+# Outputs of the verbs hold a project's metadata; never commit them.
+inventory-*.json
+*.plan.json
+*.plan.md
+migrated/
+# The default names in the docs and the MCP server, at the plugin root only
+# (commands/plan.md is a slash command, not an output).
+/inv.json
+/plan.json
+/plan.md

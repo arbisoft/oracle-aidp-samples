@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gcp-aidp-migrator"
+dynamic = ["version"]
+description = "Google Cloud data-stack → Oracle AIDP migrator (BigQuery, Cloud Storage)"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+# Offline verbs (fixture inventory, plan) need nothing beyond the stdlib.
+dependencies = []
+
+[project.optional-dependencies]
+# Live inventory: read-only REST GETs through google-auth; no Google client libraries.
+gcp = ["google-auth[requests]>=2.20"]
+# MCP server; SDK 2.x removed mcp.server.fastmcp.
+mcp = ["mcp>=1.2,<2; python_version >= '3.10'"]
+
+[project.scripts]
+gcp-aidp = "gcp_aidp.cli:main"
+gcp-aidp-mcp = "gcp_aidp.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["gcp_aidp*"]
+
+[tool.setuptools.package-data]
+"gcp_aidp.fixtures" = ["*.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gcp_aidp.__version__" }
