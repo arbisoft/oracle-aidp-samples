@@ -1,0 +1,16 @@
+{
+  "name": "aidp-gcp-migrator",
+  "owner": {
+    "name": "Oracle AI Data Platform",
+    "url": "https://github.com/oracle-samples/oracle-aidp-samples"
+  },
+  "description": "Oracle AIDP migration tooling for Google Cloud.",
+  "plugins": [
+    {
+      "name": "oracle-ai-data-platform-workbench-gcp-migrator",
+      "source": "./",
+      "displayName": "Oracle AIDP Migrator for Google Cloud",
+      "description": "Migrate a Google Cloud data stack (BigQuery/Cloud Storage) to Oracle AIDP."
+    }
+  ]
+}
