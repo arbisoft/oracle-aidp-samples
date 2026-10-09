@@ -288,9 +288,28 @@ ACCESS_POLICIES = [
      "role": "roles/bigquery.dataViewer", "members": ["group:finance-analysts@example.com"]},
 ]
 
+# Two notebooks as exported .ipynb (cell sources only); the third is listed, not exported.
 BQ_NOTEBOOKS = [
-    {"name": "Customer segmentation exploration", "id": "nb-0001"},
-    {"name": "Revenue anomaly triage", "id": "nb-0002"},
+    {"name": "Customer segmentation exploration", "id": "nb-0001", "cells": [
+        {"cell_type": "markdown", "source": "# Customer segmentation\nOrders per customer, by country."},
+        {"cell_type": "code", "source": "%load_ext bigquery_magics\n!pip install seaborn\nimport seaborn as sns\n"
+                                        "import bigframes.pandas as bpd"},
+        {"cell_type": "code", "source": "%%bigquery segments\nSELECT c.country, COUNT(*) AS orders,\n"
+                                        "       COUNTIF(o.status = 'Returned') AS returned\n"
+                                        "FROM `northwind-analytics-demo.sales.orders` o\n"
+                                        "JOIN `northwind-analytics-demo.sales.customers` c USING (customer_id)\n"
+                                        "GROUP BY c.country"},
+        {"cell_type": "code", "source": "%%bigquery products\nnorthwind-analytics-demo.sales.products"},
+        {"cell_type": "code", "source": "sns.barplot(data=segments, x=\"country\", y=\"orders\")"},
+    ]},
+    {"name": "Revenue anomaly triage", "id": "nb-0002", "cells": [
+        {"cell_type": "code", "source": "%%bigquery daily\nSELECT order_date, SAFE_DIVIDE(SUM(amount), COUNT(*)) AS avg_order\n"
+                                        "FROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date"},
+        {"cell_type": "code", "source": "import pandas as pd\n"
+                                        "targets = pd.read_csv(\"gs://northwind-landing/finance/targets.csv\")"},
+        {"cell_type": "code", "source": "%%bigquery legacy --use_legacy_sql\n"
+                                        "SELECT order_id FROM [northwind-analytics-demo:sales.orders] LIMIT 10"},
+    ]},
     {"name": "Ad spend data checks", "id": "nb-0003"},
 ]
 

@@ -39,6 +39,15 @@ All notable changes to this project are documented here. Format loosely follows
   Python list starting with the script's own path; the script runs as `__main__` with
   `spark` defined. New flags: `P09_LOCAL_FILES` (`__file__`, and files, modules or JARs
   Dataproc staged beside the job) and `P10_TEMPLATE_PARAMETER`.
+- BigQuery Studio notebooks: `inventory --notebooks-dir` reads exported `.ipynb` (cell sources
+  only; outputs, which can hold query results, are dropped). A notebook with content is
+  MIGRATE to an AIDP notebook: `%%bigquery [var]` cells become `spark.sql(...).toPandas()`
+  through the GoogleSQL rules (a table id becomes `spark.table`), magic options with no AIDP
+  meaning are flagged and legacy SQL blocks (`N01`, `N02`); `%load_ext` of the magic is
+  removed and other `%` and `!` lines are commented out and flagged (`N03`); Python cells take
+  the Dataproc rules. Translated notebooks upload with `publish`, without a job; one with a
+  blocked cell is kept local for a person to finish. Rule table:
+  `references/notebook-translation.md`.
 - Run live on AIDP: a translated PySpark job, a Spark SQL job and a two-step workflow
   template, published and run against the migrated tables; the PySpark job read 3,923 of
   the 15,709 `orders` rows reconcile had verified, and the template ran its steps in order.

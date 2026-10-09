@@ -27,7 +27,9 @@ optional layers on top of it that guide the workflow and help with setup and rev
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | an rclone transfer job to OCI Object Storage |
 | Procedures, JavaScript and table functions, BigQuery ML, access policies | → | reported with an effort band, not translated |
-| BigQuery Studio notebooks, Dataproc, Composer, Dataform, Dataflow, Vertex AI | → | inventoried, planned for a later version |
+| BigQuery Studio notebook, exported as `.ipynb` (0.2) | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
+| Dataproc PySpark and Spark SQL jobs, batches, workflow templates (0.2) | → | unscheduled AIDP jobs: a Python task, a SQL notebook, or one job per template |
+| Composer, Dataform, Dataflow, Vertex AI | → | inventoried, planned for a later version |
 
 ## Status (0.1)
 
@@ -39,6 +41,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
 | `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2 | offline only |
+| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks from `--notebooks-dir` (0.2, in progress) | 🚧 `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | offline only |
 | `plan` / `migrate` / `publish`: Dataproc (0.2, in progress) | 🚧 PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: a translated PySpark job (BigQuery read, connector setting, `spark.sql` name, `sys.argv`), a Spark SQL job and a two-step template ran on the migrated tables with the expected counts; Dataproc inventory offline only |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
@@ -271,7 +274,8 @@ read. Dataproc's run history is grouped into job definitions: one per main file 
 cluster, with its newest arguments and a run count. No query runs, and no bytes are billed. Row counts
 come from table metadata. Anything the scan could not read is recorded as *not
 scanned* and shown at the top of the plan: saved queries (pass
-`--saved-queries-dir` instead), BigQuery Studio notebooks and pipelines in 0.1,
+`--saved-queries-dir` instead), BigQuery Studio notebooks (export them as `.ipynb` and pass
+`--notebooks-dir`), BigQuery pipelines,
 and any API call that was refused. A service whose API is disabled is recorded
 as having nothing to migrate.
 
@@ -285,7 +289,7 @@ Every asset gets a plan row with one of three actions:
 |---|---|
 | `MIGRATE` | migrated in this version |
 | `REPORT` | inventoried and reported with an effort band; not translated (procedures, JavaScript and table functions, BigQuery ML models, access rules) |
-| `SKIP` | planned for a later version, with the reason (notebooks and Dataproc in 0.2, Composer and Dataform in 0.3, Dataflow and Vertex AI later), or outside `--datasets` |
+| `SKIP` | planned for a later version, with the reason (Composer and Dataform in 0.3, Dataflow and Vertex AI later), a notebook listed but not exported, or outside `--datasets` |
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate
@@ -411,6 +415,11 @@ tables, with the evidence for each decision, are
 
 A blocked statement is never partially translated: the artifact keeps the original,
 commented out.
+
+**BigQuery Studio notebooks (0.2, in progress):** `%%bigquery` cells become
+`spark.sql(...).toPandas()` through the GoogleSQL rules; Python cells take the Dataproc
+rules below. [`references/notebook-translation.md`](references/notebook-translation.md)
+has the `N01`–`N03` rules.
 
 **Dataproc PySpark and Spark SQL (0.2, in progress):** the code is Spark already, so only
 what it reaches outside Spark changes. The full table is

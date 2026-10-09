@@ -26,7 +26,8 @@ from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.dataplane import data_plan, write_jobs, write_notebooks
 from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_uri
-from gcp_aidp.translate.googlesql_to_spark import Context, statements, translate
+from gcp_aidp.translate.googlesql_to_spark import Context, Result, statements, translate
+from gcp_aidp.translate.notebook_to_aidp import translate_notebook
 from gcp_aidp.translate.pyspark_to_aidp import translate_pyspark, translate_spark_sql
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
@@ -245,6 +246,24 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             translated, more = ddl.create_function(tgt, src.get("arguments", []), src.get("return_type"), r.sql)
             findings += [_f(*f) for f in more]
             path = w.sql("functions", stem, aid, findings, translated)
+    elif t == "aidp_notebook":
+        cells, notebook_findings = translate_notebook(src["cells"], ctx)
+        findings = _sql_findings(Result("", "", notebook_findings))
+        header = [f"*Migrated from BigQuery Studio notebook `{src['name']}` by gcp-aidp. Status: "
+                  f"{_status(findings)}.*"] + [f"- **{f['severity']}** `{f['rule']}` {_one_line(f['detail'])}"
+                                               for f in findings if f["severity"] != "rewrite"]
+        nb = {"cells": [{"cell_type": "markdown", "metadata": {}, "source": "\n".join(header)}]
+              + [{"cell_type": c["cell_type"], "metadata": {}, "source": c["source"],
+                  **({"execution_count": None, "outputs": []} if c["cell_type"] == "code" else {})} for c in cells],
+              "metadata": {"gcp_aidp": {"source": src["name"]}, "language_info": {"name": "python"}},
+              "nbformat": 4, "nbformat_minor": 5}
+        p = w.path("bq_notebooks", tgt["name"], ".ipynb", aid)
+        write_text_atomic(p, json.dumps(nb, indent=1) + "\n")
+        path = p.relative_to(w.out_dir).as_posix()
+        source_sql = "\n\n".join(c.get("source", "") for c in src["cells"])
+        translated = "" if _status(findings) == "blocked" else "\n\n".join(c["source"] for c in cells)
+        if _status(findings) != "blocked":  # a notebook with a blocked cell stays local for a person to finish
+            row["notebook"] = path
     elif src["type"] in _DATAPROC:
         steps = src.get("steps") if src["type"] == "dataproc_workflow_template" else None
         if steps is None:
@@ -335,6 +354,7 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     notebooks = write_notebooks(dp, out_dir)
     jobs = write_jobs(dp, results, out_dir)
     notebooks += sorted({t["notebook"] for j in jobs for t in j["tasks"] if "notebook" in t} - set(notebooks))
+    notebooks += [r["notebook"] for r in results if r.get("notebook")]  # BigQuery Studio notebooks, no job
     files = sorted({t["python_file"] for j in jobs for t in j["tasks"] if "python_file" in t})
     if log:
         log(f"  notebooks: {len(notebooks)} ({len(dp['tables'])} tables to copy, "

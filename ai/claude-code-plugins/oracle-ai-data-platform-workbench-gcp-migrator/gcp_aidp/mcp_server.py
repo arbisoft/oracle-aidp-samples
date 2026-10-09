@@ -54,6 +54,7 @@ def inventory(
     sources: Optional[str] = None,
     regions: Optional[str] = None,
     saved_queries_dir: Optional[str] = None,
+    notebooks_dir: Optional[str] = None,
     scan_services: bool = False,
     output: str = "inv.json",
 ) -> str:
@@ -65,6 +66,7 @@ def inventory(
         sources: comma-separated subset of the sources to scan (default: all).
         regions: comma-separated regions for Dataproc, Composer, Dataform and Vertex AI.
         saved_queries_dir: a folder of saved queries exported as .sql files.
+        notebooks_dir: a folder of BigQuery Studio notebooks exported as .ipynb files.
         scan_services: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI
             (asks for a cloud-platform token; still GET calls only).
         output: manifest output path.
@@ -80,6 +82,8 @@ def inventory(
         args += ["--regions", regions]
     if saved_queries_dir:
         args += ["--saved-queries-dir", saved_queries_dir]
+    if notebooks_dir:
+        args += ["--notebooks-dir", notebooks_dir]
     if scan_services:
         args.append("--scan-services")
     return _run(args)

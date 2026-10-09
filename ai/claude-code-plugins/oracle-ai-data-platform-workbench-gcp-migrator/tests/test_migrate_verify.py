@@ -63,7 +63,12 @@ class Demo(unittest.TestCase):
 
     def test_blocked_artifacts_are_not_runnable(self):
         for r in self.report["results"]:
-            if r["status"] == "blocked" and r["kind"] != "bq_table":
+            if r["status"] == "blocked" and r["kind"] == "bq_notebook":
+                # Kept for a person to finish: its blocked cells are commented out, and it is never uploaded.
+                nb = json.loads((self.out / r["output_path"]).read_text())
+                self.assertTrue(any(c["source"].startswith("# gcp-aidp: NOT TRANSLATED") for c in nb["cells"]))
+                self.assertNotIn(r["output_path"], self.report["notebooks"])
+            elif r["status"] == "blocked" and r["kind"] != "bq_table":
                 body = (self.out / r["output_path"]).read_text()
                 self.assertTrue(all(l.startswith(("--", "#")) or not l.strip() for l in body.splitlines()),
                                 r["asset_id"])
@@ -142,7 +147,7 @@ class VerifyFailsClosed(unittest.TestCase):
 
 class EveryRuleHasATest(unittest.TestCase):
     def test_rule_ids_in_code_appear_in_tests(self):
-        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J|P)\d\d(?:_[A-Z0-9]+)+")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
         tests = "".join(p.read_text() for p in (ROOT / "tests").glob("test_*.py"))
         ids = set(rule.findall(code))

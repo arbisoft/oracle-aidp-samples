@@ -1,6 +1,6 @@
 ---
 description: Scan a Google Cloud project (read-only, metadata only) and write an AIDP migration manifest
-argument-hint: "[--project <id> | --fixture demo] [--sources bigquery,gcs] [--saved-queries-dir <dir>]"
+argument-hint: "[--project <id> | --fixture demo] [--sources bigquery,gcs] [--saved-queries-dir <dir>] [--notebooks-dir <dir>]"
 allowed-tools: Bash(gcp-aidp inventory:*), Bash(python3 -m gcp_aidp.cli inventory:*)
 ---
 

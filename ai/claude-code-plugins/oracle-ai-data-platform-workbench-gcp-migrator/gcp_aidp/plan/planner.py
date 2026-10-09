@@ -259,8 +259,15 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[di
                         {"type": "report"},
                         reason="access rules are reported, not carried: recreate them in AIDP"))
     for n in it["notebooks"]:
-        out.append(_skip(f"bigquery.notebook.{n['id']}", "code", "0.2",
-                         {"type": "bq_notebook", "id": n["id"], "name": n["name"]}, "aidp_notebook", n["name"]))
+        src = {"type": "bq_notebook", "id": n["id"], "name": n["name"]}
+        if not n.get("cells"):  # listed, not exported
+            out.append(_row(f"bigquery.notebook.{n['id']}", "code", "0.2", SKIP, src,
+                            {"type": "aidp_notebook", "name": n["name"]},
+                            reason="no content in the inventory: export it as .ipynb and pass --notebooks-dir"))
+            continue
+        out.append(_row(f"bigquery.notebook.{n['id']}", "code", "0.2", MIGRATE, {**src, "cells": n["cells"]},
+                        {"type": "aidp_notebook", "name": job_name(n["name"])},
+                        chain=["bigquery_magic_to_spark_sql", "write_notebook"]))
     for p in it["pipelines"]:
         out.append(_skip(f"bigquery.pipeline.{p['id']}", "code", "0.3",
                          {"type": "bq_pipeline", "id": p["id"], "name": p["name"]}, "aidp_job", p["name"]))
@@ -391,6 +398,8 @@ def _collisions(assets: list[dict]) -> list[str]:
             keys = [("bucket", t["namespace"], t["name"])]  # OCI bucket names are case-sensitive
         elif t["type"] == "spark_sql_file":
             keys = [("sql_file", t["name"].casefold())]
+        elif t["type"] == "aidp_notebook":
+            keys = [("notebook", t["name"].casefold())]
         elif t["type"] == "aidp_job":
             keys = [("job", t["name"].casefold())]
         else:

@@ -12,6 +12,8 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 - `--project`: default `$GCP_PROJECT`. Auth: `GOOGLE_APPLICATION_CREDENTIALS`.
 - `--sources`: subset of `bigquery,gcs,dataproc,composer,dataform,dataflow,vertex`.
 - `--saved-queries-dir`: saved queries exported as `.sql` files; there is no API for them.
+- `--notebooks-dir`: BigQuery Studio notebooks exported as `.ipynb`; cell sources are kept,
+  outputs dropped.
 - `--scan-services`: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI.
   Their APIs refuse a read-only token, so this uses a `cloud-platform` token for them
   alone (still GET calls only).

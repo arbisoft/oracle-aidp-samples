@@ -30,7 +30,6 @@ EXPECTED = {
     "bq_row_access_policy": ("REPORT", "0.1"),
     "bq_column_policy_tag": ("REPORT", "0.1"),
     "bq_dataset_iam": ("REPORT", "0.1"),
-    "bq_notebook": ("SKIP", "0.2"),
     "dataproc_cluster": ("REPORT", "0.2"),
     "dataproc_batch": ("MIGRATE", "0.2"),
     "dataproc_workflow_template": ("MIGRATE", "0.2"),
@@ -119,6 +118,17 @@ class Datasets(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         return write_plan_markdown(plan, Path(self._tmp.name) / "plan.md")
+
+
+class NotebookPlan(unittest.TestCase):
+    def test_exported_notebooks_migrate_and_listed_ones_say_how(self):
+        by_id = {a["id"]: a for a in build_plan(DEMO)["assets"]}
+        nb = by_id["bigquery.notebook.nb-0001"]
+        self.assertEqual((nb["action"], nb["version"], nb["target"]["type"], nb["target"]["name"]),
+                         ("MIGRATE", "0.2", "aidp_notebook", "Customer_segmentation_exploration"))
+        listed = by_id["bigquery.notebook.nb-0003"]
+        self.assertEqual(listed["action"], "SKIP")
+        self.assertIn("--notebooks-dir", listed["reason"])
 
 
 class DataprocPlan(unittest.TestCase):

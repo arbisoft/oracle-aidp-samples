@@ -11,6 +11,7 @@ says so. Saved queries exported as .sql files can be read with
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from gcp_aidp.gcp_client import GcpClient, GcpError
@@ -98,6 +99,23 @@ def _type_name(data_type: dict | None) -> str | None:
     return kind
 
 
+def _notebooks(directory: str, warnings: list[str]) -> list[dict]:
+    """BigQuery Studio notebooks exported as .ipynb: cell sources only; outputs (which can hold
+    query results) are dropped."""
+    out = []
+    for p in sorted(Path(directory).glob("*.ipynb")):
+        try:
+            nb = json.loads(p.read_text(encoding="utf-8"))
+            cells = [{"cell_type": c["cell_type"],
+                      "source": "".join(c["source"]) if isinstance(c.get("source"), list) else c.get("source", "")}
+                     for c in nb["cells"] if c.get("cell_type") in ("code", "markdown")]
+        except (ValueError, KeyError, TypeError) as exc:
+            warnings.append(f"notebook {p.name} not read: {type(exc).__name__}: {exc}")
+            continue
+        out.append({"id": p.stem, "name": p.stem, "cells": cells})
+    return out
+
+
 def _saved_queries(directory: str | None) -> list[dict]:
     if not directory:
         return []
@@ -155,16 +173,21 @@ def _dataset(client: GcpClient, p: str, ds: str, items: dict, not_scanned: dict,
                                 "model_type": m.get("modelType")})
 
 
-def scan(client: GcpClient, *, saved_queries_dir: str | None = None, log=None) -> dict:
+def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_dir: str | None = None,
+         log=None) -> dict:
     p = client.project
     items: dict[str, list] = {k: [] for k in (
         "datasets", "tables", "views", "materialized_views", "external_tables", "routines", "models",
         "saved_queries", "scheduled_queries", "access_policies", "notebooks", "pipelines")}
     not_scanned: dict[str, str] = {
-        "notebooks": "BigQuery Studio notebooks have no read API this tool uses in 0.1; list them by hand",
+        "notebooks": "BigQuery Studio notebooks have no read API this tool uses; export them as .ipynb and "
+                     "pass --notebooks-dir",
         "pipelines": "BigQuery pipelines have no read API this tool uses in 0.1; list them by hand",
     }
     warnings: list[str] = []
+    if notebooks_dir:
+        items["notebooks"] = _notebooks(notebooks_dir, warnings)
+        del not_scanned["notebooks"]
     if saved_queries_dir:
         items["saved_queries"] = _saved_queries(saved_queries_dir)
     else:

@@ -17,7 +17,8 @@ NEEDS_SCAN_SERVICES = ("this API refuses a read-only token; re-run with --scan-s
 
 
 def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
-                   saved_queries_dir: str | None = None, scan_services: bool = False,
+                   saved_queries_dir: str | None = None, notebooks_dir: str | None = None,
+                   scan_services: bool = False,
                    service_client=None, log=None) -> dict:
     """Scan each source; one source failing is recorded and the rest continue.
 
@@ -38,7 +39,8 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
             log(f"  scanning {source}...")
         try:
             if source == "bigquery":
-                data[source] = bigquery.scan(client, saved_queries_dir=saved_queries_dir, log=log)
+                data[source] = bigquery.scan(client, saved_queries_dir=saved_queries_dir,
+                                             notebooks_dir=notebooks_dir, log=log)
             elif source in BROAD_SCOPE_SOURCES:
                 if service_client is None:
                     service_client = GcpClient(client.project, scope=CLOUD_PLATFORM_SCOPE)

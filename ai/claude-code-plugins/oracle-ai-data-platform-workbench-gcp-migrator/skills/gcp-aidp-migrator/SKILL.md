@@ -89,7 +89,8 @@ gcp-aidp run       migrated                               # runs the published m
 | SQL UDF | → | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
 
 Reported, not translated: procedures, JavaScript and table functions, BigQuery ML
-models, row access policies and policy tags. Skipped in 0.1: BigQuery Studio notebooks
+models, row access policies and policy tags. 0.2, in progress: BigQuery Studio notebooks (exported `.ipynb`, `--notebooks-dir`) and
+Dataproc jobs migrate. Still skipped: BigQuery Studio notebooks not exported
 and Dataproc (0.2), Composer and Dataform (0.3), Dataflow and Vertex AI (later).
 
 ## Reporting results

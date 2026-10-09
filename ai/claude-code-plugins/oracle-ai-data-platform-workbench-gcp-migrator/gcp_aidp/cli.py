@@ -68,6 +68,7 @@ def cmd_inventory(args: argparse.Namespace) -> int:
             print("# --scan-services: Dataproc, Composer, Dataform, Dataflow and Vertex AI are listed with a "
                   "cloud-platform token (GET calls only)")
         manifest = build_manifest(client, sources, regions=regions, saved_queries_dir=args.saved_queries_dir,
+                                  notebooks_dir=args.notebooks_dir,
                                   scan_services=args.scan_services, log=log)
     else:
         path = _fixture_path(args.fixture)
@@ -213,6 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--regions", default="us-central1",
                      help="comma-separated regions for Dataproc, Composer, Dataform and Vertex AI (default: us-central1)")
     inv.add_argument("--saved-queries-dir", help="a folder of saved queries exported as .sql files")
+    inv.add_argument("--notebooks-dir", help="a folder of BigQuery Studio notebooks exported as .ipynb files")
     inv.add_argument("--scan-services", action="store_true",
                      help="also list Dataproc, Composer, Dataform, Dataflow and Vertex AI; their APIs refuse a "
                           "read-only token, so this asks for a cloud-platform token (still GET calls only)")
