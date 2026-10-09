@@ -15,6 +15,7 @@ byte for byte. The result must parse again, or the script is blocked.
   P07_GOOGLE_LIBRARY     Google client libraries: flagged
   P08_SQL_VARIABLE       ${var} in a Spark SQL job: flagged
   P09_LOCAL_FILES        __file__, or files Dataproc staged beside the job: flagged
+  P11_SPARK_PROPERTY     a job's Spark properties: runtime spark.sql.* set at the top; the rest noted
   P98_UNPARSABLE         code that does not parse, before or after: blocked
   P99_CODE_NOT_READ      no code in the inventory: blocked
 """
@@ -37,6 +38,15 @@ _CONNECTOR_KEYS = {"temporaryGcsBucket", "persistentGcsBucket", "persistentGcsPa
 _GOOGLE_LIBRARIES = ("google.cloud", "google.auth", "google.oauth2", "google.colab", "gcsfs", "pandas_gbq",
                      "bigframes")
 _SQL_VARIABLE = re.compile(r"\$\{[^}]+\}")
+# spark.sql.* keys fixed when the session starts (Spark 3.5 StaticSQLConf, and catalog plugins).
+_STATIC_SQL = ("spark.sql.warehouse.dir", "spark.sql.catalogImplementation", "spark.sql.globalTempDatabase",
+               "spark.sql.extensions", "spark.sql.hive.", "spark.sql.catalog.", "spark.sql.queryExecutionListeners",
+               "spark.sql.streaming.streamingQueryListeners", "spark.sql.streaming.ui.", "spark.sql.ui.",
+               "spark.sql.cache.serializer", "spark.sql.event.truncate.length", "spark.sql.metadataCacheTTLSeconds",
+               "spark.sql.sources.disabledJdbcConnProviderList")
+_DATAPROC_ONLY = ("spark.dataproc.", "dataproc:", "yarn:", "spark.yarn.", "spark.datasource.bigquery.")
+_SIZING = ("spark.executor.", "spark.driver.", "spark.dynamicAllocation.", "spark.cores.max",
+           "spark.default.parallelism")
 
 
 class _Source:
@@ -250,6 +260,44 @@ def _hive(f: Finding) -> Finding:
         return Finding("P06_HIVE_NAME", "caveat", f"{f.detail}: on Dataproc this name resolved through the Hive "
                        "metastore; check it is the same table as BigQuery's")
     return Finding("P06_HIVE_NAME", "flag", f"{f.detail.replace('relation ', 'Hive table ')}: migrate it separately")
+
+
+def spark_properties(code: str, properties: dict | None, python: bool) -> tuple[str, list[Finding]]:
+    """A job's Spark properties on AIDP: runtime spark.sql.* keys are set at the top of the code
+    (spark.conf.set, or SET in Spark SQL); sizing keys are for the cluster; Dataproc's own are dropped;
+    anything else cannot be set from a job and is flagged."""
+    keep, out = [], []
+    for key, value in sorted((properties or {}).items()):
+        value = str(value)
+        if key.startswith(_DATAPROC_ONLY) or key in _CONNECTOR_KEYS \
+                or (key.startswith("spark.jars") and "bigquery" in value):
+            out.append(Finding("P11_SPARK_PROPERTY", "info", f"{key}: Dataproc or connector only, dropped"))
+        elif key.startswith("spark.sql.") and not key.startswith(_STATIC_SQL) and (python or ";" not in value):
+            keep.append((key, value))
+            out.append(Finding("P11_SPARK_PROPERTY", "rewrite", f"{key}={value} set at the start of the job"))
+        elif key.startswith(_SIZING):
+            out.append(Finding("P11_SPARK_PROPERTY", "info", f"{key}={value}: size the AIDP cluster from it"))
+        else:
+            out.append(Finding("P11_SPARK_PROPERTY", "flag", f"{key}={value}: cannot be set from a job; set it "
+                               "in the AIDP cluster's Spark configuration if the job needs it"))
+    if not keep:
+        return code, out
+    if not python:
+        return "".join(f"SET {k}={v};\n" for k, v in keep) + code, out
+    body = ast.parse(code).body  # after the docstring and __future__ imports, which must stay first
+    at = 0
+    for i, node in enumerate(body):
+        if (i == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)) \
+                or (isinstance(node, ast.ImportFrom) and node.module == "__future__"):
+            at = node.end_lineno
+        else:
+            break
+    lines = code.splitlines(keepends=True)
+    if at and not lines[at - 1].endswith("\n"):
+        lines[at - 1] += "\n"
+    block = "".join(f"spark.conf.set({k!r}, {v!r})  # gcp-aidp: Dataproc job property\n" for k, v in keep)
+    return "".join(lines[:at]) + block + "".join(lines[at:]), out
 
 
 def translate_spark_sql(sql: str | None, ctx: Context | None = None, variables: dict | None = None) -> Result:

@@ -392,7 +392,7 @@ DATAPROC = {
          "args_vary": True, "code": SESSIONIZE_PY},
         {"id": "us-central1/etl-nightly/dedupe_events.py", "region": "us-central1", "cluster": "etl-nightly",
          "job_type": "pyspark", "main_file": "gs://northwind-landing/jobs/dedupe_events.py",
-         "properties": {"spark.executor.cores": "4"},
+         "properties": {"spark.executor.cores": "4", "spark.sql.shuffle.partitions": "64"},
          "runs": 412, "last_run": "2026-10-08T02:41:10Z", "last_state": "DONE", "last_run_id": "dedupe-1001",
          "code": DEDUPE_PY},
         {"id": "us-central1/etl-nightly/gl-export.jar", "region": "us-central1", "cluster": "etl-nightly",

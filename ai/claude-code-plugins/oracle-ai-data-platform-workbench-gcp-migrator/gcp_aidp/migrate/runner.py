@@ -28,7 +28,7 @@ from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_uri
 from gcp_aidp.translate.googlesql_to_spark import Context, Result, statements, translate
 from gcp_aidp.translate.notebook_to_aidp import translate_notebook
-from gcp_aidp.translate.pyspark_to_aidp import translate_pyspark, translate_spark_sql
+from gcp_aidp.translate.pyspark_to_aidp import spark_properties, translate_pyspark, translate_spark_sql
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
 STATUSES = ("ok", "needs_manual_review", "blocked", "reported", "skipped", "error")
@@ -134,6 +134,9 @@ def _dataproc_step(spec: dict, ctx: Context, w: _Writer, category: str, name: st
     else:
         source = spec.get("code") or ";\n".join(spec.get("queries") or [])
         r = translate_spark_sql(source, ctx, spec.get("variables"))
+    if r.status != "blocked" and spec.get("properties"):
+        code, more = spark_properties(r.sql, spec["properties"], python)
+        r = Result(r.source_sql, code, r.findings + more)
     findings = _sql_findings(r)
     staged = {k: spec[k] for k in ("python_files", "files", "archives") if spec.get(k)}
     jars = [j for j in spec.get("jars") or [] if "spark-bigquery" not in j]

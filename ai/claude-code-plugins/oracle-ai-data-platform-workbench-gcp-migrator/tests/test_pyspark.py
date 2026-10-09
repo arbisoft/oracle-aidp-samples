@@ -5,7 +5,7 @@ import ast
 import unittest
 
 from gcp_aidp.translate.googlesql_to_spark import Context
-from gcp_aidp.translate.pyspark_to_aidp import translate_pyspark, translate_spark_sql
+from gcp_aidp.translate.pyspark_to_aidp import spark_properties, translate_pyspark, translate_spark_sql
 
 CTX = Context(project="proj", relations={("sales", "orders"): ("cat", "sales", "orders")},
               buckets={"landing": "landing-oci"}, namespace="ns")
@@ -105,6 +105,26 @@ class Flags(unittest.TestCase):
         r = translate_spark_sql("SELECT * FROM sales.orders WHERE d = '${run_date}'", CTX)
         self.assertIn(("P08_SQL_VARIABLE", "flag"), rules(r))
         self.assertIn(("P08_SQL_VARIABLE", "flag"), rules(translate_spark_sql("SELECT 1", CTX, {"d": "x"})))
+
+
+class Properties(unittest.TestCase):
+    PROPS = {"spark.sql.shuffle.partitions": "400", "spark.executor.memory": "8g",
+             "spark.dataproc.driver.compute.tier": "premium", "spark.sql.extensions": "x.Ext", "spark.jars": "a.jar"}
+
+    def test_P11_SPARK_PROPERTY(self):
+        code, f = spark_properties('"""Doc."""\nfrom __future__ import annotations\nx = 1\n', self.PROPS, True)
+        self.assertEqual(code, '"""Doc."""\nfrom __future__ import annotations\n'
+                         "spark.conf.set('spark.sql.shuffle.partitions', '400')  # gcp-aidp: Dataproc job property\n"
+                         "x = 1\n")
+        ast.parse(code)
+        self.assertEqual(sorted((x.detail.split("=")[0].split(":")[0], x.severity) for x in f), [
+            ("spark.dataproc.driver.compute.tier", "info"), ("spark.executor.memory", "info"),
+            ("spark.jars", "flag"), ("spark.sql.extensions", "flag"), ("spark.sql.shuffle.partitions", "rewrite")])
+
+    def test_P11_in_spark_sql_and_without_a_runtime_key(self):
+        code, _ = spark_properties("SELECT 1", {"spark.sql.ansi.enabled": "true", "spark.sql.x": "a;b"}, False)
+        self.assertEqual(code, "SET spark.sql.ansi.enabled=true;\nSELECT 1")
+        self.assertEqual(spark_properties("x = 1", {"spark.executor.cores": "4"}, True)[0], "x = 1")
 
 
 class Blocks(unittest.TestCase):

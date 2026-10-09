@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.2.1] - unreleased
+
+### Added
+- `P11_SPARK_PROPERTY`: a Dataproc job's or step's Spark properties. Runtime `spark.sql.*`
+  keys are set at the start of the AIDP job (`spark.conf.set` in a Python task, `SET` before
+  Spark SQL statements); executor and driver sizing is noted for the cluster; Dataproc, YARN
+  and connector keys are dropped; anything else, static `spark.sql.*` keys included, is
+  flagged. Tested offline (local Spark 3.5), not yet on AIDP.
+
 ## [0.2.0] - unreleased
 
 Dataproc and BigQuery Studio notebooks migrate. Built on 0.1, below.

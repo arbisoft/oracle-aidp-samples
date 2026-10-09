@@ -18,6 +18,7 @@ comments are never edited.
 | `P02_BQ_READ` | `spark.read.format("bigquery").load("project.dataset.table")`, or `.option("table", ...)`, `.option("dataset", ...)`, `project:dataset.table` | `spark.table("`catalog`.`schema`.`table`")` | rewrite | Only for a table in the plan, in the plan's project, named by a string literal, with no option beyond a plain table read. Anything else is flagged and left |
 | `P05_CONNECTOR_SETTING` | `spark.conf.set("temporaryGcsBucket", ...)` and the other connector keys; `.config("spark.jars.packages", "...spark-bigquery...")` on the session builder | removed (a statement becomes `pass` with a comment) | rewrite | The connector has no use on AIDP |
 | `P06_HIVE_NAME` | `dataset.table` in `spark.sql("...")` and in Spark SQL jobs | `` `catalog`.`schema`.`table` `` from the plan | **caveat** | On Dataproc the name resolved through the Hive metastore, which may not be BigQuery's table of that name |
+| `P11_SPARK_PROPERTY` | a job's runtime `spark.sql.*` properties (`spark.sql.shuffle.partitions=400`) | `spark.conf.set(...)` after the docstring and `__future__` imports; `SET key=value;` before Spark SQL statements | rewrite | Spark 3.5 changes these per session. Static `spark.sql.*` keys (`spark.sql.extensions`, `spark.sql.catalog.*`, ...) are flagged instead |
 
 ## Flagged — left as written
 
@@ -31,6 +32,7 @@ comments are never edited.
 | `P08_SQL_VARIABLE` | `${var}` in a Spark SQL job, or script variables | Pass them as job parameters, or `SET` them before the statements |
 | `P09_LOCAL_FILES` | `__file__`; a job's `pythonFileUris`, `fileUris`, `archiveUris`, or JARs other than the BigQuery connector | An AIDP Python task defines no `__file__` and runs in a container home directory, without the files Dataproc staged beside the job |
 | `P10_TEMPLATE_PARAMETER` | a workflow template with parameters | Dataproc substitutes `${PARAM}` when the template runs; on AIDP it would reach the steps as literal text |
+| `P11_SPARK_PROPERTY` | any other property: static `spark.sql.*`, `spark.jars`, `spark.hadoop.*`, ... | Fixed when the session starts, so a job cannot set it: set it in the AIDP cluster's Spark configuration if the job needs it |
 
 ## Blocked — not translated
 
@@ -57,7 +59,16 @@ script name, so the list starts with the script's own path, as on Dataproc. The 
 runs as `__main__`, `spark` is already defined (a script's own `getOrCreate()` returns
 it), and `__file__` is not defined.
 
+## Reported — information only
+
+| Rule | Dataproc | What happens |
+|---|---|---|
+| `P11_SPARK_PROPERTY` | `spark.executor.*`, `spark.driver.*`, `spark.dynamicAllocation.*` | Noted: size the AIDP cluster from it |
+| `P11_SPARK_PROPERTY` | `spark.dataproc.*`, `spark.yarn.*`, `dataproc:`, `yarn:`, connector settings | Dropped: they mean nothing off Dataproc |
+
 ## Known gaps
+- Cluster properties (`spark:spark.executor.memory` on the cluster) stay in the plan's
+  cluster sizing notes; only a job's or step's own properties go through `P11`.
 - A connector read built across variables (`reader = spark.read.format("bigquery")`, then
   `reader.load(...)`) is not rewritten: only a read written as one chain is. It is never
   reported clean: any `format("bigquery")` no recognised read or write accounts for is
