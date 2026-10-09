@@ -14,6 +14,7 @@ byte for byte. The result must parse again, or the script is blocked.
   P06_HIVE_NAME          table names in spark.sql(...) and Spark SQL jobs (caveat)
   P07_GOOGLE_LIBRARY     Google client libraries: flagged
   P08_SQL_VARIABLE       ${var} in a Spark SQL job: flagged
+  P09_LOCAL_FILES        __file__, or files Dataproc staged beside the job: flagged
   P98_UNPARSABLE         code that does not parse, before or after: blocked
   P99_CODE_NOT_READ      no code in the inventory: blocked
 """
@@ -174,6 +175,9 @@ def translate_pyspark(code: str | None, ctx: Context | None = None) -> Result:
         edit(node, f'{src.segment(reader)}.table("{name}")')
         out.append(Finding("P02_BQ_READ", "rewrite", f"BigQuery table {table} → {name}"))
 
+    if any(isinstance(n, ast.Name) and n.id == "__file__" for n in ast.walk(tree)):
+        out.append(Finding("P09_LOCAL_FILES", "flag", "uses __file__, which an AIDP Python task does not define; "
+                           "files beside the script are not there either"))
     for node in ast.walk(tree):  # the net: a connector use no read or write above accounted for
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format" \
                 and node.args and _literal(node.args[0]) == "bigquery" and id(node) not in handled:

@@ -159,6 +159,15 @@ class AidpClient:
                          body={"type": "notebook", "format": "json",
                                "content": json.loads(ipynb_text)})
 
+    def put_file(self, path: str, local: str) -> dict:
+        """Create a plain workspace FILE (a Python task's script) from a local file.
+
+        Live on AIDP, 2026-10-09: `workspace-object create --type FILE --body @file`
+        stores the file as given, and its response's `data` is a list.
+        """
+        return self._run(["workspace-object", "create", self.workspace_key, "--path",
+                          _literal(self.object_path(path)), "--type", "FILE", "--body", f"@{local}"])
+
     # --- jobs -------------------------------------------------------------
     def list_jobs(self) -> list:
         """Every job in the workspace, not just the first page."""

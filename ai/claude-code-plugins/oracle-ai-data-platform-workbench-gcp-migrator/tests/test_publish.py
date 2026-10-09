@@ -1,6 +1,8 @@
 """publish (dry run, --apply, never overwrite) and run, against a fake AIDP client."""
 from __future__ import annotations
 
+import ast
+import copy
 import json
 import tempfile
 import unittest
@@ -32,6 +34,10 @@ class FakeAidp:
         json.loads(text)  # a real .ipynb
         self.uploaded.append(path)
 
+    def put_file(self, path, local):
+        ast.parse(Path(local).read_text())  # a Python task's script, as translated
+        self.uploaded.append(path)
+
     def create_job(self, definition):
         self.created.append(definition)
         return f"k_{definition['name']}"
@@ -61,7 +67,7 @@ class Publish(unittest.TestCase):
     def test_dry_run_lists_exactly_what_would_be_created(self):
         p = plan_publish(self.out, prefix="ana", cluster_key="ck")
         report = json.loads((self.out / "report.json").read_text())
-        self.assertEqual(len(p["notebooks"]), len(report["notebooks"]))
+        self.assertEqual(len(p["notebooks"]), len(report["notebooks"]) + len(report["files"]))
         self.assertTrue(all(n["remote"].startswith("/Workspace/ana/") for n in p["notebooks"]))
         names = [j["name"] for j in p["jobs"]]
         self.assertEqual(names[0], "ana_gcp_aidp_migration")
@@ -116,6 +122,72 @@ class Publish(unittest.TestCase):
 
         with self.assertRaisesRegex(PublishError, "publish --apply"):
             run(self.out, prefix="ana", client=FakeAidp(), sleep=lambda s: None, log=lambda m: None)
+
+
+class DataprocJobs(unittest.TestCase):
+    """Dataproc definitions publish as Python tasks (shapes proven live on AIDP) and SQL notebooks."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.out = Path(cls.tmp.name)
+        manifest = copy.deepcopy(DEMO)
+        template = manifest["sources"]["dataproc"]["items"]["workflow_templates"][0]
+        template["steps"] = [st for st in template["steps"] if st["job_type"] != "spark"]  # no JAR step
+        template["steps"][1]["prerequisites"] = ["extract"]
+        cls.report = migrate(build_plan(manifest, oci_namespace="ns"), out_dir=cls.out)
+        cls.jobs = {j["name"]: j for j in plan_publish(cls.out, prefix="ana", cluster_key="ck")["jobs"]}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_pyspark_is_a_python_task_with_argv_as_dataproc_set_it(self):
+        task = self.jobs["ana_etl_nightly_sessionize_py"]["definition"]["tasks"][0]
+        self.assertEqual((task["type"], task["filePath"]), ("PYTHON_TASK", "/Workspace/ana/etl_nightly_sessionize_py.py"))
+        # Pasted by AIDP as `sys.argv = <value>`: a Python list, the script's own path first.
+        self.assertEqual(ast.literal_eval(task["commandLineArguments"]),
+                         ["/Workspace/ana/etl_nightly_sessionize_py.py", "2026-10-07"])
+        self.assertNotIn("notebookPath", task)
+
+    def test_spark_sql_runs_its_statements_in_a_notebook(self):
+        task = self.jobs["ana_adhoc_analytics_cohorts_sql"]["definition"]["tasks"][0]
+        self.assertEqual(task["type"], "NOTEBOOK_TASK")
+        nb = self.out / "notebooks/jobs/adhoc_analytics_cohorts_sql_main.ipynb"
+        cells = [c for c in json.loads(nb.read_text())["cells"] if c["cell_type"] == "code"]
+        self.assertEqual(len(cells), 2)  # CREATE TEMPORARY VIEW, then INSERT OVERWRITE DIRECTORY
+        self.assertIn("oci://northwind-landing@ns/reports/cohorts/", "".join(cells[1]["source"]))
+
+    def test_template_steps_keep_their_order(self):
+        tasks = self.jobs["ana_template_month_end_close"]["definition"]["tasks"]
+        self.assertEqual([(t["taskKey"], t["type"], t.get("dependsOn")) for t in tasks],
+                         [("extract", "PYTHON_TASK", None), ("report", "NOTEBOOK_TASK", [{"taskKey": "extract"}])])
+
+    def test_P10_TEMPLATE_PARAMETER_and_P09_LOCAL_FILES(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        rules = {f["rule"] for f in by_id["dataproc.workflow_template.month-end-close"]["findings"]}
+        self.assertIn("P10_TEMPLATE_PARAMETER", rules)
+        job = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
+        self.assertNotIn("P09_LOCAL_FILES", {f["rule"] for f in job["findings"]})  # the connector JAR is dropped
+        manifest = copy.deepcopy(DEMO)
+        manifest["sources"]["dataproc"]["items"]["jobs"][0]["python_files"] = ["gs://northwind-landing/lib/util.py"]
+        with tempfile.TemporaryDirectory() as d:
+            r = migrate(build_plan(manifest, oci_namespace="ns"), out_dir=Path(d))
+        job = next(x for x in r["results"] if x["asset_id"] == "dataproc.job.us-central1/etl-nightly/sessionize.py")
+        self.assertIn("python_files: gs://northwind-landing/lib/util.py",
+                      next(f["detail"] for f in job["findings"] if f["rule"] == "P09_LOCAL_FILES"))
+
+    def test_a_script_someone_else_left_there_is_not_run(self):
+        fake = FakeAidp(present={"etl_nightly_sessionize_py.py"})
+        r = publish(self.out, prefix="ana", cluster_key="ck", apply=True, client=fake, log=lambda m: None)
+        status = {j["name"]: j["status"] for j in r["jobs"]}
+        self.assertEqual(status["ana_etl_nightly_sessionize_py"], "refused")
+        self.assertNotIn("/Workspace/ana/etl_nightly_sessionize_py.py", fake.uploaded)
+
+    def test_apply_uploads_scripts_as_files(self):
+        fake = FakeAidp()
+        publish(self.out, prefix="ana", cluster_key="ck", apply=True, client=fake, log=lambda m: None)
+        self.assertIn("/Workspace/ana/etl_nightly_sessionize_py.py", fake.uploaded)
 
 
 class DotEnv(unittest.TestCase):

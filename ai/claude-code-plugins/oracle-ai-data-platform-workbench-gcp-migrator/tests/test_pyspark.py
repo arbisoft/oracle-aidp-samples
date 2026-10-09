@@ -97,6 +97,10 @@ class Flags(unittest.TestCase):
         r = py("from google.cloud import storage\nimport gcsfs, json\n")
         self.assertEqual({f.detail.split(":")[0] for f in r.findings}, {"imports google.cloud", "imports gcsfs"})
 
+    def test_P09_LOCAL_FILES(self):
+        r = py("import os\nconf = open(os.path.join(os.path.dirname(__file__), 'conf.yaml'))\n")
+        self.assertEqual(rules(r), {("P09_LOCAL_FILES", "flag")})
+
     def test_P08_SQL_VARIABLE(self):
         r = translate_spark_sql("SELECT * FROM sales.orders WHERE d = '${run_date}'", CTX)
         self.assertIn(("P08_SQL_VARIABLE", "flag"), rules(r))

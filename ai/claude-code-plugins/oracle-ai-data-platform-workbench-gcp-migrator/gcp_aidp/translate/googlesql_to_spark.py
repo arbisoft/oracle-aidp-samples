@@ -566,3 +566,17 @@ def names_and_paths(sql: str, ctx: Context | None = None) -> Result:
             out += [Finding("G21_GCS_PATH", "flag", f"{p}: bucket not in the bucket map") for p in missing]
     _references(s, ctx, out)
     return Result(sql, s.render(), list(dict.fromkeys(out)))
+
+
+def statements(sql: str) -> list[str]:
+    """`;`-separated statements, split outside strings, comments and parentheses; empty ones dropped."""
+    s = _Sql(sql)
+    out, start, depth = [], 0, 0
+    for i, t in enumerate(s.toks):
+        if t.kind == "punct":
+            depth += (t.text == "(") - (t.text == ")")
+            if t.text == ";" and depth == 0:
+                out.append("".join(x.text for x in s.toks[start:i]))
+                start = i + 1
+    out.append("".join(x.text for x in s.toks[start:]))
+    return [st.strip() for st in out if _Sql(st).sig]

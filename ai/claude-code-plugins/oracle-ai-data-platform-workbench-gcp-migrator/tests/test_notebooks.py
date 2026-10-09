@@ -53,8 +53,9 @@ class Notebooks(unittest.TestCase):
         self.assertEqual(len(cells), 2)
         self.assertIn("INSERT OVERWRITE", "".join(cells[1]["source"]))
         for j in self.report["jobs"]:
-            for t in j["tasks"]:
-                self.assertIn(t["notebook"], self.report["notebooks"])
+            for t in j["tasks"]:  # a notebook task, or a Python task whose script is uploaded as a file
+                self.assertTrue(t.get("notebook") in self.report["notebooks"]
+                                or t.get("python_file") in self.report["files"], t)
 
     def test_data_plan_holds_only_what_can_run(self):
         tables = {f"{t['dataset']}.{t['name']}" for t in self.dp["tables"]}

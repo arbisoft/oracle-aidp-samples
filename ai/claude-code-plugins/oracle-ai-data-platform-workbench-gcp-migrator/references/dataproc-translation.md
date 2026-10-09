@@ -29,6 +29,8 @@ comments are never edited.
 | `P06_HIVE_NAME` | a name not in the plan; `spark.sql(f"...")` | A Hive table to migrate separately; a name built at run time is not checked |
 | `P07_GOOGLE_LIBRARY` | `google.cloud`, `google.auth`, `google.oauth2`, `gcsfs`, `pandas_gbq`, `bigframes` | AIDP has no access to Google Cloud |
 | `P08_SQL_VARIABLE` | `${var}` in a Spark SQL job, or script variables | Pass them as job parameters, or `SET` them before the statements |
+| `P09_LOCAL_FILES` | `__file__`; a job's `pythonFileUris`, `fileUris`, `archiveUris`, or JARs other than the BigQuery connector | An AIDP Python task defines no `__file__` and runs in a container home directory, without the files Dataproc staged beside the job |
+| `P10_TEMPLATE_PARAMETER` | a workflow template with parameters | Dataproc substitutes `${PARAM}` when the template runs; on AIDP it would reach the steps as literal text |
 
 ## Blocked — not translated
 
@@ -41,10 +43,21 @@ comments are never edited.
 Spark SQL jobs also use `G21_GCS_PATH` (paths in string literals) from the GoogleSQL
 translator; none of its dialect rules apply, since the SQL is Spark's already.
 
-## Known gaps
+## How the jobs run on AIDP
 
-- Arguments: a script reading `sys.argv` keeps doing so; how arguments reach it on AIDP
-  is decided with the job task type (0.2, D4).
+A PySpark definition becomes a job with one `PYTHON_TASK` running the translated script,
+uploaded as a workspace file. A Spark SQL definition becomes a notebook task that runs its
+statements in order. A workflow template becomes one job: each step a task, its
+prerequisites as `dependsOn`. Jobs are created unscheduled; a blocked definition, or a
+template with a blocked step, gets no job.
+
+Measured on AIDP (Spark 3.5.0, 2026-10-09): a Python task's `commandLineArguments` is
+pasted as `sys.argv = <value>`, so it is written as a Python list, and AIDP adds no
+script name, so the list starts with the script's own path, as on Dataproc. The script
+runs as `__main__`, `spark` is already defined (a script's own `getOrCreate()` returns
+it), and `__file__` is not defined.
+
+## Known gaps
 - A connector read built across variables (`reader = spark.read.format("bigquery")`, then
   `reader.load(...)`) is not rewritten: only a read written as one chain is. It is never
   reported clean: any `format("bigquery")` no recognised read or write accounts for is

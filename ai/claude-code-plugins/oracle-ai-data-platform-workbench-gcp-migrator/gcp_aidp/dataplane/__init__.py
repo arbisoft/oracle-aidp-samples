@@ -202,6 +202,21 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
         job = r.get("job")
         if not job or r.get("status") not in ("ok", "needs_manual_review"):
             continue
+        if "tasks" in job:  # Dataproc: Python tasks and Spark SQL notebooks, steps with their dependencies
+            tasks = []
+            for t in job["tasks"]:
+                if "python_file" in t:
+                    out = {"taskKey": job_name(t["key"]), "python_file": t["python_file"], "arguments": t["arguments"]}
+                else:
+                    rel = f"notebooks/jobs/{job['name']}_{t['key']}.ipynb"
+                    write_text_atomic(out_dir / rel, json.dumps(
+                        sql_notebook(job["title"], t["statements"], dp["plan_id"]), indent=1) + "\n")
+                    out = task(t["key"], rel)
+                if t.get("after"):
+                    out["dependsOn"] = [job_name(k) for k in t["after"]]
+                tasks.append(out)
+            own.append({"name": job["name"], "description": job["title"], "tasks": tasks})
+            continue
         rel = f"notebooks/jobs/{job['name']}.ipynb"
         write_text_atomic(out_dir / rel, json.dumps(sql_notebook(job["title"], job["statements"], dp["plan_id"]),
                                                     indent=1) + "\n")

@@ -65,16 +65,17 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
     folder = "/".join([workspace_root.rstrip("/")] + ([prefix] if prefix else []))
 
     notebooks, remote_of = [], {}
-    for rel in report["notebooks"]:
+    uploads = [(rel, "notebook") for rel in report["notebooks"]] + [(rel, "file") for rel in report.get("files", [])]
+    for rel, kind in uploads:
         local = (out_dir / rel).resolve()
         if out_dir.resolve() not in local.parents or not local.is_file():
-            raise PublishError(f"report.json lists notebook {rel!r}, which is not a file inside {out_dir}; "
+            raise PublishError(f"report.json lists {kind} {rel!r}, which is not a file inside {out_dir}; "
                                "re-run `migrate`")
         remote = f"{folder}/{local.name}"  # flat: one folder per prefix
         if remote in remote_of.values():
-            raise PublishError(f"two notebooks would land on {remote}")
+            raise PublishError(f"two files would land on {remote}")
         remote_of[rel] = remote
-        notebooks.append({"local": str(local), "remote": remote})
+        notebooks.append({"local": str(local), "remote": remote, "kind": kind})
 
     jobs, blocked = [], []
     for job in report["jobs"]:
@@ -89,11 +90,18 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
         tasks = []
         for t in job["tasks"]:
             parameters = list(t.get("parameters") or [])
-            if not t["notebook"].startswith("notebooks/jobs/"):  # the data-plane notebooks keep their reports here
-                parameters.append({"name": "reports_dir", "value": f"{folder}/reports"})
-            task = {"type": "NOTEBOOK_TASK", "taskKey": t["taskKey"], "runIf": "ALL_SUCCESS", "maxRetries": 0,
-                    "notebookPath": remote_of[t["notebook"]], "source": "WORKSPACE",
+            task = {"taskKey": t["taskKey"], "runIf": "ALL_SUCCESS", "maxRetries": 0, "source": "WORKSPACE",
                     "timeoutSeconds": TASK_TIMEOUT_SECONDS, "cluster": {"clusterKey": cluster_key}}
+            if "python_file" in t:
+                # Live on AIDP: commandLineArguments is pasted as `sys.argv = <value>`, so it must be a
+                # Python list, and AIDP adds no script name: argv[0] is passed as Dataproc sets it.
+                path = remote_of[t["python_file"]]
+                task.update(type="PYTHON_TASK", filePath=path,
+                            commandLineArguments=repr([path, *t.get("arguments", [])]))
+            else:
+                if not t["notebook"].startswith("notebooks/jobs/"):  # the data-plane notebooks keep their reports here
+                    parameters.append({"name": "reports_dir", "value": f"{folder}/reports"})
+                task.update(type="NOTEBOOK_TASK", notebookPath=remote_of[t["notebook"]])
             if parameters:
                 task["parameters"] = parameters
             if t.get("dependsOn"):
@@ -142,7 +150,10 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
             upload.update(status="skipped", reason="already exists (publish never overwrites)")
         else:
             try:
-                client.put_notebook(upload["remote"], Path(upload["local"]).read_text(encoding="utf-8"))
+                if upload.get("kind") == "file":
+                    client.put_file(upload["remote"], upload["local"])
+                else:
+                    client.put_notebook(upload["remote"], Path(upload["local"]).read_text(encoding="utf-8"))
                 upload["status"] = "uploaded"
             except (AidpError, AidpUnavailable, OSError) as exc:
                 upload.update(status="error", reason=str(exc))
@@ -151,11 +162,12 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
     usable = {"uploaded", "skipped"} if reuse_existing else {"uploaded"}
     unusable = {u["remote"] for u in planned["notebooks"] if u["status"] not in usable}
     for job in planned["jobs"]:
-        missing = sorted({t["notebookPath"] for t in job["definition"]["tasks"]} & unusable)
+        used = {t.get("notebookPath") or t.get("filePath") for t in job["definition"]["tasks"]}
+        missing = sorted(used & unusable)  # a script someone else left there is refused, like a notebook
         if job["name"] in existing:
             job.update(status="skipped", reason="a job of this name already exists (publish never overwrites)")
         elif missing:
-            job.update(status="refused", reason=f"notebooks not uploaded by this run: {missing} (if they are this "
+            job.update(status="refused", reason=f"files not uploaded by this run: {missing} (if they are this "
                                                 "migration's, re-run with --reuse-existing-notebooks)")
         else:
             try:

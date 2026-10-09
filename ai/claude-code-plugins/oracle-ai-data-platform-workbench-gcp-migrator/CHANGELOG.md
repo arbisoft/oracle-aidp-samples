@@ -30,6 +30,15 @@ All notable changes to this project are documented here. Format loosely follows
   one by one; a step that cannot be blocks the template. `migrate` writes the translated
   script with its settings as a header comment. Rule table:
   `references/dataproc-translation.md`.
+- Dataproc jobs on AIDP: a PySpark definition becomes an unscheduled job with one
+  `PYTHON_TASK` running the translated script, which `publish` uploads as a workspace file
+  (never overwriting, and refusing a job whose script it did not upload); a Spark SQL
+  definition becomes a notebook task running its statements in order; a workflow template
+  becomes one job, steps as tasks with their prerequisites as `dependsOn`. Measured live on
+  AIDP: `commandLineArguments` is pasted as `sys.argv = <value>`, so it is written as a
+  Python list starting with the script's own path; the script runs as `__main__` with
+  `spark` defined. New flags: `P09_LOCAL_FILES` (`__file__`, and files, modules or JARs
+  Dataproc staged beside the job) and `P10_TEMPLATE_PARAMETER`.
 
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.

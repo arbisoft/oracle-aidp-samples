@@ -26,7 +26,7 @@ from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.dataplane import data_plan, write_jobs, write_notebooks
 from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_uri
-from gcp_aidp.translate.googlesql_to_spark import Context, translate
+from gcp_aidp.translate.googlesql_to_spark import Context, statements, translate
 from gcp_aidp.translate.pyspark_to_aidp import translate_pyspark, translate_spark_sql
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
@@ -99,6 +99,19 @@ _SETTINGS = ("step_id", "prerequisites", "job_type", "cluster", "main_file", "ma
              "jars", "files", "archives", "properties", "variables", "runtime_version", "code_not_read")
 
 
+def _job_title(src: dict) -> str:
+    runs = f"; {src['runs']} runs on Dataproc" if src.get("runs") else ""
+    return f"Dataproc {src.get('job_type', 'workflow template')} {src['id']}{runs}"
+
+
+def _dataproc_task(key: str, spec: dict, path: str, code: str) -> dict:
+    """A job task: a Python task runs the translated script with the job's arguments; Spark SQL runs
+    its statements in order in a notebook."""
+    if spec.get("job_type") == "pyspark":
+        return {"key": key, "python_file": path, "arguments": [str(a) for a in spec.get("args") or []]}
+    return {"key": key, "statements": statements(code)}
+
+
 def _settings(spec: dict) -> str:
     """A job's or step's settings as inventoried, one per line."""
     return "\n".join(f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}" for k in _SETTINGS
@@ -121,6 +134,12 @@ def _dataproc_step(spec: dict, ctx: Context, w: _Writer, category: str, name: st
         source = spec.get("code") or ";\n".join(spec.get("queries") or [])
         r = translate_spark_sql(source, ctx, spec.get("variables"))
     findings = _sql_findings(r)
+    staged = {k: spec[k] for k in ("python_files", "files", "archives") if spec.get(k)}
+    jars = [j for j in spec.get("jars") or [] if "spark-bigquery" not in j]
+    if staged or jars:
+        findings.append(_f("P09_LOCAL_FILES", "flag", "Dataproc staged these beside the job, and AIDP does not: "
+                           + "; ".join(f"{k}: {' '.join(v)}" for k, v in {**staged, "jars": jars}.items() if v)
+                           + ". Upload them to the workspace or add them as cluster libraries"))
     if spec.get("code_not_read"):
         findings = [{**f, "detail": f"{f['detail']}: {spec['code_not_read']}"} if f["rule"] == "P99_CODE_NOT_READ"
                     else f for f in findings]
@@ -230,18 +249,30 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         steps = src.get("steps") if src["type"] == "dataproc_workflow_template" else None
         if steps is None:
             findings, translated, path, source_sql = _dataproc_step(src, ctx, w, "dataproc", tgt["name"], aid)
+            if _status(findings) != "blocked":
+                row["job"] = {"name": tgt["name"], "title": _job_title(src),
+                              "tasks": [_dataproc_task("main", src, path, translated)]}
         else:
             findings, done = [], []
             for st in steps:
-                f, _, step_path, _ = _dataproc_step(st, ctx, w, f"dataproc/{tgt['name']}", st["step_id"], aid)
+                f, step_code, step_path, _ = _dataproc_step(st, ctx, w, "dataproc", f"{tgt['name']}_{st['step_id']}",
+                                                            aid)
                 findings += [_f(x["rule"], x["severity"], f"step {st['step_id']}: {x['detail']}") for x in f]
                 done.append({"step_id": st["step_id"], "prerequisites": st.get("prerequisites", []),
-                             "job_type": st.get("job_type"), "status": _status(f), "output_path": step_path})
+                             "job_type": st.get("job_type"), "status": _status(f), "output_path": step_path,
+                             "task": _dataproc_task(st["step_id"], st, step_path, step_code)})
+            if src.get("parameters"):
+                findings.append(_f("P10_TEMPLATE_PARAMETER", "flag", f"template parameters {src['parameters']}: "
+                                   "Dataproc substitutes them when the template runs; on AIDP they would reach "
+                                   "the steps as literal text. Pass the values as arguments by hand"))
             summary = "\n".join(f"# step {d['step_id']}: {d['job_type']}, {d['status']}, after "
                                  f"{', '.join(d['prerequisites']) or 'nothing'} -> {d['output_path']}" for d in done)
             path = w.sql("dataproc", tgt["name"], aid, findings, summary, comment="#", suffix=".txt")
-            row["steps"] = done
+            row["steps"] = [{k: v for k, v in d.items() if k != "task"} for d in done]
             source_sql = translated = ""
+            if _status(findings) != "blocked":  # a step that cannot run blocks the whole job
+                row["job"] = {"name": tgt["name"], "title": _job_title(src),
+                              "tasks": [{**d["task"], "after": d["prerequisites"]} for d in done]}
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"
         r = translate(src["query"], ctx)
@@ -303,12 +334,14 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     write_text_atomic(out_dir / "notebooks" / "data_plan.json", json.dumps(dp, indent=2))
     notebooks = write_notebooks(dp, out_dir)
     jobs = write_jobs(dp, results, out_dir)
-    notebooks += sorted({t["notebook"] for j in jobs for t in j["tasks"]} - set(notebooks))
+    notebooks += sorted({t["notebook"] for j in jobs for t in j["tasks"] if "notebook" in t} - set(notebooks))
+    files = sorted({t["python_file"] for j in jobs for t in j["tasks"] if "python_file" in t})
     if log:
         log(f"  notebooks: {len(notebooks)} ({len(dp['tables'])} tables to copy, "
             f"{len(dp['views'])} views to create); jobs: {', '.join(j['name'] for j in jobs)}")
     report = {"plan_id": plan.get("plan_id"), "source_project": plan.get("source_project"),
-              "complete": True, "counts": counts, "results": results, "notebooks": notebooks, "jobs": jobs}
+              "complete": True, "counts": counts, "results": results, "notebooks": notebooks, "files": files,
+              "jobs": jobs}
     write_text_atomic(out_dir / "report.json", json.dumps(report, indent=2))
     write_text_atomic(out_dir / "report.md", _markdown(report))
     marker.unlink()
