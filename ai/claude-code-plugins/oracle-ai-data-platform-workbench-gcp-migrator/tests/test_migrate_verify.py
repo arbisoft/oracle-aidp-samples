@@ -1,6 +1,7 @@
 """migrate --demo labels and verify's fail-closed checks."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import tempfile
@@ -33,9 +34,10 @@ EXPECTED = {
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
     "gcs.bucket.northwind-landing": "REVIEW",           # transfer prerequisites
     "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
-    "dataproc.job.us-central1/etl-nightly/sessionize.py": "REVIEW",  # DP00: translation not built yet
+    "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
+    "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
     "dataproc.job.us-central1/etl-nightly/gl-export.jar": "SKIP",    # reported: JAR_TASK unproven
-    "dataproc.workflow_template.month-end-close": "REVIEW",
+    "dataproc.workflow_template.month-end-close": "REVIEW",  # its JAR step blocks it (P97)
     "vertex.model.vm-001": "SKIP",
 }
 
@@ -66,13 +68,22 @@ class Demo(unittest.TestCase):
                 self.assertTrue(all(l.startswith(("--", "#")) or not l.strip() for l in body.splitlines()),
                                 r["asset_id"])
 
-    def test_DP00_NOT_TRANSLATED_keeps_the_original_for_review(self):
+    def test_dataproc_artifacts_hold_the_translated_code(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}
         job = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
-        self.assertEqual((job["status"], job["findings"][0]["rule"]), ("blocked", "DP00_NOT_TRANSLATED"))
         body = (self.out / job["output_path"]).read_text()
-        self.assertIn('#           .option("table", "northwind-analytics-demo.sales.store_visits")', body)
+        self.assertIn('spark.table("`northwind_analytics_demo`.`sales`.`store_visits`")', body)
         self.assertIn("# args: 2026-10-07", body)
+        ast.parse(body)  # the artifact is the script, ready to run
+
+    def test_P97_NOT_TRANSLATED_TYPE_blocks_the_whole_template(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        t = by_id["dataproc.workflow_template.month-end-close"]
+        self.assertEqual(t["status"], "blocked")
+        self.assertIn(("P97_NOT_TRANSLATED_TYPE", "block"), [(f["rule"], f["severity"]) for f in t["findings"]])
+        self.assertEqual([(st["step_id"], st["status"]) for st in t["steps"]],
+                         [("extract", "needs_manual_review"), ("ledger", "blocked"), ("report", "needs_manual_review")])
+        self.assertEqual(t["steps"][2]["prerequisites"], ["ledger"])
 
     def test_J01_UNSCHEDULED_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}
@@ -131,7 +142,7 @@ class VerifyFailsClosed(unittest.TestCase):
 
 class EveryRuleHasATest(unittest.TestCase):
     def test_rule_ids_in_code_appear_in_tests(self):
-        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J)\d\d(?:_[A-Z0-9]+)+")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J|P)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
         tests = "".join(p.read_text() for p in (ROOT / "tests").glob("test_*.py"))
         ids = set(rule.findall(code))

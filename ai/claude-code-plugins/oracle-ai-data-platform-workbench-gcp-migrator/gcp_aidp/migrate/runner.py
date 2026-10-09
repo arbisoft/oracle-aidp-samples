@@ -27,6 +27,7 @@ from gcp_aidp.dataplane import data_plan, write_jobs, write_notebooks
 from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_uri
 from gcp_aidp.translate.googlesql_to_spark import Context, translate
+from gcp_aidp.translate.pyspark_to_aidp import translate_pyspark, translate_spark_sql
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
 STATUSES = ("ok", "needs_manual_review", "blocked", "reported", "skipped", "error")
@@ -93,16 +94,43 @@ class _Writer:
 
 
 _DATAPROC = ("dataproc_job", "dataproc_batch", "dataproc_workflow_template")
+_TRANSLATED = ("pyspark", "spark_sql")
 _SETTINGS = ("step_id", "prerequisites", "job_type", "cluster", "main_file", "main_class", "args", "python_files",
              "jars", "files", "archives", "properties", "variables", "runtime_version", "code_not_read")
 
 
-def _dataproc_original(spec: dict) -> str:
-    """A job or step as inventoried: its settings, then its code (or its query list)."""
-    lines = [f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}" for k in _SETTINGS
-             if (v := spec.get(k)) not in (None, [], {})]
-    code = spec.get("code") or ";\n".join(spec.get("queries") or [])
-    return "\n".join(lines + ([""] + code.splitlines() if code else []))
+def _settings(spec: dict) -> str:
+    """A job's or step's settings as inventoried, one per line."""
+    return "\n".join(f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}" for k in _SETTINGS
+                     if (v := spec.get(k)) not in (None, [], {}))
+
+
+def _dataproc_step(spec: dict, ctx: Context, w: _Writer, category: str, name: str, aid: str):
+    """(findings, translated code, artifact path, source) for one PySpark or Spark SQL job or step."""
+    kind = spec.get("job_type")
+    python = kind == "pyspark"
+    if kind not in _TRANSLATED:
+        findings = [_f("P97_NOT_TRANSLATED_TYPE", "block", f"{kind} is not translated in 0.2")]
+        body = _settings(spec)
+        return findings, "", w.sql(category, name, aid, findings, body, blocked=True, comment="#", suffix=".txt",
+                                    original="Dataproc step"), body
+    if python:
+        source = spec.get("code") or ""
+        r = translate_pyspark(spec.get("code"), ctx)
+    else:
+        source = spec.get("code") or ";\n".join(spec.get("queries") or [])
+        r = translate_spark_sql(source, ctx, spec.get("variables"))
+    findings = _sql_findings(r)
+    if spec.get("code_not_read"):
+        findings = [{**f, "detail": f"{f['detail']}: {spec['code_not_read']}"} if f["rule"] == "P99_CODE_NOT_READ"
+                    else f for f in findings]
+    c = "#" if python else "--"
+    settings = "\n".join(f"{c} {line}" for line in _settings(spec).splitlines())
+    blocked = r.status == "blocked"
+    body = (r.sql if not blocked else (source or _settings(spec)))
+    path = w.sql(category, name, aid, findings, body if blocked else f"{settings}\n\n{body}", blocked=blocked,
+                 comment=c, suffix=".py" if python else ".sql", original="Dataproc job")
+    return findings, ("" if blocked else r.sql), path, source
 
 
 def _one_line(text: str) -> str:
@@ -199,15 +227,21 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             findings += [_f(*f) for f in more]
             path = w.sql("functions", stem, aid, findings, translated)
     elif src["type"] in _DATAPROC:
-        # ponytail: a placeholder until 0.2's PySpark and Spark SQL translation; the original is kept.
-        findings = [_f("DP00_NOT_TRANSLATED", "block", "the Dataproc translation is not built yet; the original "
-                       "settings and code are kept for review")]
-        steps = src.get("steps") or [src]
-        python = all(st.get("job_type") == "pyspark" for st in steps)
-        body = "\n\n".join(_dataproc_original(st) for st in steps)
-        source_sql = body
-        path = w.sql("dataproc", tgt["name"], aid, findings, body, blocked=True, comment="#" if python else "--",
-                     suffix=".py" if python else (".sql" if len(steps) == 1 else ".txt"), original="Dataproc job")
+        steps = src.get("steps") if src["type"] == "dataproc_workflow_template" else None
+        if steps is None:
+            findings, translated, path, source_sql = _dataproc_step(src, ctx, w, "dataproc", tgt["name"], aid)
+        else:
+            findings, done = [], []
+            for st in steps:
+                f, _, step_path, _ = _dataproc_step(st, ctx, w, f"dataproc/{tgt['name']}", st["step_id"], aid)
+                findings += [_f(x["rule"], x["severity"], f"step {st['step_id']}: {x['detail']}") for x in f]
+                done.append({"step_id": st["step_id"], "prerequisites": st.get("prerequisites", []),
+                             "job_type": st.get("job_type"), "status": _status(f), "output_path": step_path})
+            summary = "\n".join(f"# step {d['step_id']}: {d['job_type']}, {d['status']}, after "
+                                 f"{', '.join(d['prerequisites']) or 'nothing'} -> {d['output_path']}" for d in done)
+            path = w.sql("dataproc", tgt["name"], aid, findings, summary, comment="#", suffix=".txt")
+            row["steps"] = done
+            source_sql = translated = ""
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"
         r = translate(src["query"], ctx)

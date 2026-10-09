@@ -545,3 +545,24 @@ def translate(sql: str, ctx: Context | None = None) -> Result:
     exempt |= _functions(s, out)
     _gate(s, exempt, out)
     return Result(sql, s.render(), list(dict.fromkeys(out)))
+
+
+def names_and_paths(sql: str, ctx: Context | None = None) -> Result:
+    """Spark SQL that is already Spark's dialect: only table names (G01) and gs:// paths (G21) change.
+
+    For Dataproc's Spark SQL jobs and `spark.sql(...)` strings. None of the
+    GoogleSQL rules apply: `#`, CAST type names and function names are Spark's
+    already. A statement with an unterminated quote is returned unchanged, blocked.
+    """
+    ctx = ctx or Context()
+    s = _Sql(sql)
+    if any(t.kind == "punct" and t.text in "'\"`" for t in s.toks):
+        return Result(sql, sql, [Finding("G98_UNBALANCED", "block", "unterminated quote")])
+    out: list[Finding] = []
+    for t in s.toks:
+        if t.kind == "string" and "gs://" in t.text:
+            t.text, done, missing = rewrite_text(t.text, ctx.buckets, ctx.namespace)
+            out += [Finding("G21_GCS_PATH", "rewrite", f"{p} → oci://") for p in done]
+            out += [Finding("G21_GCS_PATH", "flag", f"{p}: bucket not in the bucket map") for p in missing]
+    _references(s, ctx, out)
+    return Result(sql, s.render(), list(dict.fromkeys(out)))

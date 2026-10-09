@@ -19,8 +19,17 @@ All notable changes to this project are documented here. Format loosely follows
   (`etl_nightly_sessionize_py`, `template_month_end_close`); Spark JAR jobs are REPORT until
   an AIDP `JAR_TASK` is proven; Hive, Pig, SparkR and the other engines are REPORT; clusters
   are REPORT with their sizing (workers, machine types, image, autoscaling, Spark properties,
-  init actions). Until the translator lands, `migrate` writes each as a blocked artifact
-  (`DP00_NOT_TRANSLATED`) holding its settings and original code, commented out.
+  init actions).
+- Dataproc translator (`translate/pyspark_to_aidp.py`): PySpark and Spark SQL code is
+  edited only where it reaches outside Spark, by exact source spans found with `ast`, so
+  formatting and comments are kept and a result that would not parse is blocked. Rules
+  `P01`–`P08` (paths, BigQuery reads to `spark.table`, connector settings removed, Hive
+  names as a caveat; query reads, BigQuery writes, Google libraries and SQL variables
+  flagged) and `P97`–`P99` (blocks). Any connector use no recognised read or write
+  accounts for is flagged, never reported clean. Workflow template steps are translated
+  one by one; a step that cannot be blocks the template. `migrate` writes the translated
+  script with its settings as a header comment. Rule table:
+  `references/dataproc-translation.md`.
 
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.

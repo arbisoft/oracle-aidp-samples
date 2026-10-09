@@ -39,7 +39,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
 | `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2 | offline only |
-| `plan` / `migrate`: Dataproc (0.2, in progress) | 🚧 PySpark and Spark SQL definitions and workflow templates planned as MIGRATE, written as blocked placeholders (`DP00`) until the translator lands; JAR, Hive and other engines and clusters reported | offline only |
+| `plan` / `migrate`: Dataproc (0.2, in progress) | 🚧 PySpark and Spark SQL definitions, batches and workflow template steps translated (`P01`–`P08`); JAR, Hive and other engines and clusters reported; AIDP jobs for them not created yet | offline only |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
 | GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
@@ -411,6 +411,19 @@ tables, with the evidence for each decision, are
 
 A blocked statement is never partially translated: the artifact keeps the original,
 commented out.
+
+**Dataproc PySpark and Spark SQL (0.2, in progress):** the code is Spark already, so only
+what it reaches outside Spark changes. The full table is
+[`references/dataproc-translation.md`](references/dataproc-translation.md).
+
+| Rule | Dataproc | AIDP | Type |
+|---|---|---|---|
+| `P01_GCS_PATH` | `"gs://bucket/path"`, in strings and f-strings | `oci://bucket@namespace/path` | rewrite |
+| `P02_BQ_READ` | `spark.read.format("bigquery").load("p.d.t")` of a planned table | `spark.table("`catalog`.`schema`.`table`")` | rewrite; other reads flagged |
+| `P05_CONNECTOR_SETTING` | connector settings and packages | removed | rewrite |
+| `P06_HIVE_NAME` | `d.t` in `spark.sql(...)` and Spark SQL jobs | the plan's AIDP name | caveat: a Hive metastore name on Dataproc |
+| `P03`, `P04`, `P07`, `P08` | query reads, BigQuery writes, Google client libraries, `${var}` | left as written | flag |
+| `P97`–`P99` | an untranslated step type, unparsable code, code not read | not translated | **block** |
 
 ## Safety posture
 
