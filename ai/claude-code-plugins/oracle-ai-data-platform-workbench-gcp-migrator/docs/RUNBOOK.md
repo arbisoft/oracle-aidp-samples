@@ -232,7 +232,7 @@ Every asset gets a plan row with one of three actions:
 |---|---|
 | `MIGRATE` | migrated in this version |
 | `REPORT` | inventoried and reported with an effort band; not translated (JavaScript functions, BigQuery ML models, access rules) |
-| `SKIP` | planned for a later version, with the reason (Composer and Dataform in 0.3, Dataflow and Vertex AI later), a notebook listed but not exported, or outside `--datasets` |
+| `SKIP` | planned for a later version, with the reason (Dataflow and Vertex AI), a notebook listed but not exported, or outside `--datasets`, `--dataform-repos` or `--dags` |
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate
@@ -246,6 +246,11 @@ assets stay in the plan as `SKIP`, so the approval document still shows the whol
 estate, and its first lines say which datasets are in scope. A view that reads a
 table in an excluded dataset is flagged. Tables within a dataset are not chosen
 here: the copy notebook takes a `tables` parameter for a partial run.
+
+`--dataform-repos a,b` does the same for Dataform repositories, and `--dags a,b` for
+Composer DAGs, matched by DAG id in any environment. The inventory reads each DAG file
+as text and never runs it, so the inventory then contains DAG source code and the plan
+carries it too. Treat both as sensitive and do not commit them.
 
 Two assets that would land on the same target name (compared case-insensitively,
 as Spark does) halt the plan. The planner does not pick a winner.

@@ -75,7 +75,9 @@ python3 -m unittest tests.test_mcp_server
 ```
 
 `test_spark_runtime` runs every generated statement whose findings are only rewrites
-and caveats on Spark, and checks the `QUALIFY` rewrite keeps the same rows.
+and caveats on Spark, including every task statement of the Dataform job and of the
+translated Composer DAG (its INSERT statements run in dependency order against local
+tables), and checks the `QUALIFY` rewrite keeps the same rows.
 `test_dataplane_runtime` executes every cell of the generated `00`–`03` notebooks,
 with the BigQuery connector replaced by a local reader typed the way the connector
 delivered on AIDP; tests 5 to 7 load export-route tables from Parquet files written the

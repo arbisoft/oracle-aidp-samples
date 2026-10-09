@@ -169,10 +169,11 @@ class StudioNotebooks(unittest.TestCase):
         self.assertIn("ReadTimeout", bq["summary"]["not_scanned"]["notebooks"])
 
     def test_the_dataform_source_does_not_count_them(self):
+        from collections import defaultdict
+
         from gcp_aidp.inventory import dataform
         fake = self.Fake()
-        fake.responses = {"https://dataform.googleapis.com/v1beta1/projects/my-project-123456/locations/us-east1"
-                          "/repositories": fake.responses[f"{fake.BASE}/us-east1/repositories"]}
+        fake.responses = defaultdict(dict, fake.responses)  # a repository's configs and compilations: none
         names = [r["name"] for r in dataform.scan(fake, regions=("us-east1",))["items"]["repositories"]]
         self.assertEqual(names, ["df1"])  # not the notebook, saved query, data canvas or pipeline
 

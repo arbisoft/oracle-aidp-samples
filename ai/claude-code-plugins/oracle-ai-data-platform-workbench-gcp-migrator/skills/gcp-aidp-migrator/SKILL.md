@@ -113,7 +113,9 @@ gcp-aidp run       migrated                               # runs the published m
 Reported, not translated: JavaScript functions, BigQuery ML
 models, row access policies and policy tags, Dataproc clusters (with their sizing), and
 Dataproc JAR, Hive, Pig and other engines' jobs. Skipped: BigQuery Studio notebooks whose
-content was not read, Composer and Dataform (0.3), Dataflow and Vertex AI (later).
+content was not read, Dataflow and Vertex AI (later). Dataform repositories migrate as one
+unscheduled job each (`references/dataform-translation.md`), and so does each Composer DAG
+file (`references/airflow-translation.md`).
 
 Dataproc and notebook code is changed only where it reaches outside Spark: `gs://`
 paths, BigQuery connector reads (to `spark.table`), connector settings, Hive table names

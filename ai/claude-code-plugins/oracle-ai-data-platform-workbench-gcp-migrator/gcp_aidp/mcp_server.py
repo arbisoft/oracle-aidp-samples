@@ -97,6 +97,8 @@ def plan(
     namespace: str | None = None,
     catalog: str | None = None,
     datasets: str | None = None,
+    dataform_repos: str | None = None,
+    dags: str | None = None,
     bignumeric: str = "block",
     geography: str = "block",
     export_over_gb: float | None = None,
@@ -112,6 +114,10 @@ def plan(
         catalog: target AIDP catalog (default: the project id, made a valid name).
         datasets: comma-separated BigQuery datasets to migrate (default: all); the
             others stay in the plan as SKIP.
+        dataform_repos: comma-separated Dataform repositories to migrate (default: all);
+            the others stay in the plan as SKIP.
+        dags: comma-separated Composer DAG ids to migrate (default: all); the others
+            stay in the plan as SKIP.
         bignumeric: BIGNUMERIC columns: "block" the table or carry exact decimal "string".
         geography: GEOGRAPHY columns: "block" the table or carry "wkt" text.
         export_over_gb: tables of at least this many GB go the export route (Parquet
@@ -132,6 +138,10 @@ def plan(
         args += ["--export-bucket", export_bucket]
     if bucket_mapping:
         args += ["--bucket-mapping", bucket_mapping]
+    if dataform_repos:
+        args += ["--dataform-repos", dataform_repos]
+    if dags:
+        args += ["--dags", dags]
     return _run(args)
 
 

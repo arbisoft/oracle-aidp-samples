@@ -101,3 +101,31 @@ once it is done.
 | `N02_MAGIC_OPTION` (flag) | A magic option with no AIDP meaning (`--params`, `--project`) | Rewrite with `spark.sql(sql, args={...})` |
 | `N03_NOTEBOOK_COMMAND` (flag) | `!pip`, `%load_ext`: commented out | Install the library on the AIDP cluster, if still needed |
 | `N04_SQL_CELL` (flag) | A SQL cell on an engine not read | Rewrite the cell |
+
+## Dataform repositories
+
+A flag here means the repository's job is not created; the file under `dataform/` lists
+every action and what each became.
+
+| Rule | Check | Done when |
+|---|---|---|
+| `DF04_INCREMENTAL` (flag) | An incremental table: its first run and merge on `uniqueKeyParts` are not translated | You write the `MERGE INTO` (or `INSERT` for append-only) as a task, or make it a full table in Dataform |
+| `DF05_RELATION_TYPE` (flag) | A materialized view, external table or snapshot | Rebuild it by hand (a materialized view: a table plus a refresh job, as `M01` does) |
+| `DF06_OPERATIONS` (flag) | Custom operations, or pre/post operations on a relation | Translate the SQL script by hand and add it as a task before or after the relation |
+| `DF09_NOT_TRANSLATED_ACTION` (flag) | A notebook or data preparation action | Migrate the notebook separately and add it as a task |
+| `DF11_CROSS_PROJECT` (flag) | An action writing to another project | Migrate that project first, or point the target at this plan's catalog |
+
+## Composer DAGs
+
+A flag here means the DAG's job is not created; the file under `composer/` gives the
+tasks, the edges and what each task became.
+
+| Rule | Check | Done when |
+|---|---|---|
+| `C90_UNSUPPORTED_OPERATOR` (flag) | An operator other than a BigQuery query or an empty task | Replace it with its AIDP form: a migrated Dataproc job, a notebook, or `transfer` for Cloud Storage copies |
+| `C91_NON_LITERAL` (flag) | SQL, ids or settings built at run time | Write the value as a literal in the DAG, or set it as an AIDP job parameter |
+| `C92_DYNAMIC_GRAPH` (flag) | TaskFlow, XCom, `.expand()`, tasks built in a loop | Write the tasks out, or build the job by hand |
+| `C94_JINJA` (flag) | `{{ ds }}` and other templates | Pass the value as a job parameter (`:name` in `spark.sql(sql, args=...)`) |
+| `C95_TASK_ARGUMENT` (flag) | `trigger_rule`, `pool`, `depends_on_past`, ... | Set the AIDP equivalent on the job (run-if, retries), or accept that it is dropped |
+| `C96_MULTIPLE_DAGS` (flag) | More than one DAG in a file | Split the file, one DAG each |
+| `C98_BIGQUERY_CONFIG` (flag) | A destination table, write disposition or parameters | Write the `INSERT INTO` / `INSERT OVERWRITE` the configuration meant |

@@ -92,6 +92,39 @@ class SparkRuntime(unittest.TestCase):
             if err and aid not in must_run:
                 print(f"  {aid}: {err}")
 
+    def test_dataform_tasks_run_on_spark(self):
+        for r in self.report["results"]:  # the tables the tasks read, created first
+            if r.get("output_path", "").split("/")[0] in ("schemas", "tables") and r["status"] != "blocked":
+                for stmt in _statements((self.out / r["output_path"]).read_text(), self.catalog):
+                    self.spark.sql(stmt).collect()
+        ran = 0
+        for r in self.report["results"]:
+            if r["kind"] != "dataform_repository" or "job" not in r:
+                continue
+            self.assertTrue(all(f["severity"] in ("rewrite", "caveat", "info") for f in r["findings"]))
+            for task in r["job"]["tasks"]:  # in dependency order
+                for stmt in task["statements"]:
+                    self.spark.sql(stmt.replace(f"`{self.catalog}`.", "`spark_catalog`.")).collect()
+                    ran += 1
+        self.assertGreater(ran, 0)
+
+    def test_composer_dag_tasks_run_on_spark(self):
+        for r in self.report["results"]:  # the tables the tasks read and write, created first
+            if r.get("output_path", "").split("/")[0] in ("schemas", "tables") and r["status"] != "blocked":
+                for stmt in _statements((self.out / r["output_path"]).read_text(), self.catalog):
+                    self.spark.sql(stmt).collect()
+        orders = "`spark_catalog`.`sales`.`orders`"
+        self.spark.sql(f"INSERT INTO {orders} (order_id, customer_id, status, order_date, total, created_at) VALUES "
+                       "(1, 7, 'SHIPPED', DATE'2026-10-01', 10.5, TIMESTAMP'2026-10-01 10:00:00'), "
+                       "(2, 8, 'NEW', DATE'2026-10-01', 4.5, TIMESTAMP'2026-10-01 11:00:00')").collect()
+        job = next(r["job"] for r in self.report["results"] if r["asset_id"].endswith(".revenue_rollup"))
+        for task in job["tasks"]:  # in dependency order
+            for stmt in task["statements"]:
+                self.spark.sql(stmt.replace(f"`{self.catalog}`.", "`spark_catalog`.")).collect()
+        rows = self.spark.sql("SELECT dimension, CAST(metric_value AS STRING) AS v, row_count "
+                              "FROM `spark_catalog`.`sales`.`store_revenue`").collect()
+        self.assertEqual([(r.dimension, float(r.v), r.row_count) for r in rows], [("combined", 15.0, 2)])
+
     def test_G15_QUALIFY_keeps_the_same_rows(self):
         self.spark.sql("CREATE OR REPLACE TEMP VIEW q AS SELECT * FROM VALUES (1, 10, 5), (2, 10, 7), "
                        "(3, 11, 5), (4, 11, 5), (5, 12, 1) AS q(id, k, v)")

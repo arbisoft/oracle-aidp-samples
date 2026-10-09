@@ -1,6 +1,6 @@
 ---
 description: Turn a Google Cloud inventory manifest into an AIDP mapping plan and approval document
-argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--bignumeric block|string] [--geography block|wkt] [--interval block|string] [--range block|struct] [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]"
+argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--dataform-repos a,b] [--dags a,b] [--bignumeric block|string] [--geography block|wkt] [--interval block|string] [--range block|struct] [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]"
 allowed-tools: Bash(gcp-aidp plan:*), Bash(python3 -m gcp_aidp.cli plan:*), Read
 ---
 
@@ -11,7 +11,10 @@ Build a migration plan from an inventory manifest:
 Default the output to `-o plan.json`. Ask for the target catalog if the user has not
 named one; the default is the project id. Ask which datasets to migrate: without
 `--datasets` every dataset in the project is copied, and the others then stay in the
-plan as SKIP.
+plan as SKIP. Dataform repositories work the same way with `--dataform-repos`: each
+one becomes one unscheduled job, and the others stay in the plan as SKIP. Composer DAGs
+work the same way with `--dags` (DAG file names, any environment). The inventory and the
+plan contain DAG source code: tell the user not to commit them.
 
 After it runs, Read `plan.md` (the approval document) and report: the MIGRATE /
 REPORT / SKIP counts, the not-scanned list at the top, and the *Needs a decision*

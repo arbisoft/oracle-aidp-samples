@@ -30,7 +30,7 @@ from gcp_aidp.dataplane import (
     write_jobs,
     write_notebooks,
 )
-from gcp_aidp.translate import ddl
+from gcp_aidp.translate import airflow_dag, dataform, ddl
 from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_uri
 from gcp_aidp.translate.googlesql_to_spark import (
     Context,
@@ -80,6 +80,8 @@ def context_from_plan(plan: dict) -> Context:
             ctx.columns[(tgt["catalog"], tgt["schema"], tgt["name"])] = {c["name"] for c in src.get("columns", [])}
         elif tgt["type"] == "oci_bucket":
             ctx.buckets[src["name"]] = tgt["name"]
+        elif src["type"] == "dataform_repository":
+            dataform.register_outputs(src, ctx, (plan.get("target") or {}).get("catalog", ""))
     return ctx
 
 
@@ -273,7 +275,31 @@ def _one_line(text: str) -> str:
     return re.sub(r"[\x00-\x1f\x7f]+", " ", str(text)).strip()
 
 
-def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
+def _dataform_sql(job: dict, blocked: bool, word: str = "action") -> tuple[str, str]:
+    """(the repository's file, its original queries). Each action is commented with its status; a
+    blocked repository keeps only the original queries, which the writer comments out."""
+    note = (lambda text: text) if blocked else (lambda text: f"-- {text}")
+    parts, originals = [], []
+    for rec in job["actions"]:
+        head = f"{word} {rec['label']} ({rec['what']})"
+        if rec.get("taskKey"):
+            head += (f" -> task {rec['taskKey']}" if word == "action" else "") \
+                + (f", after {', '.join(rec['dependsOn'])}" if rec["dependsOn"] else "")
+        else:
+            head += ": no task"
+        lines = [note(head)] + [note(f"{f['severity'].upper()} {f['rule']}: {_one_line(f['detail'])}")
+                                for f in rec["findings"] if f["severity"] != "rewrite"]
+        if blocked:
+            lines += rec["original"]
+        else:
+            lines += [st + ";\n" for st in rec["statements"]]
+        if rec["original"]:
+            originals.append(f"-- {rec['label']}\n" + "\n".join(rec["original"]))
+        parts.append("\n".join(lines).rstrip())
+    return "\n\n".join(parts), "\n\n".join(originals)
+
+
+def _migrate_one(a: dict, ctx: Context, w: _Writer, catalog: str = "") -> dict:
     src, tgt, aid = a["source"], a["target"], a["id"]
     row = {"asset_id": aid, "kind": src["type"], "action": a["action"]}
 
@@ -286,7 +312,7 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
     findings: list[dict] = []
     source_sql = translated = ""
     t = tgt["type"]
-    stem = f"{src.get('dataset', '')}.{src.get('name') or src.get('id', '')}".lstrip(".")
+    stem = f"{src.get('dataset', '')}.{src.get('name') or src.get('id') or src.get('dag_id', '')}".lstrip(".")
 
     if t == "aidp_schema":
         translated = ddl.create_schema(tgt["catalog"], tgt["name"], src.get("description", ""))
@@ -445,6 +471,41 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
                 findings += more
                 row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedules": schedules,
                               "tasks": [{**d["task"], "after": d["prerequisites"]} for d in done]}
+    elif src["type"] == "dataform_repository":
+        job, findings, creatable = dataform.translate_repository(src, ctx, catalog, tgt["name"])
+        blocked = any(f["severity"] == "block" for f in findings)
+        translated, source_sql = _dataform_sql(job, blocked)
+        schedule = dataform.schedule_text(src)
+        if creatable:
+            findings.append(_f("J01_UNSCHEDULED", "info", f"job {tgt['name']} is created unscheduled; "
+                                                           f"source schedule: {schedule}"))
+            row["job"] = {"name": tgt["name"], "tasks": job["tasks"],
+                          "title": f"Dataform repository {src['name']!r} (schedule: {schedule}; not applied)"}
+        path = w.sql("dataform", src["name"], aid, findings, translated or "-- no actions were read",
+                     blocked=blocked)
+        if blocked:
+            translated = ""
+    elif src["type"] == "composer_dag":
+        job, findings, creatable = airflow_dag.translate_dag(src, ctx, tgt["name"])
+        blocked = any(f["severity"] == "block" for f in findings)
+        translated, source_sql = _dataform_sql(job, blocked, "task")
+        if job["tasks"]:
+            note = (lambda text: text) if blocked else (lambda text: f"-- {text}")
+            head = [f"DAG {job['dag_id']} in environment {src['environment']} ({src['file']})",
+                    f"schedule: {job['schedule']} (not applied)",
+                    "tasks: " + ", ".join(x["taskKey"] for x in job["tasks"]),
+                    "edges: " + ("; ".join(f"{u} -> {v}" for u, v in job["edges"]) or "none")]
+            translated = "\n".join(note(h) for h in head) + "\n\n" + translated
+        if creatable:
+            findings.append(_f("J01_UNSCHEDULED", "info", f"job {tgt['name']} is created unscheduled; "
+                                                           f"source schedule: {job['schedule']}"))
+            row["job"] = {"name": tgt["name"], "tasks": job["tasks"],
+                          "title": f"Composer DAG {src['dag_id']!r} in {src['environment']} "
+                                   f"(schedule: {job['schedule']}; not applied)"}
+        body = translated or (src.get("code") if blocked else "") or "-- nothing is translated from this file"
+        path = w.sql("composer", f"{src['environment']}.{src['dag_id']}", aid, findings, body, blocked=blocked)
+        if blocked:
+            translated = ""
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"
         r = translate(src["query"], ctx)
@@ -507,7 +568,7 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     results = []
     for a in plan["assets"]:
         try:
-            r = _migrate_one(a, ctx, w)
+            r = _migrate_one(a, ctx, w, (plan.get("target") or {}).get("catalog", ""))
         except Exception as exc:  # noqa: BLE001 - one asset's failure is recorded; the run continues
             r = {"asset_id": a.get("id", "?"), "kind": a.get("source", {}).get("type"),
                  "status": "error", "note": f"{type(exc).__name__}: {exc}"}

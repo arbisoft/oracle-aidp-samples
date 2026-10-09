@@ -113,9 +113,19 @@ def cmd_plan(args: argparse.Namespace) -> int:
         buckets, mapped_ns = bucket_mapping(_load_json_object(Path(args.bucket_mapping), "bucket mapping"),
                                             args.namespace or os.environ.get("OCI_NAMESPACE"))
         ns = mapped_ns or ns
+    repos = None
+    if args.dataform_repos is not None:
+        repos = [r.strip() for r in args.dataform_repos.split(",") if r.strip()]
+        if not repos:
+            raise ValueError("--dataform-repos is empty; leave it out to plan every repository")
+    dags = None
+    if args.dags is not None:
+        dags = [d.strip() for d in args.dags.split(",") if d.strip()]
+        if not dags:
+            raise ValueError("--dags is empty; leave it out to plan every DAG")
     plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog, buckets=buckets,
                       bignumeric=args.bignumeric, geography=args.geography, interval=args.interval,
-                      range_=args.range, datasets=datasets,
+                      range_=args.range, datasets=datasets, dataform_repos=repos, dags=dags,
                       export_over_gb=args.export_over_gb, export_bucket=args.export_bucket)
     out = Path(args.output) if args.output else Path(args.manifest).with_suffix(".plan.json")
     write_plan(plan, out)
@@ -298,6 +308,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--datasets",
                     help="comma-separated BigQuery datasets to migrate (default: all); the others stay in "
                          "the plan as SKIP")
+    pl.add_argument("--dataform-repos",
+                    help="comma-separated Dataform repositories to migrate (default: all); the others stay "
+                         "in the plan as SKIP")
+    pl.add_argument("--dags",
+                    help="comma-separated Composer DAG ids to migrate, in any environment (default: all); "
+                         "the others stay in the plan as SKIP")
     pl.add_argument("--bignumeric", choices=("block", "string"), default="block",
                     help="BIGNUMERIC columns: block the table (default) or carry exact decimal text")
     pl.add_argument("--geography", choices=("block", "wkt"), default="block",

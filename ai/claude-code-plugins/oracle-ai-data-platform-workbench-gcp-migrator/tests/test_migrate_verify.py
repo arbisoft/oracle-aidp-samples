@@ -34,6 +34,12 @@ EXPECTED = {
     "bigquery.saved_query.Churn_scoring": "REVIEW",     # blocked: ML.PREDICT
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
     "gcs.bucket.northwind-landing": "PASS",             # copied by `transfer`; nothing to set up
+    "dataform.repository.northwind-transformations": "PASS",
+    "dataform.repository.northwind-events-incremental": "REVIEW",  # DF04: incremental table, no job
+    "composer.environment.northwind-orchestration": "SKIP",
+    "composer.dag.northwind-orchestration.revenue_rollup": "PASS",
+    "composer.dag.northwind-orchestration.customer_profiles": "REVIEW",  # C90: a Dataproc operator, no job
+    "composer.dag.northwind-orchestration.month_end_close": "REVIEW",    # C93: does not parse
     "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
     "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
     "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
@@ -171,12 +177,28 @@ class EveryRuleHasATest(unittest.TestCase):
         self.assertEqual(sorted(r for r in review if f"`{r}`" not in guide), [])
 
     def test_rule_ids_in_code_appear_in_tests(self):
-        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|DF|C|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
         tests = "".join(p.read_text() for p in (ROOT / "tests").glob("test_*.py"))
         ids = set(rule.findall(code))
         self.assertGreater(len(ids), 40)  # the guard is not passing on an empty set
         self.assertEqual(sorted(ids - set(rule.findall(tests))), [])
+
+    def test_dataform_rules_have_a_row_in_the_reference(self):
+        rule = re.compile(r"(?<![A-Z0-9])DF\d\d(?:_[A-Z0-9]+)+")
+        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
+        reference = (ROOT / "references/dataform-translation.md").read_text()
+        ids = set(rule.findall(code))
+        self.assertEqual(len(ids), 15)
+        self.assertEqual(sorted(i for i in ids if f"| `{i}` |" not in reference), [])
+
+    def test_composer_rules_have_a_row_in_the_reference(self):
+        rule = re.compile(r"(?<![A-Z0-9])C\d\d(?:_[A-Z0-9]+)+")
+        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
+        reference = (ROOT / "references/airflow-translation.md").read_text()
+        ids = set(rule.findall(code))
+        self.assertEqual(len(ids), 17)
+        self.assertEqual(sorted(i for i in ids if f"| `{i}` |" not in reference), [])
 
 
 if __name__ == "__main__":

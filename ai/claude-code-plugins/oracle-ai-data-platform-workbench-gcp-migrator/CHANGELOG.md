@@ -3,6 +3,44 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.3.0] - unreleased
+
+Dataform repositories and Composer DAGs migrate. Built on 0.2.1, below.
+
+### Added
+- Composer (0.3): each DAG file is planned as `MIGRATE` and becomes one
+  unscheduled AIDP job, one task per Airflow task, with upstream tasks as
+  `dependsOn`. `inventory` now reads each DAG file's text from the environment's
+  bucket (Cloud Storage object read, `GET` only, 1 MB cap); a file it cannot read
+  is kept and recorded as *not scanned*. The manifest and the plan therefore hold
+  DAG source code: do not commit them. The file is parsed with `ast` and is never
+  imported, executed or evaluated. Only `BigQueryInsertJobOperator` with a
+  literal query, `EmptyOperator`/`DummyOperator` and plain dependencies are
+  translated; every other operator, loop, decorator or non-literal value is
+  flagged by name and no job is created for that DAG. Rules `C01`–`C06` and
+  `C89`–`C99`, in `references/airflow-translation.md`. Schedules are recorded in
+  the job description and never applied. Composer environments are `REPORT` rows.
+- `plan --dags a,b`: migrate only those DAGs, in any environment; the others stay
+  in the plan as SKIP. Also on the MCP `plan` tool.
+- `migrate` writes one `composer/<environment>.<dag>.sql` per DAG; a task that
+  does nothing gets a no-op notebook.
+- Dataform (0.3): each repository is planned as `MIGRATE` and becomes one
+  unscheduled AIDP job, with one task per compiled action and Dataform's
+  dependencies as `dependsOn`. `inventory` reads each repository's release and
+  workflow configs and the actions of its compilation result (Dataform v1,
+  `GET` only; it never creates a compilation result or starts a workflow). A
+  repository it cannot read is kept and recorded as *not scanned*. Rules
+  `DF01`–`DF15`, in `references/dataform-translation.md`: tables, views and
+  assertions are translated; incremental tables, operations, notebooks and
+  other relation types are flagged. If any action is flagged or blocked, no job
+  is created for the repository. Schedules are recorded in the job description
+  and never applied.
+- `plan --dataform-repos a,b`: migrate only those Dataform repositories; the
+  others stay in the plan as SKIP. Also on the MCP `plan` tool.
+- `migrate` writes one `dataform/<repository>.sql` per repository, and
+  `write_jobs` accepts a job made of several tasks, one notebook each; an
+  assertion's notebook fails when its query returns a row.
+
 ## [0.2.1] - unreleased
 
 ### Added

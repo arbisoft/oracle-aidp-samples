@@ -33,9 +33,9 @@ EXPECTED = {
     "dataproc_cluster": ("REPORT", "0.2"),
     "dataproc_batch": ("MIGRATE", "0.2"),
     "dataproc_workflow_template": ("MIGRATE", "0.2"),
-    "composer_environment": ("SKIP", "0.3"),
-    "composer_dag": ("SKIP", "0.3"),
-    "dataform_repository": ("SKIP", "0.3"),
+    "composer_environment": ("REPORT", "0.3"),
+    "composer_dag": ("MIGRATE", "0.3"),
+    "dataform_repository": ("MIGRATE", "0.3"),
     "bq_pipeline": ("SKIP", "0.3"),
     "dataflow_job": ("SKIP", "later"),
     "vertex_model": ("SKIP", "later"),
@@ -67,7 +67,8 @@ class DemoPlan(unittest.TestCase):
     def test_every_manifest_asset_has_a_row(self):
         manifest_count = sum(len(rows) for src in DEMO["sources"].values() for rows in src["items"].values())
         # A Cloud Scheduler job rides on the row of the job it starts; only one that starts nothing has its own.
-        carried = sum("schedules" in a["source"] for a in self.plan["assets"])
+        carried = sum("schedules" in a["source"] for a in self.plan["assets"]  # Dataform's are its own configs
+                      if a["source"]["type"].startswith("dataproc"))
         self.assertEqual(self.plan["summary"]["asset_count"], manifest_count - carried)
         self.assertEqual([a["id"] for a in self.plan["assets"] if a["source"]["type"] == "cloud_scheduler_job"],
                          ["dataproc.schedule.us-central1/legacy-rollup-weekly"])
@@ -217,7 +218,9 @@ class FailClosed(unittest.TestCase):
     def test_scan_error_is_carried_into_the_plan(self):
         m = copy.deepcopy(DEMO)
         m["sources"]["gcs"] = {"summary": {"error": "403 storage.buckets.list"}, "items": {}}
-        self.assertEqual(build_plan(m)["scan_errors"], {"gcs": "403 storage.buckets.list"})
+        errors = build_plan(m)["scan_errors"]
+        self.assertEqual(errors["gcs"], "403 storage.buckets.list")
+        self.assertEqual(sorted(errors), ["composer.code of northwind-orchestration/dags/ml_feature_refresh.py", "gcs"])
 
     def test_bucket_name_that_is_not_a_gcs_name_fails_closed(self):
         # The name goes into API calls and file paths.
