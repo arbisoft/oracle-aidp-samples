@@ -156,6 +156,11 @@ class DataprocPlan(unittest.TestCase):
         self.assertEqual(c["action"], "REPORT")
         self.assertIn("8 workers n2-standard-8", "; ".join(c["notes"]))
 
+    def test_a_single_node_cluster_reads_as_one(self):
+        from gcp_aidp.plan.planner import _cluster_sizing
+        self.assertEqual(_cluster_sizing({"master_machine_type": "n4-standard-2", "image_version": "2.3.37-debian12"}),
+                         ["single node: master n4-standard-2, image 2.3.37-debian12"])
+
     def test_one_script_on_two_clusters_does_not_collide(self):
         m = copy.deepcopy(DEMO)
         jobs = m["sources"]["dataproc"]["items"]["jobs"]

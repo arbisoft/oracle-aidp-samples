@@ -188,7 +188,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("run finished: every task succeeded."
               + (" The verdicts are in MIGRATION_REPORT.md in the reports folder." if args.job == MIGRATION_JOB else ""))
     elif result["finished"]:
-        print("run finished with failures (above). Fix the cause, then run again: completed copies are skipped.")
+        print("run finished with failures (above). Fix the cause, then run again"
+              + (": completed copies are skipped." if args.job == MIGRATION_JOB else "."))
     return 0 if result["ok"] else 1
 
 

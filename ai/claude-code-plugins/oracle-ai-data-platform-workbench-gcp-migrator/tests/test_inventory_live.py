@@ -197,6 +197,26 @@ class DataprocInventory(unittest.TestCase):
         self.assertEqual((c["machine_type"], c["master_machine_type"], c["worker_count"]), ("n2-standard-8", "n2-standard-4", 4))
         self.assertEqual(c["init_actions"], ["gs://landing/init.sh"])
 
+    def test_the_newest_run_is_the_last_submitted(self):
+        # Live, 2026-10-09: the run submitted second was killed early, so its last state change
+        # came before the first run's; its arguments are still the newest.
+        from gcp_aidp.inventory import dataproc
+        runs = [{"reference": {"jobId": "first"}, "placement": {"clusterName": "c"},
+                 "status": {"state": "DONE", "stateStartTime": "2026-10-09T07:10:00Z"},
+                 "statusHistory": [{"state": "PENDING", "stateStartTime": "2026-10-09T07:00:00Z"}],
+                 "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/j.jar.py", "args": ["2026-10-01"]}},
+                {"reference": {"jobId": "second"}, "placement": {"clusterName": "c"},
+                 "status": {"state": "ERROR", "stateStartTime": "2026-10-09T07:05:00Z"},
+                 "statusHistory": [{"state": "PENDING", "stateStartTime": "2026-10-09T07:01:00Z"}],
+                 "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/j.jar.py", "args": ["2026-10-02"]}}]
+        client = DataprocClient()
+        client.get = lambda url, params=None: (
+            {"jobs": runs} if url.endswith("/jobs") else {"clusters": []} if url.endswith("/clusters")
+            else {"batches": []} if url.endswith("/batches") else {"templates": []} if url.endswith("Templates")
+            else (_ for _ in ()).throw(GcpError("HTTP 404", status=404)))
+        job = dataproc.scan(client, regions=("us-central1",))["items"]["jobs"][0]
+        self.assertEqual((job["last_run_id"], job["args"], job["last_state"]), ("second", ["2026-10-02"], "ERROR"))
+
     def test_metadata_and_object_reads_only(self):
         self.assertTrue(all(c.startswith(("https://dataproc.googleapis.com/", OBJ)) for c in self.client.calls))
 

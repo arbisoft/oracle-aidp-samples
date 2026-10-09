@@ -190,6 +190,18 @@ class DataprocJobs(unittest.TestCase):
         self.assertIn("/Workspace/ana/etl_nightly_sessionize_py.py", fake.uploaded)
 
 
+class FailureCause(unittest.TestCase):
+    def test_the_root_cause_is_shown_not_the_wrappers(self):
+        from gcp_aidp.publish import failure_cause
+        # As a Python task's message arrived from AIDP, 2026-10-09 (the script's own lines elided).
+        message = ("java.lang.RuntimeException: [Command ab93_3a2b in Context 3a2b] failed with error: \n"
+                   "Py4JJavaError: An error occurred while calling o318.json.\n"
+                   ": org.apache.hadoop.fs.UnsupportedFileSystemException: No FileSystem for scheme \"gs\"\n"
+                   "\tat org.apache.hadoop.fs.FileSystem.getFileSystemClass(FileSystem.java:3585)")
+        self.assertEqual(failure_cause(message), 'UnsupportedFileSystemException: No FileSystem for scheme "gs"')
+        self.assertEqual(failure_cause("Task timed out"), "")
+
+
 class CliMessages(unittest.TestCase):
     def test_run_points_to_the_report_only_after_the_migration_job(self):
         import io
@@ -197,7 +209,7 @@ class CliMessages(unittest.TestCase):
         from unittest import mock
 
         from gcp_aidp.cli import main
-        for job, says in (("gcp_aidp_migration", True), ("etl_nightly_sessionize_py", False)):
+        for job, says in (("gcp_aidp_migration", True), ("etl_nightly_sessionize_py", False)):  # success
             with mock.patch("gcp_aidp.publish.run", return_value={"ok": True, "finished": True}), \
                     redirect_stdout(io.StringIO()) as out:
                 main(["run", "migrated", "--job", job, "--workspace-key", "w"])

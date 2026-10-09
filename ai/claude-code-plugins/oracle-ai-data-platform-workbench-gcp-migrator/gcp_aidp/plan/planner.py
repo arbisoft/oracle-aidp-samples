@@ -320,8 +320,11 @@ def _dataproc_definition(row: dict, collection: str) -> dict:
 
 def _cluster_sizing(c: dict) -> list[str]:
     """The source cluster's size, to size the AIDP cluster from (no AIDP shape is invented)."""
-    notes = [f"{c.get('worker_count', '?')} workers {c.get('machine_type', '?')}, master "
-             f"{c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
+    if c.get("worker_count"):
+        notes = [f"{c['worker_count']} workers {c.get('machine_type', '?')}, master "
+                 f"{c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
+    else:  # a single-node cluster has no workers: the master runs everything
+        notes = [f"single node: master {c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
     if c.get("secondary_worker_count"):
         notes.append(f"{c['secondary_worker_count']} secondary workers")
     if c.get("autoscaling_policy"):

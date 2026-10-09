@@ -41,9 +41,9 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 |---|---|---|
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
-| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | offline only (needs a billed project) |
+| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | live on a billed project, two regions: two runs of one script grouped into one definition (newest arguments kept), a Spark SQL job, a workflow template's steps and order, job code read from Cloud Storage, cluster sizing |
 | `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: an exported notebook read with `--notebooks-dir` (outputs dropped), translated, published and run on AIDP, reading the migrated tables with the expected counts |
-| `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: a translated PySpark job (BigQuery read, connector setting, `spark.sql` name, `sys.argv`), a Spark SQL job and a two-step template ran on the migrated tables with the expected counts; Dataproc inventory offline only |
+| `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: synthetic and then real Dataproc jobs, inventoried from a live project, translated and run on the migrated tables with the expected counts; a write to a bucket not yet on OCI failed where the plan flagged it |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
 | GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
@@ -524,8 +524,8 @@ need one: its translated Dataproc jobs and notebooks ran on AIDP as written.
 - 0.1: BigQuery tables, views, materialized views, scheduled and saved queries, and Cloud
   Storage.
 - 0.2: BigQuery Studio notebooks and Dataproc jobs, batches and workflow templates. Still
-  to come: Spark JAR jobs (once an AIDP `JAR_TASK` is proven) and a live check of the
-  Dataproc inventory on a billed project.
+  to come: Spark JAR jobs (once an AIDP `JAR_TASK` is proven), and the schedules of
+  templates triggered from Cloud Scheduler.
 - 0.3: Composer (Airflow DAGs → AIDP workflows), Dataform and BigQuery pipelines.
 - Later: Dataflow and Vertex AI.
 - Under consideration: an execute-check-fix pass for migrated code.

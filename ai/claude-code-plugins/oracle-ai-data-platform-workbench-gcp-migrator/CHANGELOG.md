@@ -59,7 +59,20 @@ Dataproc and BigQuery Studio notebooks migrate. Built on 0.1, below.
 - `publish` counts scripts as files, not notebooks; `run` points to `MIGRATION_REPORT.md`
   only after the migration job.
 
+- Run live end to end on a billed project: a Dataproc cluster in one region and a workflow
+  template in another were inventoried (two runs of one script grouped into one definition,
+  a Spark SQL job, the template's steps and order, job code read from Cloud Storage),
+  translated and run on AIDP. The Spark SQL job and the PySpark job's BigQuery read returned
+  the 15,709 migrated orders; the PySpark job's write to a bucket not yet on OCI failed where
+  the plan had flagged it (`P01`), and the template's second step did not run after it.
+
 ### Fixed
+- Dataproc: a definition kept the arguments of the run whose state changed last, not the one
+  submitted last; a run killed early looked older. Runs are ordered by submission time.
+- A single-node Dataproc cluster's sizing read "? workers ?"; it reads "single node: master …".
+- `run` showed only "failed with error:" for a failed task; it now shows the exception that
+  failed it, past AIDP's and Py4J's wrappers (`UnsupportedFileSystemException: No FileSystem
+  for scheme "gs"`). Its "completed copies are skipped" hint now follows only the migration job.
 - `inventory` accepted any text as a project id, including a URL, and made a real call
   with it. A value that is not a Google Cloud project id is refused before any call.
 - A notebook cell whose only content was the removed `%load_ext` became an empty cell; it
@@ -68,8 +81,9 @@ Dataproc and BigQuery Studio notebooks migrate. Built on 0.1, below.
 ### Known gaps
 - Dataproc Spark JAR jobs, Hive, Pig, SparkR and the other engines are reported, not
   migrated: an AIDP `JAR_TASK` is not yet proven.
-- The Dataproc inventory has run only against canned API responses; the translated jobs
-  and notebooks have run on AIDP.
+- A Dataproc job's Spark `properties` are recorded, not carried to the AIDP task.
+- Cloud Scheduler is not inventoried, so a workflow template triggered from it arrives
+  without its schedule (a template holds none itself).
 - Files Dataproc stages beside a job (`pythonFileUris`, `fileUris`, `archiveUris`, extra
   JARs) are flagged (`P09`), not uploaded.
 - A BigQuery connector read built across variables is flagged, not rewritten.

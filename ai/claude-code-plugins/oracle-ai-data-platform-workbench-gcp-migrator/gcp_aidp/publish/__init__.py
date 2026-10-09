@@ -179,6 +179,17 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
     return planned
 
 
+_EXCEPTION = re.compile(r"([A-Za-z0-9_.]*(?:Exception|Error)): ([^\n\\]{1,240})")
+_WRAPPERS = ("[Command ", "An error occurred while calling")  # AIDP's and Py4J's: they only wrap the cause
+
+
+def failure_cause(text: str) -> str:
+    """The exception that failed a task, past AIDP's and Py4J's wrappers; "" if none is named."""
+    causes = [(name.rsplit(".", 1)[-1], msg.strip()) for name, msg in _EXCEPTION.findall(text or "")
+              if not msg.strip().startswith(_WRAPPERS)]
+    return f"{causes[-1][0]}: {causes[-1][1]}" if causes else ""
+
+
 def readable_failure(output_text: str) -> str:
     """The error text in a task's output (errorTrace, or a cell's ename/evalue), "" if none."""
     try:
@@ -244,8 +255,10 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
             return {"run": run_key, "tasks": tasks, "finished": False, "ok": False}
         for task_key, status, message, task_run in tasks:
             if status not in ("SUCCESS", "UPSTREAM_FAILED", "SKIPPED"):
-                detail = readable_failure(client.task_output(task_run)) if task_run else ""
-                first = ((message or "").strip().splitlines() or [""])[0]
+                output = client.task_output(task_run) if task_run else ""
+                detail = readable_failure(output)
+                cause = failure_cause(message or "") or failure_cause(output)
+                first = cause or ((message or "").strip().splitlines() or [""])[0]
                 log(f"\n{task_key} {status}: {first}\n{detail[-2000:]}".rstrip())
     except (AidpError, AidpUnavailable) as exc:
         raise PublishError(str(exc)) from exc

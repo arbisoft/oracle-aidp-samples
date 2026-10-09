@@ -62,6 +62,13 @@ def _read_code(client: GcpClient, spec: dict) -> dict:
         return {"code_not_read": str(exc)}
 
 
+def _submitted(job: dict) -> str | None:
+    """When a run was submitted: its first status. Its current status time is when it last changed,
+    which for a run killed early comes before an older run's finish (seen live, 2026-10-09)."""
+    history = [h.get("stateStartTime") for h in job.get("statusHistory", []) if h.get("stateStartTime")]
+    return min(history) if history else job.get("status", {}).get("stateStartTime")
+
+
 def _digest(value) -> str:
     return hashlib.sha256(repr(value).encode()).hexdigest()[:10]
 
@@ -134,7 +141,7 @@ def scan(client: GcpClient, *, regions=("us-central1",), **_) -> dict:
         runs = _per_region(regions, lambda r: [
             {"region": r, "cluster": j.get("placement", {}).get("clusterName"),
              "run_id": j["reference"]["jobId"], "state": j.get("status", {}).get("state"),
-             "time": j.get("status", {}).get("stateStartTime"), **_spec(j)}
+             "time": _submitted(j), **_spec(j)}
             for j in client.pages(f"{API}/{p}/regions/{r}/jobs", "jobs")])
         return _definitions(runs, client)
 
