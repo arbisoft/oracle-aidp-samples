@@ -25,7 +25,7 @@ API = "https://dataproc.googleapis.com/v1/projects"
 SCHEDULER = "https://cloudscheduler.googleapis.com/v1/projects"
 _TEMPLATE_URI = re.compile(r"/projects/[^/]+/(?:regions|locations)/([^/]+)/workflowTemplates/([^/:]+):instantiate$")
 _JOB_URI = re.compile(r"/projects/[^/]+/regions/([^/]+)/jobs:submit$")
-_BATCH_URI = re.compile(r"/projects/[^/]+/locations/([^/]+)/batches(?:\?.*)?$")
+_BATCH_URI = re.compile(r"/projects/[^/]+/locations/([^/]+)/batches$")
 MAX_CODE_BYTES = 1_000_000
 # The job (and batch) type fields of the API, and the name the manifest uses.
 _KIND = {"pysparkJob": "pyspark", "sparkJob": "spark", "sparkSqlJob": "spark_sql", "sparkRJob": "spark_r",
@@ -143,9 +143,10 @@ def _starts(http: dict) -> dict | None:
     uri = http.get("uri") or ""
     if "dataproc.googleapis.com" not in uri:
         return None
-    if m := _TEMPLATE_URI.search(uri):
+    path = uri.split("?", 1)[0]  # tools often add ?alt=json
+    if m := _TEMPLATE_URI.search(path):
         return {"kind": "workflow_template", "region": m[1], "id": m[2]}
-    job, batch = _JOB_URI.search(uri), _BATCH_URI.search(uri)
+    job, batch = _JOB_URI.search(path), _BATCH_URI.search(path)
     if not (job or batch):
         return {"kind": "other", "uri": uri}
     try:

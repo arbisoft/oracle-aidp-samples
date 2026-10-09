@@ -151,7 +151,8 @@ DATAPROC_RESPONSES = {
     f"https://cloudscheduler.googleapis.com/v1/projects/{P}/locations/us-central1/jobs": {"jobs": [
         {"name": f"projects/{P}/locations/us-central1/jobs/month-end-trigger", "schedule": "0 6 1 * *",
          "timeZone": "America/New_York", "state": "ENABLED", "httpTarget": {
-             "uri": f"{DP}/regions/us-central1/workflowTemplates/month-end:instantiate", "httpMethod": "POST"}},
+             "uri": f"{DP}/regions/us-central1/workflowTemplates/month-end:instantiate?alt=json",
+             "httpMethod": "POST"}},
         {"name": f"projects/{P}/locations/us-central1/jobs/nightly", "schedule": "0 2 * * *", "state": "PAUSED",
          "httpTarget": {"uri": f"{DP}/regions/us-central1/jobs:submit", "body": base64.b64encode(json.dumps(
              {"job": {"placement": {"clusterName": "etl"},
