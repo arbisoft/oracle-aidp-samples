@@ -12,6 +12,7 @@ from pathlib import Path
 
 from gcp_aidp import __version__
 from gcp_aidp._env import load_dotenv
+from gcp_aidp.dataplane import MIGRATION_JOB
 from gcp_aidp.inventory.manifest import ALL_SOURCES
 
 _FIXTURE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -169,7 +170,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
     failed = [x for x in result["notebooks"] + result["jobs"] if x.get("status") in ("error", "refused")]
     failed += result["blocked"]
     print(f"\nuploaded {sum(n['status'] == 'uploaded' for n in result['notebooks'])}/{len(result['notebooks'])} "
-          f"notebook(s); created {sum(j.get('status') == 'created' for j in result['jobs'])}/"
+          f"file(s) (notebooks and scripts); created {sum(j.get('status') == 'created' for j in result['jobs'])}/"
           f"{len(result['jobs']) + len(result['blocked'])} job(s); {len(failed)} failed or refused.")
     return 1 if failed else 0
 
@@ -183,7 +184,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if result["ok"]:
-        print("run finished: every task succeeded. The verdicts are in MIGRATION_REPORT.md in the reports folder.")
+        print("run finished: every task succeeded."
+              + (" The verdicts are in MIGRATION_REPORT.md in the reports folder." if args.job == MIGRATION_JOB else ""))
     elif result["finished"]:
         print("run finished with failures (above). Fix the cause, then run again: completed copies are skipped.")
     return 0 if result["ok"] else 1

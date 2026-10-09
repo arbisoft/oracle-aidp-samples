@@ -39,6 +39,11 @@ All notable changes to this project are documented here. Format loosely follows
   Python list starting with the script's own path; the script runs as `__main__` with
   `spark` defined. New flags: `P09_LOCAL_FILES` (`__file__`, and files, modules or JARs
   Dataproc staged beside the job) and `P10_TEMPLATE_PARAMETER`.
+- Run live on AIDP: a translated PySpark job, a Spark SQL job and a two-step workflow
+  template, published and run against the migrated tables; the PySpark job read 3,923 of
+  the 15,709 `orders` rows reconcile had verified, and the template ran its steps in order.
+- `publish` counts scripts as files, not notebooks; `run` points to `MIGRATION_REPORT.md`
+  only after the migration job.
 
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.

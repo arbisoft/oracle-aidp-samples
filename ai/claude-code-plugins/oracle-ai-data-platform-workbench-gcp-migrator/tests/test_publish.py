@@ -190,6 +190,20 @@ class DataprocJobs(unittest.TestCase):
         self.assertIn("/Workspace/ana/etl_nightly_sessionize_py.py", fake.uploaded)
 
 
+class CliMessages(unittest.TestCase):
+    def test_run_points_to_the_report_only_after_the_migration_job(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        from gcp_aidp.cli import main
+        for job, says in (("gcp_aidp_migration", True), ("etl_nightly_sessionize_py", False)):
+            with mock.patch("gcp_aidp.publish.run", return_value={"ok": True, "finished": True}), \
+                    redirect_stdout(io.StringIO()) as out:
+                main(["run", "migrated", "--job", job, "--workspace-key", "w"])
+            self.assertEqual("MIGRATION_REPORT.md" in out.getvalue(), says, job)
+
+
 class DotEnv(unittest.TestCase):
     def test_only_the_plugins_own_keys_are_loaded(self):
         import os
