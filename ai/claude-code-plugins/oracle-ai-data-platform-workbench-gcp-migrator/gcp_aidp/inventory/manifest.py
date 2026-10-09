@@ -41,6 +41,10 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
             if source == "bigquery":
                 data[source] = bigquery.scan(client, saved_queries_dir=saved_queries_dir,
                                              notebooks_dir=notebooks_dir, log=log)
+                if scan_services and not notebooks_dir:  # BigQuery Studio notebooks, through Dataform
+                    if service_client is None:
+                        service_client = GcpClient(client.project, scope=CLOUD_PLATFORM_SCOPE)
+                    _studio_notebooks(data[source], service_client, log)
             elif source in BROAD_SCOPE_SOURCES:
                 if service_client is None:
                     service_client = GcpClient(client.project, scope=CLOUD_PLATFORM_SCOPE)
@@ -54,6 +58,28 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
     return {"project_id": client.project, "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "regions": list(regions), "sources_scanned": list(sources),
             "scan_services": scan_services, "sources": data}
+
+
+def _studio_notebooks(bq: dict, client, log=None) -> None:
+    """Fill the BigQuery source's notebooks from the Dataform API, or say why not."""
+    from gcp_aidp.gcp_client import GcpError
+    from gcp_aidp.inventory import studio_notebooks
+    summary = bq["summary"]
+    try:
+        notebooks, warnings = studio_notebooks.scan(client)
+    except GcpError as exc:
+        summary.setdefault("not_scanned", {})["notebooks"] = (f"Dataform API refused ({exc}): grant Dataform "
+                                                               "Viewer, or export them and pass --notebooks-dir")
+        return
+    bq["items"]["notebooks"] = notebooks
+    summary["notebooks"] = len(notebooks)
+    (summary.get("not_scanned") or {}).pop("notebooks", None)
+    if not summary.get("not_scanned"):
+        summary.pop("not_scanned", None)
+    if warnings:
+        summary.setdefault("warnings", []).extend(warnings)
+    if log:
+        log(f"    {len(notebooks)} BigQuery Studio notebook(s) read through Dataform")
 
 
 def write_manifest(manifest: dict, out_path: str | Path) -> Path:

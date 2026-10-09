@@ -66,7 +66,19 @@ Dataproc and BigQuery Studio notebooks migrate. Built on 0.1, below.
   the 15,709 migrated orders; the PySpark job's write to a bucket not yet on OCI failed where
   the plan had flagged it (`P01`), and the template's second step did not run after it.
 
+- BigQuery Studio notebooks are read through the Dataform API with `--scan-services`
+  (Dataform Viewer): each is a Dataform repository labelled `single-file-asset-type: notebook`
+  holding `content.ipynb`, found in any Dataform location; outputs are dropped, and other
+  single-file assets are named in a warning. The `dataform` source no longer counts them as
+  repositories. `--notebooks-dir` stays for exports. Run live on a billed project: a notebook
+  with a SQL cell and a `%%bigquery` cell was read, translated, published and run on AIDP.
+- `N04_SQL_CELL`: a BigQuery Studio SQL cell (generated Colab code running the query through
+  `google.colab.sql`) becomes `spark.sql(...).toPandas()` with the query translated.
+
 ### Fixed
+- A BigQuery Studio SQL cell was translated with no finding, so `verify` called it PASS,
+  though AIDP has no `google.colab` to run it; found by reading a real notebook. It is now
+  translated (`N04`), and any other `google.colab` import is flagged (`P07`).
 - Dataproc: a definition kept the arguments of the run whose state changed last, not the one
   submitted last; a run killed early looked older. Runs are ordered by submission time.
 - A single-node Dataproc cluster's sizing read "? workers ?"; it reads "single node: master …".

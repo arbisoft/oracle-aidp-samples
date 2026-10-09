@@ -3,6 +3,7 @@
   N01_BIGQUERY_MAGIC      %%bigquery [var]: GoogleSQL → spark.sql(<translated>).toPandas()
   N02_MAGIC_OPTION        magic options with no AIDP meaning: flagged; --use_legacy_sql blocks
   N03_NOTEBOOK_COMMAND    %load_ext of the BigQuery magic removed; other % and ! lines commented out
+  N04_SQL_CELL            a BigQuery Studio SQL cell (generated Colab code): its query → spark.sql(...).toPandas()
 
 A %%bigquery cell carries the GoogleSQL translator's findings; a Python cell goes
 through the Dataproc translator (paths, connector reads, Google libraries).
@@ -72,6 +73,30 @@ def _magic(header: str, body: str, ctx: Context) -> tuple[str, list[Finding]]:
     return (f"{var} = {expr}" if var else expr), out
 
 
+_SQL_CELL = re.compile(r'_sql = """(?P<sql>.*?)"""', re.S)
+
+
+def _sql_cell(source: str, ctx: Context) -> tuple[str, list[Finding]]:
+    """A BigQuery Studio SQL cell: Colab writes `# key: value` headers, the query in `_sql = \"\"\"...\"\"\"`,
+    then runs it with google.colab.sql, which AIDP does not have (as the Dataform API returned it, 2026-10-09)."""
+    headers = dict(line[2:].split(": ", 1) for line in source.splitlines()
+                   if line.startswith("# ") and ": " in line)
+    m = _SQL_CELL.search(source)
+    if headers.get("sql_engine") != "bigquery" or m is None:
+        return source, [Finding("N04_SQL_CELL", "flag", f"a SQL cell on engine {headers.get('sql_engine')!r} that "
+                                "is not read: rewrite it by hand")]
+    var = headers.get("output_variable", "df")
+    if not _NAME.fullmatch(var):
+        return "", [Finding("N04_SQL_CELL", "block", f"output variable {var!r} is not a Python name")]
+    r = translate(m.group("sql").strip(), ctx)
+    if r.status == "blocked":
+        return "", r.findings
+    code = f"{var} = spark.sql({_triple(r.sql)}).toPandas()"
+    if headers.get("output_mode", "table") != "none":
+        code += f"\n{var}"  # the cell showed its result
+    return code, r.findings + [Finding("N04_SQL_CELL", "rewrite", "BigQuery Studio SQL cell → spark.sql(...).toPandas()")]
+
+
 def _triple(sql: str) -> str:
     """A Python literal for the SQL, as a readable triple-quoted string when it allows one."""
     if '"""' not in sql and "\\" not in sql and not sql.endswith('"'):
@@ -109,7 +134,9 @@ def translate_notebook(cells: list[dict], ctx: Context | None = None) -> tuple[l
             out_cells.append({"cell_type": "markdown", "source": source})
             continue
         first, _, rest = source.lstrip().partition("\n")
-        if first.startswith("%%bigquery"):
+        if first.startswith("# sql_engine:") or "_bqsqlcell.run(" in source:
+            code, f = _sql_cell(source, ctx)
+        elif first.startswith("%%bigquery"):
             code, f = _magic(first, rest, ctx)
         elif first.startswith("%%"):
             code, f = "", [Finding("N03_NOTEBOOK_COMMAND", "block", f"cell magic {first.split()[0]}: not Python; "

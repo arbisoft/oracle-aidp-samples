@@ -3,10 +3,14 @@
 Source: `gcp_aidp/translate/notebook_to_aidp.py`. Every rule has a test in
 `tests/test_bq_notebooks.py`.
 
-BigQuery Studio notebooks have no read API this tool uses: export them as `.ipynb` and
-pass `inventory --notebooks-dir <folder>`. The inventory keeps each cell's source and
-drops its outputs, which can hold query results. A notebook listed without content stays
-in the plan as `SKIP`, with the reason.
+`inventory --scan-services` reads BigQuery Studio notebooks through the Dataform API (GET
+calls; the service account needs Dataform Viewer). A notebook is a Dataform repository
+labelled `single-file-asset-type: notebook` holding `content.ipynb`; it lands in whatever
+region BigQuery Studio chose, so every Dataform location is listed. Any other single-file
+asset is named in a warning. Without `--scan-services`, export notebooks as `.ipynb` and pass
+`--notebooks-dir <folder>`. Either way the inventory keeps each cell's source and drops
+its outputs, which can hold query results. A notebook listed without content stays in the
+plan as `SKIP`, with the reason.
 
 Each cell is translated on its own. A `%%bigquery` cell goes through the GoogleSQL
 translator (`references/dialect-translation.md`) and carries its findings; a Python cell
@@ -25,6 +29,11 @@ paths, BigQuery connector reads, and Google client libraries such as `bigframes`
 | `N03_NOTEBOOK_COMMAND` | `%load_ext bigquery_magics`, `%load_ext google.cloud.bigquery` | removed | rewrite |
 | `N03_NOTEBOOK_COMMAND` | other `%` and `!` lines (`!pip install ...`) | commented out: install libraries on the AIDP cluster | flag |
 | `N03_NOTEBOOK_COMMAND` | another cell magic (`%%bash`, `%%writefile`) | not translated | **block** |
+| `N04_SQL_CELL` | a BigQuery Studio SQL cell: generated code with `# sql_engine: bigquery`, the query in `_sql = """..."""` and `google.colab.sql` running it | `<output_variable> = spark.sql("""<translated>""").toPandas()`, then the variable, as the cell showed it | rewrite, with the query's own findings |
+| `N04_SQL_CELL` | a SQL cell on another engine, or one whose query cannot be read | left as written | flag |
+
+Any other code importing `google.colab` is flagged (`P07`), so a Colab-generated cell never
+passes silently.
 
 `.toPandas()` keeps what the magic returns: a pandas DataFrame holding the whole result.
 `--verbose`, `--no_query_cache`, `--use_rest_api`, `--use_bqstorage_api`, `--progress_bar_type`,

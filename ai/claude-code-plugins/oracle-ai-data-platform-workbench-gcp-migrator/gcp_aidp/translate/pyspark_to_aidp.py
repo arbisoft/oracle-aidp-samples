@@ -34,7 +34,8 @@ _READ_OPTIONS = {"table", "dataset", "project", "parentProject", "credentials", 
 _CONNECTOR_KEYS = {"temporaryGcsBucket", "persistentGcsBucket", "persistentGcsPath", "viewsEnabled",
                    "materializationProject", "materializationDataset", "parentProject", "credentials",
                    "credentialsFile", "gcpAccessToken", "writeMethod", "intermediateFormat"}
-_GOOGLE_LIBRARIES = ("google.cloud", "google.auth", "google.oauth2", "gcsfs", "pandas_gbq", "bigframes")
+_GOOGLE_LIBRARIES = ("google.cloud", "google.auth", "google.oauth2", "google.colab", "gcsfs", "pandas_gbq",
+                     "bigframes")
 _SQL_VARIABLE = re.compile(r"\$\{[^}]+\}")
 
 

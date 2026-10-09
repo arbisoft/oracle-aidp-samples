@@ -54,6 +54,21 @@ class Rules(unittest.TestCase):
                                      {"cell_type": "code", "source": ""}], CTX)
         self.assertEqual(out, [{"cell_type": "code", "source": ""}])  # emptied by a removal: dropped; empty: kept
 
+    def test_N04_SQL_CELL(self):
+        # A BigQuery Studio SQL cell, as the Dataform API returned it, 2026-10-09.
+        sql_cell = ('# sql_engine: bigquery\n# output_variable: df\n# output_mode: table\n# start _sql\n'
+                    '_sql = """\nSELECT status, COUNTIF(n > 1) AS c FROM `proj.sales.orders` GROUP BY status\n'
+                    '""" # end _sql\nfrom google.colab.sql import bigquery as _bqsqlcell\n'
+                    'df = _bqsqlcell.run(_sql)\ndf')
+        code, rules = cell(sql_cell)
+        self.assertEqual(code, f'df = spark.sql("""SELECT status, count_if(n > 1) AS c FROM {ORDERS} GROUP BY status""")'
+                               '.toPandas()\ndf')
+        self.assertIn(("N04_SQL_CELL", "rewrite"), rules)
+        self.assertIn(("N04_SQL_CELL", "flag"), cell(sql_cell.replace("sql_engine: bigquery", "sql_engine: other"))[1])
+
+    def test_google_colab_is_never_passed_silently(self):
+        self.assertIn(("P07_GOOGLE_LIBRARY", "flag"), cell("from google.colab import auth\nauth.authenticate_user()")[1])
+
     def test_python_cells_take_the_dataproc_rules_and_markdown_is_kept(self):
         out, findings = translate_notebook([{"cell_type": "markdown", "source": "# gs://landing/x"},
                                             {"cell_type": "code", "source": "import pandas as pd\n"
@@ -76,6 +91,55 @@ class Inventory(unittest.TestCase):
         self.assertEqual(rows, [{"id": "Churn", "name": "Churn",
                                  "cells": [{"cell_type": "code", "source": "%%bigquery x\nSELECT 1"}]}])
         self.assertIn("broken.ipynb", warnings[0])
+
+
+class StudioNotebooks(unittest.TestCase):
+    """Notebooks read through the Dataform API, shaped as it answered live (2026-10-09)."""
+
+    class Fake:
+        project = "my-project-123456"
+        BASE = "https://dataform.googleapis.com/v1/projects/my-project-123456/locations"
+
+        def __init__(self):
+            import base64
+            nb = {"cells": [{"cell_type": "code", "source": ["%%bigquery x\n", "SELECT 1"],
+                             "outputs": [{"data": {"text/plain": "a query result"}}]}], "nbformat": 4}
+            repo = lambda rid, labels: {"name": f"projects/p/locations/us-east1/repositories/{rid}",
+                                        "displayName": f"repo {rid}", "labels": labels}
+            self.responses = {
+                f"{self.BASE}": {"locations": [{"locationId": "us-central1"}, {"locationId": "us-east1"}]},
+                f"{self.BASE}/us-central1/repositories": {},
+                f"{self.BASE}/us-east1/repositories": {"repositories": [
+                    repo("nb1", {"single-file-asset-type": "notebook"}),
+                    repo("q1", {"single-file-asset-type": "sql"}),
+                    repo("df1", None)]},
+                f"{self.BASE}/us-east1/repositories/nb1:readFile?path=content.ipynb":
+                    {"contents": base64.b64encode(json.dumps(nb).encode()).decode()},
+            }
+            self.calls = []
+
+        def get(self, url, params=None):
+            key = url + ("?" + "&".join(f"{k}={v}" for k, v in sorted(params.items())) if params else "")
+            self.calls.append(key)
+            return self.responses[key]
+
+        def pages(self, url, key, params=None):
+            return self.get(url, params).get(key, [])
+
+    def test_notebooks_are_read_in_any_region_without_outputs(self):
+        from gcp_aidp.inventory import studio_notebooks
+        notebooks, warnings = studio_notebooks.scan(self.Fake())
+        self.assertEqual(notebooks, [{"id": "nb1", "name": "repo nb1", "region": "us-east1",
+                                      "cells": [{"cell_type": "code", "source": "%%bigquery x\nSELECT 1"}]}])
+        self.assertEqual(warnings, ["BigQuery Studio sql asset repo q1 (us-east1) is not read"])
+
+    def test_the_dataform_source_does_not_count_them(self):
+        from gcp_aidp.inventory import dataform
+        fake = self.Fake()
+        fake.responses = {"https://dataform.googleapis.com/v1beta1/projects/my-project-123456/locations/us-east1"
+                          "/repositories": fake.responses[f"{fake.BASE}/us-east1/repositories"]}
+        names = [r["name"] for r in dataform.scan(fake, regions=("us-east1",))["items"]["repositories"]]
+        self.assertEqual(names, ["df1"])
 
 
 class Migrate(unittest.TestCase):

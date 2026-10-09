@@ -42,7 +42,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
 | `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | live on a billed project, two regions: two runs of one script grouped into one definition (newest arguments kept), a Spark SQL job, a workflow template's steps and order, job code read from Cloud Storage, cluster sizing |
-| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: an exported notebook read with `--notebooks-dir` (outputs dropped), translated, published and run on AIDP, reading the migrated tables with the expected counts |
+| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks, read through the Dataform API (`--scan-services`) or from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: a BigQuery Studio notebook with a SQL cell and a `%%bigquery` cell read through Dataform on a billed project (outputs dropped), translated, published and run on AIDP; an exported notebook through `--notebooks-dir` too |
 | `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: synthetic and then real Dataproc jobs, inventoried from a live project, translated and run on the migrated tables with the expected counts; a write to a bucket not yet on OCI failed where the plan flagged it |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
@@ -120,7 +120,10 @@ secret.
 1. Create a service account with **BigQuery Data Viewer**, **BigQuery Read Session
    User** and **BigQuery Job User**. Listing buckets (`storage.buckets.list`) and
    scheduled queries (`bigquery.transfers.get`) needs more; without it the inventory
-   records that collection as *not scanned*, so add those only if you need them.
+   records that collection as *not scanned*, so add those only if you need them. For
+   Dataproc add **Dataproc Viewer**, plus **Storage Object Viewer** on the buckets holding
+   job code; for BigQuery Studio notebooks add **Dataform Viewer**. All are read-only; run
+   the inventory with `--scan-services` for these.
 2. Create a JSON key for it (**IAM → Service accounts → Keys → Add key**). Keep it
    outside the repository, `chmod 600` it, and
    `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`.
@@ -417,10 +420,11 @@ tables, with the evidence for each decision, are
 A blocked statement is never partially translated: the artifact keeps the original,
 commented out.
 
-**BigQuery Studio notebooks:** `%%bigquery` cells become
-`spark.sql(...).toPandas()` through the GoogleSQL rules; Python cells take the Dataproc
+**BigQuery Studio notebooks:** read through the Dataform API with `--scan-services`
+(Dataform Viewer), or from an export with `--notebooks-dir`. SQL cells and `%%bigquery`
+cells become `spark.sql(...).toPandas()` through the GoogleSQL rules; Python cells take the Dataproc
 rules below. [`references/notebook-translation.md`](references/notebook-translation.md)
-has the `N01`–`N03` rules.
+has the `N01`–`N04` rules.
 
 **Dataproc PySpark and Spark SQL:** the code is Spark already, so only
 what it reaches outside Spark changes. The full table is

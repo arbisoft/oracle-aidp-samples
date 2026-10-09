@@ -180,8 +180,8 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
         "datasets", "tables", "views", "materialized_views", "external_tables", "routines", "models",
         "saved_queries", "scheduled_queries", "access_policies", "notebooks", "pipelines")}
     not_scanned: dict[str, str] = {
-        "notebooks": "BigQuery Studio notebooks have no read API this tool uses; export them as .ipynb and "
-                     "pass --notebooks-dir",
+        "notebooks": "BigQuery Studio notebooks are read through the Dataform API with --scan-services "
+                     "(Dataform Viewer); or export them as .ipynb and pass --notebooks-dir",
         "pipelines": "BigQuery pipelines have no read API this tool uses; list them by hand",
     }
     warnings: list[str] = []
