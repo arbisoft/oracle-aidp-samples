@@ -428,6 +428,23 @@ DATAPROC = {
               "main_file": "gs://northwind-landing/jobs/cohorts.sql", "code": COHORTS_SQL},
          ]},
     ],
+    # Cloud Scheduler jobs that call the Dataproc API, with what each starts.
+    "schedules": [
+        {"name": "sessionize-nightly", "region": "us-central1", "schedule": "0 2 * * *",
+         "time_zone": "America/Chicago", "state": "ENABLED",
+         "target": {"kind": "job", "region": "us-central1", "job_type": "pyspark",
+                    "main_file": "gs://northwind-landing/jobs/sessionize.py", "cluster": "etl-nightly"}},
+        {"name": "score-returns-weekdays", "region": "us-central1", "schedule": "30 7 * * 1-5",
+         "time_zone": "UTC", "state": "ENABLED",
+         "target": {"kind": "batch", "region": "us-central1", "job_type": "pyspark",
+                    "main_file": "gs://northwind-landing/jobs/score_returns.py"}},
+        {"name": "month-end-close-trigger", "region": "us-central1", "schedule": "0 6 1 * *",
+         "time_zone": "America/New_York", "state": "ENABLED",
+         "target": {"kind": "workflow_template", "region": "us-central1", "id": "month-end-close"}},
+        {"name": "legacy-rollup-weekly", "region": "us-central1", "schedule": "0 4 * * 0",
+         "time_zone": "UTC", "state": "PAUSED",
+         "target": {"kind": "workflow_template", "region": "us-central1", "id": "legacy-rollup"}},
+    ],
 }
 
 COMPOSER = {

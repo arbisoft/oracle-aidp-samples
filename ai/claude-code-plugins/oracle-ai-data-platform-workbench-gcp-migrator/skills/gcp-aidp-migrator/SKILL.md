@@ -83,12 +83,12 @@ gcp-aidp run       migrated                               # runs the published m
 | Partitioning / clustering | → | `PARTITIONED BY` when exact, otherwise liquid `CLUSTER BY` |
 | View | → | Spark SQL view |
 | Materialized view | → | a table built on AIDP, plus an unscheduled refresh job |
-| Scheduled query (no destination) | → | an unscheduled AIDP job |
+| Scheduled query (no destination) | → | an AIDP job, its schedule as Quartz and PAUSED (unscheduled if it does not translate exactly) |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | an rclone transfer job to Object Storage |
 | SQL UDF | → | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
-| Dataproc PySpark job or batch | → | an unscheduled job with a Python task running the translated script, its arguments as on Dataproc |
-| Dataproc Spark SQL job | → | an unscheduled job running its statements in a notebook |
+| Dataproc PySpark job or batch | → | a job with a Python task running the translated script, its arguments as on Dataproc; a Cloud Scheduler schedule carried PAUSED |
+| Dataproc Spark SQL job | → | a job running its statements in a notebook |
 | Dataproc workflow template | → | one job: steps as tasks, prerequisites as `dependsOn` |
 | BigQuery Studio notebook (exported `.ipynb`, `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
 

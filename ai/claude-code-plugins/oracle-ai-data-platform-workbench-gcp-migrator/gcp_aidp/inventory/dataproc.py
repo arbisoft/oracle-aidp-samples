@@ -1,4 +1,5 @@
-"""Dataproc: clusters, job definitions, serverless batches and workflow templates, per region.
+"""Dataproc: clusters, job definitions, serverless batches, workflow templates, and the
+Cloud Scheduler jobs that start them, per region.
 
 `jobs.list` returns run history: a nightly job appears once per run, usually with
 a new date argument each time. Runs are grouped into job definitions (region, type,
@@ -11,13 +12,20 @@ translate it. JARs and other files are recorded, not read.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import re
 from urllib.parse import quote
 
 from gcp_aidp.gcp_client import GcpClient, GcpError
 from gcp_aidp.inventory._common import GCS, _per_region, _scan
 
 API = "https://dataproc.googleapis.com/v1/projects"
+SCHEDULER = "https://cloudscheduler.googleapis.com/v1/projects"
+_TEMPLATE_URI = re.compile(r"/projects/[^/]+/(?:regions|locations)/([^/]+)/workflowTemplates/([^/:]+):instantiate$")
+_JOB_URI = re.compile(r"/projects/[^/]+/regions/([^/]+)/jobs:submit$")
+_BATCH_URI = re.compile(r"/projects/[^/]+/locations/([^/]+)/batches(?:\?.*)?$")
 MAX_CODE_BYTES = 1_000_000
 # The job (and batch) type fields of the API, and the name the manifest uses.
 _KIND = {"pysparkJob": "pyspark", "sparkJob": "spark", "sparkSqlJob": "spark_sql", "sparkRJob": "spark_r",
@@ -130,6 +138,38 @@ def _template(t: dict, region: str, client: GcpClient) -> dict:
     return {k: v for k, v in row.items() if v not in (None, [], {})}
 
 
+def _starts(http: dict) -> dict | None:
+    """What a scheduler job's HTTP call starts on Dataproc; None if it does not call Dataproc."""
+    uri = http.get("uri") or ""
+    if "dataproc.googleapis.com" not in uri:
+        return None
+    if m := _TEMPLATE_URI.search(uri):
+        return {"kind": "workflow_template", "region": m[1], "id": m[2]}
+    job, batch = _JOB_URI.search(uri), _BATCH_URI.search(uri)
+    if not (job or batch):
+        return {"kind": "other", "uri": uri}
+    try:
+        body = json.loads(base64.b64decode(http.get("body") or "") or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return {"kind": "other", "uri": uri, "why": "request body not readable"}
+    if job:
+        spec = _spec(body.get("job") or {})
+        return {"kind": "job", "region": job[1], "job_type": spec["job_type"], "main_file": spec.get("main_file"),
+                "cluster": ((body.get("job") or {}).get("placement") or {}).get("clusterName")}
+    spec = _spec(body)
+    return {"kind": "batch", "region": batch[1], "job_type": spec["job_type"], "main_file": spec.get("main_file")}
+
+
+def _schedule(j: dict, region: str) -> dict | None:
+    starts = _starts(j.get("httpTarget") or {})
+    if starts is None:
+        return None
+    return {"name": j["name"].rsplit("/", 1)[-1], "region": region, "schedule": j.get("schedule"),
+            "time_zone": j.get("timeZone") or "UTC", "state": j.get("state"), "target": starts}
+
+
 def scan(client: GcpClient, *, regions=("us-central1",), **_) -> dict:
     p = client.project
 
@@ -157,5 +197,14 @@ def scan(client: GcpClient, *, regions=("us-central1",), **_) -> dict:
             _template(t, r, client)
             for t in client.pages(f"{API}/{p}/regions/{r}/workflowTemplates", "templates")])
 
+    def schedules():
+        try:
+            return _per_region(regions, lambda r: [
+                s for j in client.pages(f"{SCHEDULER}/{p}/locations/{r}/jobs", "jobs") if (s := _schedule(j, r))])
+        except GcpError as exc:
+            if exc.api_disabled:  # Cloud Scheduler off: nothing is scheduled, and Dataproc itself may be on
+                return []
+            raise
+
     return _scan({"clusters": clusters, "jobs": jobs, "batches": batches,
-                  "workflow_templates": workflow_templates})
+                  "workflow_templates": workflow_templates, "schedules": schedules})

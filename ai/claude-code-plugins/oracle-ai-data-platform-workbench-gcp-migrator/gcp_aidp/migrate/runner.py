@@ -29,6 +29,7 @@ from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_
 from gcp_aidp.translate.googlesql_to_spark import Context, Result, statements, translate
 from gcp_aidp.translate.notebook_to_aidp import translate_notebook
 from gcp_aidp.translate.pyspark_to_aidp import spark_properties, translate_pyspark, translate_spark_sql
+from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
 STATUSES = ("ok", "needs_manual_review", "blocked", "reported", "skipped", "error")
@@ -156,6 +157,29 @@ def _dataproc_step(spec: dict, ctx: Context, w: _Writer, category: str, name: st
     return findings, ("" if blocked else r.sql), path, source
 
 
+def _carry(what: str, quartz: str | None, why: str, tz: str) -> tuple[dict | None, list[dict]]:
+    """(AIDP schedule, findings): a translated schedule rides on the job, created PAUSED."""
+    if quartz:
+        return ({"quartzCronExpression": quartz, "timezoneId": tz},
+                [_f("J03_SCHEDULE", "caveat" if why else "rewrite",
+                    f"{what} → Quartz {quartz!r} ({tz}); the job is created with it PAUSED: turn it on in AIDP "
+                    "once the job has been checked" + (f" ({why})" if why else ""))])
+    return None, [_f("J01_UNSCHEDULED", "flag", f"{what} not carried: {why}. The job is created unscheduled")]
+
+
+def _dataproc_schedule(src: dict) -> tuple[dict | None, list[dict]]:
+    found = src.get("schedules") or []
+    if len(found) > 1:
+        return None, [_f("J01_UNSCHEDULED", "flag", f"{len(found)} Cloud Scheduler jobs start it "
+                         f"({', '.join(sc['name'] for sc in found)}); an AIDP job holds one schedule, so none is "
+                         "carried. The job is created unscheduled")]
+    if not found:
+        return None, []
+    sc = found[0]
+    return _carry(f"Cloud Scheduler job {sc['name']} ({sc.get('state') or '?'}) {sc['schedule']!r}",
+                  *from_unix_cron(sc["schedule"]), sc.get("time_zone") or "UTC")
+
+
 def _one_line(text: str) -> str:
     return re.sub(r"[\x00-\x1f\x7f]+", " ", str(text)).strip()
 
@@ -272,7 +296,9 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         if steps is None:
             findings, translated, path, source_sql = _dataproc_step(src, ctx, w, "dataproc", tgt["name"], aid)
             if _status(findings) != "blocked":
-                row["job"] = {"name": tgt["name"], "title": _job_title(src),
+                schedule, more = _dataproc_schedule(src)
+                findings += more
+                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedule": schedule,
                               "tasks": [_dataproc_task("main", src, path, translated)]}
         else:
             findings, done = [], []
@@ -293,7 +319,9 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             row["steps"] = [{k: v for k, v in d.items() if k != "task"} for d in done]
             source_sql = translated = ""
             if _status(findings) != "blocked":  # a step that cannot run blocks the whole job
-                row["job"] = {"name": tgt["name"], "title": _job_title(src),
+                schedule, more = _dataproc_schedule(src)
+                findings += more
+                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedule": schedule,
                               "tasks": [{**d["task"], "after": d["prerequisites"]} for d in done]}
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"
@@ -304,11 +332,13 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
                                f"writes its result into dataset {src['destination_dataset']!r}; the inventory does "
                                "not record the table or write mode, so no job is created: add the INSERT by hand"))
         elif t == "aidp_job":
-            findings.append(_f("J01_UNSCHEDULED", "info",
-                               f"job {tgt['name']} is created unscheduled; source schedule {src.get('schedule')!r}"))
-            if r.status != "blocked":
-                row["job"] = {"name": tgt["name"], "statements": [r.sql],
-                              "title": f"Scheduled query {src['name']!r} (schedule {src.get('schedule')!r} not applied)"}
+            if r.status != "blocked":  # no job, no schedule to carry
+                schedule, more = _carry(f"schedule {src.get('schedule')!r} (UTC"
+                                        + (", disabled at the source)" if src.get("disabled") else ")"),
+                                        *from_bigquery(src.get("schedule"), src.get("next_run_time")), "UTC")
+                findings += more
+                row["job"] = {"name": tgt["name"], "statements": [r.sql], "schedule": schedule,
+                              "title": f"Scheduled query {src['name']!r}"}
         name = tgt["name"].removesuffix(".sql")
         if r.status == "blocked":
             path = w.sql(category, name, aid, findings, src["query"], blocked=True)

@@ -15,7 +15,8 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 - BigQuery Studio notebooks: read through the Dataform API with `--scan-services` (the service
   account needs Dataform Viewer), in every Dataform location. `--notebooks-dir` reads an
   export of `.ipynb` instead. Cell sources are kept, outputs dropped.
-- `--scan-services`: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI.
+- `--scan-services`: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI, and the
+  Cloud Scheduler jobs that start Dataproc (Cloud Scheduler Viewer).
   Their APIs refuse a read-only token, so this uses a `cloud-platform` token for them
   alone (still GET calls only).
 - `--fixture demo`: the bundled Northwind Retail estate; no Google account needed.
@@ -66,7 +67,7 @@ gcp-aidp publish <migrated/> [--prefix NAME] [--apply] [--cluster-key UUID]
 - Defaults: `$AIDP_PREFIX`, `$AIDP_CLUSTER_KEY`, `$AIDP_WORKSPACE_KEY`,
   `$AIDP_INSTANCE_ID`, `$OCI_CLI_PROFILE`, `$AIDP_AUTH`.
 - Uploads to `/Workspace/<prefix>/`; jobs are named `<prefix>_<job>` and created
-  unscheduled. `--prefix` must be a letter followed by letters, digits or underscores.
+  unscheduled, or with their source schedule as Quartz, PAUSED. `--prefix` must be a letter followed by letters, digits or underscores.
 - Never overwrites: an existing path or job is skipped. A job whose notebooks this
   run did not upload is refused, since it could run someone else's;
   `--reuse-existing-notebooks` allows it (finishing a publish whose job creation

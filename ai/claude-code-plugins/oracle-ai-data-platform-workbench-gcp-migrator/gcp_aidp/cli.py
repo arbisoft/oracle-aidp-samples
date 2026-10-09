@@ -161,9 +161,11 @@ def cmd_publish(args: argparse.Namespace) -> int:
         print(f"dry run: nothing was sent. Would upload to {result['folder']}:")
         for n in result["notebooks"]:
             print(f"    {n['remote']}")
-        print("and create, unscheduled:")
+        print("and create (unscheduled, or with the source schedule PAUSED):")
         for j in result["jobs"]:
-            print(f"    job {j['name']}: " + " → ".join(t["taskKey"] for t in j["definition"]["tasks"]))
+            sc = j["definition"].get("schedule")
+            print(f"    job {j['name']}: " + " → ".join(t["taskKey"] for t in j["definition"]["tasks"])
+                  + (f"  [schedule {sc['quartzCronExpression']} {sc['timezoneId']}, PAUSED]" if sc else ""))
         if not result["prefix"]:
             print("warning: no --prefix; --apply refuses to run without one.")
         print("re-run with --apply to publish.")

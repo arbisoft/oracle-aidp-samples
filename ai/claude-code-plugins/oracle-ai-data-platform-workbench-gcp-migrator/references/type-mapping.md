@@ -63,6 +63,7 @@ never read).
 | `D05_EXTERNAL_FORMAT` | external table format | `USING PARQUET/AVRO/ORC/CSV/JSON`; schema inferred (caveat); CSV options flagged; other formats blocked |
 | `D06_SQL_FUNCTION` | SQL scalar UDF | flagged: Apache Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
 | `M01_MATERIALIZED_VIEW` | materialized view | a snapshot computed on AIDP from the migrated base tables (`CREATE TABLE ... AS`), plus an unscheduled refresh job (`INSERT OVERWRITE`). Not copied through the connector: reading a materialized view makes it write a temporary table in BigQuery |
-| `J01_UNSCHEDULED` | scheduled query | an AIDP job created unscheduled; the source schedule is recorded |
+| `J03_SCHEDULE` | scheduled query | an AIDP job with the schedule as Quartz (UTC), created PAUSED; see [`schedule-translation.md`](schedule-translation.md) |
+| `J01_UNSCHEDULED` | scheduled query | the schedule does not translate exactly: the job is created unscheduled, flagged |
 
 Every statement is `CREATE ... IF NOT EXISTS`: nothing replaces an existing object.

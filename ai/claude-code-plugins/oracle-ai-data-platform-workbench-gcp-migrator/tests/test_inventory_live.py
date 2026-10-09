@@ -1,6 +1,8 @@
 """Live inventory against canned Google Cloud API responses (no network)."""
 from __future__ import annotations
 
+import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -146,6 +148,16 @@ DATAPROC_RESPONSES = {
     OBJ + "jobs%2Fnightly.py": {"size": str(len(NIGHTLY_PY))},
     OBJ + "jobs%2Fnightly.py?alt=media": NIGHTLY_PY,
     OBJ + "jobs%2Fhuge.py": {"size": "5000000"},
+    f"https://cloudscheduler.googleapis.com/v1/projects/{P}/locations/us-central1/jobs": {"jobs": [
+        {"name": f"projects/{P}/locations/us-central1/jobs/month-end-trigger", "schedule": "0 6 1 * *",
+         "timeZone": "America/New_York", "state": "ENABLED", "httpTarget": {
+             "uri": f"{DP}/regions/us-central1/workflowTemplates/month-end:instantiate", "httpMethod": "POST"}},
+        {"name": f"projects/{P}/locations/us-central1/jobs/nightly", "schedule": "0 2 * * *", "state": "PAUSED",
+         "httpTarget": {"uri": f"{DP}/regions/us-central1/jobs:submit", "body": base64.b64encode(json.dumps(
+             {"job": {"placement": {"clusterName": "etl"},
+                      "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py"}}}).encode()).decode()}},
+        {"name": f"projects/{P}/locations/us-central1/jobs/ping", "schedule": "* * * * *",
+         "httpTarget": {"uri": "https://example.com/ping"}}]},
 }
 
 
@@ -197,6 +209,16 @@ class DataprocInventory(unittest.TestCase):
         self.assertEqual((c["machine_type"], c["master_machine_type"], c["worker_count"]), ("n2-standard-8", "n2-standard-4", 4))
         self.assertEqual(c["init_actions"], ["gs://landing/init.sh"])
 
+    def test_scheduler_jobs_that_start_dataproc(self):
+        by_name = {s["name"]: s for s in self.dp["schedules"]}
+        self.assertEqual(set(by_name), {"month-end-trigger", "nightly"})  # the plain HTTP ping is not Dataproc's
+        self.assertEqual(by_name["month-end-trigger"]["target"],
+                         {"kind": "workflow_template", "region": "us-central1", "id": "month-end"})
+        self.assertEqual((by_name["month-end-trigger"]["time_zone"], by_name["nightly"]["time_zone"]),
+                         ("America/New_York", "UTC"))
+        self.assertEqual(by_name["nightly"]["target"], {"kind": "job", "region": "us-central1", "job_type": "pyspark",
+                                                        "main_file": "gs://landing/jobs/nightly.py", "cluster": "etl"})
+
     def test_the_newest_run_is_the_last_submitted(self):
         # Live, 2026-10-09: the run submitted second was killed early, so its last state change
         # came before the first run's; its arguments are still the newest.
@@ -218,7 +240,8 @@ class DataprocInventory(unittest.TestCase):
         self.assertEqual((job["last_run_id"], job["args"], job["last_state"]), ("second", ["2026-10-02"], "ERROR"))
 
     def test_metadata_and_object_reads_only(self):
-        self.assertTrue(all(c.startswith(("https://dataproc.googleapis.com/", OBJ)) for c in self.client.calls))
+        hosts = ("https://dataproc.googleapis.com/", "https://cloudscheduler.googleapis.com/", OBJ)
+        self.assertTrue(all(c.startswith(hosts) for c in self.client.calls))
 
     def test_plan_lists_every_definition(self):
         from gcp_aidp.inventory.manifest import build_manifest
@@ -264,7 +287,7 @@ class LiveInventory(unittest.TestCase):
         sources = self.manifest["sources"]
         self.assertTrue(sources["dataproc"]["summary"]["api_disabled"])
         self.assertEqual(sources["dataproc"]["items"],
-                         {"clusters": [], "jobs": [], "batches": [], "workflow_templates": []})
+                         {"clusters": [], "jobs": [], "batches": [], "workflow_templates": [], "schedules": []})
         self.assertIn("environments", sources["composer"]["summary"]["not_scanned"])
         # DAGs are found through the environments, so they are not "0": they are unknown.
         self.assertEqual(sources["composer"]["summary"]["not_scanned"]["dags"], "environments were not scanned")

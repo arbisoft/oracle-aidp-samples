@@ -1764,7 +1764,8 @@
         "clusters": 2,
         "jobs": 5,
         "batches": 1,
-        "workflow_templates": 1
+        "workflow_templates": 1,
+        "schedules": 4
       },
       "items": {
         "clusters": [
@@ -1937,6 +1938,59 @@
                 "code": "CREATE OR REPLACE TEMPORARY VIEW first_orders AS\nSELECT customer_id, MIN(order_date) AS first_order\nFROM sales.orders\nGROUP BY customer_id;\n\nINSERT OVERWRITE DIRECTORY 'gs://northwind-landing/reports/cohorts/'\nUSING parquet\nSELECT date_trunc('MONTH', first_order) AS cohort, COUNT(*) AS customers\nFROM first_orders\nGROUP BY 1;\n"
               }
             ]
+          }
+        ],
+        "schedules": [
+          {
+            "name": "sessionize-nightly",
+            "region": "us-central1",
+            "schedule": "0 2 * * *",
+            "time_zone": "America/Chicago",
+            "state": "ENABLED",
+            "target": {
+              "kind": "job",
+              "region": "us-central1",
+              "job_type": "pyspark",
+              "main_file": "gs://northwind-landing/jobs/sessionize.py",
+              "cluster": "etl-nightly"
+            }
+          },
+          {
+            "name": "score-returns-weekdays",
+            "region": "us-central1",
+            "schedule": "30 7 * * 1-5",
+            "time_zone": "UTC",
+            "state": "ENABLED",
+            "target": {
+              "kind": "batch",
+              "region": "us-central1",
+              "job_type": "pyspark",
+              "main_file": "gs://northwind-landing/jobs/score_returns.py"
+            }
+          },
+          {
+            "name": "month-end-close-trigger",
+            "region": "us-central1",
+            "schedule": "0 6 1 * *",
+            "time_zone": "America/New_York",
+            "state": "ENABLED",
+            "target": {
+              "kind": "workflow_template",
+              "region": "us-central1",
+              "id": "month-end-close"
+            }
+          },
+          {
+            "name": "legacy-rollup-weekly",
+            "region": "us-central1",
+            "schedule": "0 4 * * 0",
+            "time_zone": "UTC",
+            "state": "PAUSED",
+            "target": {
+              "kind": "workflow_template",
+              "region": "us-central1",
+              "id": "legacy-rollup"
+            }
           }
         ]
       }

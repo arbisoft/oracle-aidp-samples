@@ -9,7 +9,8 @@ The rules:
   * A prefix per person, required with `--apply`: it names the workspace
     folder and the front of every job name.
   * Read the workspace, and check the cluster key, before sending anything.
-  * Notebooks first, jobs second. Jobs are created unscheduled.
+  * Notebooks first, jobs second. A job is created unscheduled, or with its source
+    schedule PAUSED: nothing runs until someone turns it on in AIDP.
 
 What is published is what `migrate` recorded in report.json (`notebooks`,
 `jobs`), never a glob of the directory.
@@ -107,10 +108,14 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
             if t.get("dependsOn"):
                 task["dependsOn"] = [{"taskKey": k} for k in t["dependsOn"]]
             tasks.append(task)
-        jobs.append({"name": name, "definition": {
-            "name": name, "description": f"{job.get('description', '')} Created by gcp-aidp publish, "
-                                         "unscheduled. Not execution-verified.".strip(),
-            "maxConcurrentRuns": 1, "tasks": tasks}})
+        definition = {"name": name, "description": f"{job.get('description', '')} Created by gcp-aidp publish, "
+                                                  f"{'schedule paused' if job.get('schedule') else 'unscheduled'}. "
+                                                  "Not execution-verified.".strip(),
+                      "maxConcurrentRuns": 1, "tasks": tasks}
+        if job.get("schedule"):  # live on AIDP: a PAUSED schedule is kept as sent and starts no run
+            definition["schedule"] = {"quartzCronExpression": job["schedule"]["quartzCronExpression"],
+                                      "timezoneId": job["schedule"]["timezoneId"], "pauseStatus": "PAUSED"}
+        jobs.append({"name": name, "definition": definition})
 
     names = Counter(j["name"] for j in jobs)
     for dup in sorted(n for n, c in names.items() if c > 1):  # never pick a winner

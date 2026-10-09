@@ -90,10 +90,13 @@ class Demo(unittest.TestCase):
                          [("extract", "needs_manual_review"), ("ledger", "blocked"), ("report", "needs_manual_review")])
         self.assertEqual(t["steps"][2]["prerequisites"], ["ledger"])
 
-    def test_J01_UNSCHEDULED_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
+    def test_J03_SCHEDULE_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}
-        job = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440003"]  # no destination
-        self.assertIn("J01_UNSCHEDULED", [f["rule"] for f in job["findings"]])
+        call = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440003"]  # a blocked CALL: no job
+        self.assertFalse({"job", "J03_SCHEDULE"} & ({f["rule"] for f in call["findings"]} | set(call)))
+        nightly = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
+        self.assertEqual(nightly["job"]["schedule"], {"quartzCronExpression": "0 0 2 * * ?",
+                                                      "timezoneId": "America/Chicago"})
         into = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002"]
         self.assertIn(("J02_DESTINATION_TABLE", "flag"), [(f["rule"], f["severity"]) for f in into["findings"]])
         self.assertNotIn("job", into)  # running only its SELECT would write nothing

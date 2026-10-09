@@ -66,7 +66,11 @@ class DemoPlan(unittest.TestCase):
 
     def test_every_manifest_asset_has_a_row(self):
         manifest_count = sum(len(rows) for src in DEMO["sources"].values() for rows in src["items"].values())
-        self.assertEqual(self.plan["summary"]["asset_count"], manifest_count)
+        # A Cloud Scheduler job rides on the row of the job it starts; only one that starts nothing has its own.
+        carried = sum("schedules" in a["source"] for a in self.plan["assets"])
+        self.assertEqual(self.plan["summary"]["asset_count"], manifest_count - carried)
+        self.assertEqual([a["id"] for a in self.plan["assets"] if a["source"]["type"] == "cloud_scheduler_job"],
+                         ["dataproc.schedule.us-central1/legacy-rollup-weekly"])
 
     def test_skip_and_report_rows_say_why(self):
         for a in self.plan["assets"]:

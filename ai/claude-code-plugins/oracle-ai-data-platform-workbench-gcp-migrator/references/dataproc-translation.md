@@ -50,8 +50,10 @@ translator; none of its dialect rules apply, since the SQL is Spark's already.
 A PySpark definition becomes a job with one `PYTHON_TASK` running the translated script,
 uploaded as a workspace file. A Spark SQL definition becomes a notebook task that runs its
 statements in order. A workflow template becomes one job: each step a task, its
-prerequisites as `dependsOn`. Jobs are created unscheduled; a blocked definition, or a
-template with a blocked step, gets no job.
+prerequisites as `dependsOn`. A blocked definition, or a template with a blocked step,
+gets no job. A job is created unscheduled, unless a Cloud Scheduler job starts its
+definition: then its cron becomes Quartz on the job, created PAUSED
+([`schedule-translation.md`](schedule-translation.md)).
 
 Measured on AIDP (Spark 3.5.0, 2026-10-09): a Python task's `commandLineArguments` is
 pasted as `sys.argv = <value>`, so it is written as a Python list, and AIDP adds no

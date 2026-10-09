@@ -182,7 +182,8 @@ def sql_notebook(title: str, statements: list[str], plan_id: str) -> dict:
 
 
 def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
-    """The AIDP jobs `publish` creates, unscheduled, with their task notebooks written here.
+    """The AIDP jobs `publish` creates, with their task notebooks written here. A job whose
+    source schedule translated carries it; `publish` creates it PAUSED.
 
     `gcp_aidp_migration` chains the data-plane notebooks so `gcp-aidp run` can
     start the whole copy at once: diagnose, structure, one copy task per
@@ -215,12 +216,14 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
                 if t.get("after"):
                     out["dependsOn"] = [job_name(k) for k in t["after"]]
                 tasks.append(out)
-            own.append({"name": job["name"], "description": job["title"], "tasks": tasks})
+            own.append({"name": job["name"], "description": job["title"], "tasks": tasks,
+                        **({"schedule": job["schedule"]} if job.get("schedule") else {})})
             continue
         rel = f"notebooks/jobs/{job['name']}.ipynb"
         write_text_atomic(out_dir / rel, json.dumps(sql_notebook(job["title"], job["statements"], dp["plan_id"]),
                                                     indent=1) + "\n")
-        own.append({"name": job["name"], "description": job["title"], "tasks": [task(job["name"], rel)]})
+        own.append({"name": job["name"], "description": job["title"], "tasks": [task(job["name"], rel)],
+                    **({"schedule": job["schedule"]} if job.get("schedule") else {})})
         if r["kind"] == "bq_materialized_view":
             sql_tasks.append(task(f"snapshot_{job['name']}", rel))
 

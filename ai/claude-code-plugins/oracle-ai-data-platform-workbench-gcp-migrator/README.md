@@ -23,13 +23,13 @@ optional layers on top of it that guide the workflow and help with setup and rev
 | Partitioning, clustering | → | `PARTITIONED BY` where exact, otherwise liquid `CLUSTER BY` |
 | View | → | Spark SQL view |
 | Materialized view | → | a table built on AIDP from the migrated tables, plus an unscheduled refresh job |
-| Scheduled query without a destination table | → | an unscheduled AIDP job; the source schedule is recorded |
+| Scheduled query without a destination table | → | an AIDP job with its schedule translated to Quartz and PAUSED, or unscheduled and flagged when it does not translate exactly |
 | Saved query | → | a Spark SQL file |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | an rclone transfer job to OCI Object Storage |
 | Procedures, JavaScript and table functions, BigQuery ML, access policies | → | reported with an effort band, not translated |
 | BigQuery Studio notebook, exported as `.ipynb` | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
-| Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | unscheduled AIDP jobs: a Python task, a SQL notebook, or one job per template |
+| Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | AIDP jobs: a Python task, a SQL notebook, or one job per template; a Cloud Scheduler schedule that starts one is carried, PAUSED |
 | Composer, Dataform, Dataflow, Vertex AI | → | inventoried, planned for a later version |
 
 ## Status (0.2)
@@ -51,6 +51,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | Data copy notebooks (`00`–`03`) | ✅ built | live: 7 tables, 293,886 rows, counts matching |
 | Materialized view snapshot | ✅ built | live, inside the migration job; the refresh job on its own offline only |
 | Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
+| Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | offline; on AIDP, a PAUSED schedule was accepted, read back as sent, and started no run (not yet checked that it fires on time once turned on) |
 | External tables, rclone transfer jobs | ✅ built | offline only |
 | `verify` | ✅ built | offline (it reads the report only) |
 | `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |
@@ -122,7 +123,8 @@ secret.
    scheduled queries (`bigquery.transfers.get`) needs more; without it the inventory
    records that collection as *not scanned*, so add those only if you need them. For
    Dataproc add **Dataproc Viewer**, plus **Storage Object Viewer** on the buckets holding
-   job code; for BigQuery Studio notebooks add **Dataform Viewer**. All are read-only; run
+   job code, and **Cloud Scheduler Viewer** to carry the schedules that start Dataproc
+   jobs; for BigQuery Studio notebooks add **Dataform Viewer**. All are read-only; run
    the inventory with `--scan-services` for these.
 2. Create a JSON key for it (**IAM → Service accounts → Keys → Add key**). Keep it
    outside the repository, `chmod 600` it, and
@@ -246,7 +248,7 @@ Claude Code you can instead ask for the migration in plain words; the
    ```
 
    This uploads the notebooks to `/Workspace/<prefix>/` and creates the jobs,
-   unscheduled. It never overwrites.
+   unscheduled or with their source schedule PAUSED. It never overwrites.
 
 7. **Run** the migration job and follow it:
 
@@ -360,8 +362,8 @@ gcp-aidp publish migrated --apply
 gcp-aidp run migrated           # starts <prefix>_gcp_aidp_migration and polls it
 ```
 
-`publish` uploads the notebooks to `/Workspace/<prefix>/` and creates the jobs
-unscheduled; it never overwrites. It needs [Setup, step 3](#3-this-machine). The CLI
+`publish` uploads the notebooks to `/Workspace/<prefix>/` and creates the jobs,
+unscheduled or with their source schedule PAUSED; it never overwrites. It needs [Setup, step 3](#3-this-machine). The CLI
 reads `.env` from the working directory, then from the plugin folder; the shell
 overrides both.
 
@@ -397,7 +399,7 @@ tables, with the evidence for each decision, are
 | `D05_EXTERNAL_FORMAT` | external table | `USING <format>`; schema inferred (caveat); other formats blocked |
 | `D06_SQL_FUNCTION` | SQL UDF | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
 | `M01_MATERIALIZED_VIEW` | materialized view | snapshot table + unscheduled refresh job |
-| `J01_UNSCHEDULED`, `J02_DESTINATION_TABLE` | scheduled query | unscheduled job; one with a destination table is flagged |
+| `J03_SCHEDULE`, `J01_UNSCHEDULED`, `J02_DESTINATION_TABLE` | scheduled query, Cloud Scheduler | the schedule as Quartz, created PAUSED; one that does not translate exactly leaves the job unscheduled (flagged); a query with a destination table is flagged. Rules: [`references/schedule-translation.md`](references/schedule-translation.md) |
 
 **GoogleSQL → Spark SQL:**
 
@@ -452,7 +454,8 @@ what it reaches outside Spark changes. The full table is
   rebuilt from translated SQL and materialized views from their query.
 - **Local until you publish.** `inventory`, `plan`, `migrate` and `verify` write files
   only. `publish` is a dry run until `--apply`, and the dry run lists the destination
-  and every object; it never overwrites, and creates jobs unscheduled.
+  and every object; it never overwrites, and creates jobs unscheduled or with their
+  schedule PAUSED, so nothing runs until you turn it on.
 - **Nothing is dropped.** Every statement is `CREATE ... IF NOT EXISTS`; the copy's
   default `skip-existing` leaves a table with rows untouched.
 - **Secrets stay put.** The key is read from `GOOGLE_APPLICATION_CREDENTIALS` locally
@@ -467,8 +470,8 @@ what it reaches outside Spark changes. The full table is
 
 `publish` and `run` sign every call with the `~/.oci/config` profile you give them,
 and that profile carries all of its OCI permissions. The plugin uses it narrowly: it
-uploads notebooks, creates unscheduled jobs, starts a job and reads its status. It
-never deletes, overwrites or schedules anything. The slash commands allow only
+uploads notebooks, creates jobs (any schedule PAUSED), starts a job and reads its
+status. It never deletes, overwrites, or turns a schedule on. The slash commands allow only
 `gcp-aidp publish` and `gcp-aidp run`, and the MCP server leaves both out. But
 anything that can run shell commands as you, an agent included, can use the same
 profile for any `aidp` or OCI command. To limit that:

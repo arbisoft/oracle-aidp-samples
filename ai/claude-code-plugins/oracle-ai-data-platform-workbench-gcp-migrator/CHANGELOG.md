@@ -11,6 +11,23 @@ All notable changes to this project are documented here. Format loosely follows
   Spark SQL statements); executor and driver sizing is noted for the cluster; Dataproc, YARN
   and connector keys are dropped; anything else, static `spark.sql.*` keys included, is
   flagged. Tested offline (local Spark 3.5), not yet on AIDP.
+- Schedules carried, PAUSED (`J03_SCHEDULE`). A scheduled query's schedule (UTC) and the
+  Cloud Scheduler job that starts a Dataproc template, job or batch (unix cron, in its own
+  time zone) become a Quartz `schedule` on the AIDP job with `pauseStatus: PAUSED`, so
+  nothing runs until someone turns it on. A schedule that does not translate exactly
+  (cron restricting both day fields, `every 5 hours`, `first sunday of quarter`), or two
+  scheduler jobs on one definition, leaves the job unscheduled and is flagged (`J01`).
+  `every N hours` is placed by the query's next run time (caveat). Rules in
+  `references/schedule-translation.md`. Measured on AIDP: a PAUSED schedule is accepted,
+  read back as sent, and starts no run.
+- Inventory: Cloud Scheduler jobs that call the Dataproc API, with what each starts
+  (`--scan-services`, Cloud Scheduler Viewer); a scheduled query's next run time and
+  whether it is disabled. A schedule that starts nothing in the plan is a REPORT row.
+- `publish` dry run shows each job's schedule.
+
+### Changed
+- `J01_UNSCHEDULED` is now a flag, used only when a source schedule is not carried; a
+  scheduled query whose job is blocked gets no schedule finding.
 
 ## [0.2.0] - unreleased
 

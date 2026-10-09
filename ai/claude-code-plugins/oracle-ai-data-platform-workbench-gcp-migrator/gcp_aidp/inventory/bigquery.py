@@ -219,7 +219,8 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
             items["scheduled_queries"].append({
                 "id": c["name"].rsplit("/", 1)[-1], "name": c.get("displayName") or c["name"],
                 "query": (c.get("params") or {}).get("query", ""), "schedule": c.get("schedule"),
-                "destination_dataset": c.get("destinationDatasetId"), "location": location})
+                "destination_dataset": c.get("destinationDatasetId"), "location": location,
+                "next_run_time": c.get("nextRunTime"), "disabled": c.get("disabled", False)})
 
     summary: dict = {k: len(v) for k, v in items.items() if k not in not_scanned}
     if not_scanned:

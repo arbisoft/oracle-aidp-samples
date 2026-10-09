@@ -22,6 +22,7 @@ from pathlib import Path
 from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.inventory.manifest import ALL_SOURCES
 from gcp_aidp.translate.ddl import table_layout
+from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
 from gcp_aidp.translate.types import map_column
 
 OCI_NAMESPACE_DEFAULT = "<your-oci-namespace>"
@@ -46,7 +47,8 @@ _REQUIRED = {
         "pipelines": ("id", "name"),
     },
     "gcs": {"buckets": ("name",)},
-    "dataproc": {"clusters": ("name",), "jobs": ("id",), "batches": ("id",), "workflow_templates": ("id",)},
+    "dataproc": {"clusters": ("name",), "jobs": ("id",), "batches": ("id",), "workflow_templates": ("id",),
+                 "schedules": ("name", "schedule")},
     "composer": {"environments": ("name",), "dags": ("environment", "dag_id")},
     "dataform": {"repositories": ("name",)},
     "dataflow": {"jobs": ("id", "name")},
@@ -176,6 +178,12 @@ def _table_target(t: dict, base: dict, mapping: dict) -> tuple[dict, list[str]]:
     return target, notes
 
 
+def _schedule_note(expr, quartz, why, tz) -> str:
+    if quartz:
+        return f"schedule {expr!r} → Quartz {quartz!r} ({tz}), created PAUSED" + (f"; {why}" if why else "")
+    return f"schedule {expr!r} not carried ({why or 'none'}): the job is created unscheduled"
+
+
 def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[dict]:
     out = []
 
@@ -247,10 +255,12 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[di
         out.append(_row(f"bigquery.scheduled_query.{q['id']}", "code+setup", "0.1", MIGRATE,
                         {"type": "bq_scheduled_query", "id": q["id"], "name": q["name"],
                          "schedule": q.get("schedule"), "destination_dataset": q.get("destination_dataset"),
+                         "next_run_time": q.get("next_run_time"), "disabled": q.get("disabled", False),
                          "query": q["query"]},
                         {"type": "aidp_job", "name": job_name(q["name"])},
-                        chain=["googlesql_to_spark", "create_job_unscheduled"],
-                        notes=[f"source schedule {q.get('schedule')!r} is not applied; the job is created unscheduled"]))
+                        chain=["googlesql_to_spark", "create_job"],
+                        notes=[_schedule_note(q.get("schedule"), *from_bigquery(q.get("schedule"),
+                                                                                q.get("next_run_time")), "UTC")]))
     for a in it["access_policies"]:
         detail = a.get("name") or a.get("column") or a.get("role") or "policy"
         out.append(_row(f"bigquery.access.{a['kind']}.{a['dataset']}.{a.get('table') or '-'}.{detail}",
@@ -297,6 +307,32 @@ _DATAPROC_REASONS = {"spark": "Spark JAR job: an AIDP JAR_TASK is not yet proven
                               "with the JAR copied to OCI"}
 
 
+def _starts(schedule: dict, row: dict, kind: str) -> bool:
+    """Does this Cloud Scheduler job start this definition?"""
+    t = schedule.get("target") or {}
+    if t.get("kind") != kind or t.get("region") != row.get("region"):
+        return False
+    if kind == "workflow_template":
+        return t.get("id") == row["id"]
+    return t.get("main_file") == row.get("main_file") and (kind == "batch" or t.get("cluster") == row.get("cluster"))
+
+
+def _scheduled(row: dict, kind: str, schedules: list[dict], used: set[str]) -> tuple[dict, list[str]]:
+    """The definition with the schedules that start it, and a plan note for each."""
+    mine = [sc for sc in schedules if _starts(sc, row, kind)]
+    used.update(sc["name"] for sc in mine)
+    if not mine:
+        return row, []
+    if len(mine) > 1:
+        return {**row, "schedules": mine}, [f"{len(mine)} Cloud Scheduler jobs start it "
+                                            f"({', '.join(sc['name'] for sc in mine)}); an AIDP job holds one "
+                                            "schedule, so none is carried"]
+    sc = mine[0]
+    return {**row, "schedules": mine}, [f"Cloud Scheduler job {sc['name']} ({sc.get('state') or '?'}): "
+                                        + _schedule_note(sc["schedule"], *from_unix_cron(sc["schedule"]),
+                                                         sc.get("time_zone") or "UTC")]
+
+
 def _dataproc_definition(row: dict, collection: str) -> dict:
     stype = {"jobs": "dataproc_job", "batches": "dataproc_batch"}[collection]
     id_ = f"dataproc.{_SINGULAR.get(collection, collection[:-1])}.{row['id']}"
@@ -312,7 +348,7 @@ def _dataproc_definition(row: dict, collection: str) -> dict:
         notes.append(f"arguments differ between runs (latest: {row.get('args')}): the job takes them as parameters")
     if row.get("code_not_read"):
         notes.append(f"code not read: {row['code_not_read']}")
-    chain = ["pyspark_to_aidp" if kind == "pyspark" else "spark_sql_to_aidp", "create_job_unscheduled"]
+    chain = ["pyspark_to_aidp" if kind == "pyspark" else "spark_sql_to_aidp", "create_job"]
     return _row(id_, "code+setup", "0.2", MIGRATE, source,
                 {"type": "aidp_job", "name": job_name(f"{row.get('cluster') or 'serverless'}_{name}")},
                 chain=chain, notes=notes)
@@ -342,11 +378,18 @@ def _dataproc(it: dict[str, list[dict]]) -> list[dict]:
                 {**c, "type": "dataproc_cluster"}, {"type": "aidp_spark_cluster", "name": c["name"]},
                 reason="cluster: create an AIDP cluster sized from the notes", notes=_cluster_sizing(c), effort="S")
            for c in it["clusters"]]
-    out += [_dataproc_definition(r, "jobs") for r in it["jobs"]]
-    out += [_dataproc_definition(r, "batches") for r in it["batches"]]
+    used: set[str] = set()
+    for collection, kind in (("jobs", "job"), ("batches", "batch")):
+        for r in it[collection]:
+            r, notes = _scheduled(r, kind, it["schedules"], used)
+            row = _dataproc_definition(r, collection)
+            if notes:
+                row.setdefault("notes", []).extend(notes)
+            out.append(row)
     for t in it["workflow_templates"]:
+        t, schedule_notes = _scheduled(t, "workflow_template", it["schedules"], used)
         kinds = sorted({s.get("job_type", "unknown") for s in t.get("steps", [])} - set(_DATAPROC_MIGRATE))
-        notes = [f"{len(t.get('steps', []))} steps as tasks, prerequisites as dependsOn"]
+        notes = [f"{len(t.get('steps', []))} steps as tasks, prerequisites as dependsOn", *schedule_notes]
         if kinds:
             notes.append(f"steps of type {', '.join(kinds)} are not translated: the job is not created until they are")
         if t.get("managed_cluster"):
@@ -354,7 +397,17 @@ def _dataproc(it: dict[str, list[dict]]) -> list[dict]:
         out.append(_row(f"dataproc.workflow_template.{t['id']}", "code+setup", "0.2", MIGRATE,
                         {**t, "type": "dataproc_workflow_template"},
                         {"type": "aidp_job", "name": job_name(f"template_{t['id']}")},
-                        chain=["dataproc_template_to_aidp", "create_job_unscheduled"], notes=notes))
+                        chain=["dataproc_template_to_aidp", "create_job"], notes=notes))
+    for sc in it["schedules"]:  # a schedule that starts nothing in the plan is still part of the estate
+        if sc["name"] in used:
+            continue
+        t = sc.get("target") or {}
+        what = t.get("id") or t.get("main_file") or t.get("uri") or t.get("kind")
+        out.append(_row(f"dataproc.schedule.{sc.get('region')}/{sc['name']}", "setup", "0.2", REPORT,
+                        {**sc, "type": "cloud_scheduler_job"}, {"type": "report"},
+                        reason=f"Cloud Scheduler job starts Dataproc {t.get('kind')} {what}, which is not in the "
+                               f"plan; recreate its schedule ({sc['schedule']!r}, {sc.get('time_zone')}) by hand",
+                        effort="S"))
     return out
 
 
