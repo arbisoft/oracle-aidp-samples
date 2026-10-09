@@ -51,7 +51,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | Data copy notebooks (`00`–`03`) | ✅ built | live: 7 tables, 293,886 rows, counts matching |
 | Materialized view snapshot | ✅ built | live, inside the migration job; the refresh job on its own offline only |
 | Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
-| Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | offline; on AIDP, a PAUSED schedule was accepted, read back as sent, and started no run (not yet checked that it fires on time once turned on) |
+| Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | live for Cloud Scheduler: four scheduler jobs on a billed project inventoried, two carried onto published AIDP jobs and read back PAUSED as planned, one flagged, one reported; no run started. Scheduled queries offline only. Not yet checked that a schedule fires on time once turned on |
 | External tables, rclone transfer jobs | ✅ built | offline only |
 | `verify` | ✅ built | offline (it reads the report only) |
 | `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |

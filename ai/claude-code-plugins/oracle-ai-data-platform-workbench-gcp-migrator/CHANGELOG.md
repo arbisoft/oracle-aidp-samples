@@ -19,7 +19,9 @@ All notable changes to this project are documented here. Format loosely follows
   scheduler jobs on one definition, leaves the job unscheduled and is flagged (`J01`).
   `every N hours` is placed by the query's next run time (caveat). Rules in
   `references/schedule-translation.md`. Measured on AIDP: a PAUSED schedule is accepted,
-  read back as sent, and starts no run.
+  read back as sent, and starts no run. Live end to end for Cloud Scheduler: four
+  scheduler jobs inventoried from a billed project, two published as PAUSED AIDP jobs with
+  the planned Quartz and time zone, one flagged (`J01`), one reported.
 - Inventory: Cloud Scheduler jobs that call the Dataproc API, with what each starts
   (`--scan-services`, Cloud Scheduler Viewer); a scheduled query's next run time and
   whether it is disabled. A schedule that starts nothing in the plan is a REPORT row.
