@@ -10,7 +10,7 @@ from gcp_aidp.inventory.manifest import ALL_SOURCES, BROAD_SCOPE_SOURCES, build_
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
 
-P = "proj"
+P = "proj-test"
 BQ = f"https://bigquery.googleapis.com/bigquery/v2/projects/{P}"
 DS = f"{BQ}/datasets/migration_test"
 

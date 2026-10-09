@@ -5,8 +5,9 @@ Migrate a Google Cloud data estate centred on BigQuery to Oracle AI Data Platfor
 It inventories the estate read-only, plans the mapping to AIDP for your approval,
 translates DDL and GoogleSQL with named, deterministic rules, generates the
 notebooks that copy BigQuery tables into Delta, verifies the output, and publishes
-and runs it in an AIDP workspace on request. Anything it cannot translate safely
-is flagged or blocked with the reason, never guessed.
+and runs it in an AIDP workspace on request. Dataproc PySpark and Spark SQL jobs and
+BigQuery Studio notebooks migrate too, as AIDP jobs and notebooks. Anything it cannot
+translate safely is flagged or blocked with the reason, never guessed.
 
 The migrator is a standalone command-line tool (`gcp-aidp`) that needs no AI: every
 result comes from the named rules. The Claude Code plugin and the MCP server are
@@ -27,11 +28,11 @@ optional layers on top of it that guide the workflow and help with setup and rev
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | an rclone transfer job to OCI Object Storage |
 | Procedures, JavaScript and table functions, BigQuery ML, access policies | → | reported with an effort band, not translated |
-| BigQuery Studio notebook, exported as `.ipynb` (0.2) | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
-| Dataproc PySpark and Spark SQL jobs, batches, workflow templates (0.2) | → | unscheduled AIDP jobs: a Python task, a SQL notebook, or one job per template |
+| BigQuery Studio notebook, exported as `.ipynb` | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
+| Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | unscheduled AIDP jobs: a Python task, a SQL notebook, or one job per template |
 | Composer, Dataform, Dataflow, Vertex AI | → | inventoried, planned for a later version |
 
-## Status (0.1)
+## Status (0.2)
 
 Live means run against a real system: a BigQuery sandbox project (no billing) and an
 AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
@@ -40,9 +41,9 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 |---|---|---|
 | `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
 | `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
-| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built for 0.2 | offline only |
-| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks from `--notebooks-dir` (0.2, in progress) | 🚧 `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | offline only |
-| `plan` / `migrate` / `publish`: Dataproc (0.2, in progress) | 🚧 PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: a translated PySpark job (BigQuery read, connector setting, `spark.sql` name, `sys.argv`), a Spark SQL job and a two-step template ran on the migrated tables with the expected counts; Dataproc inventory offline only |
+| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | offline only (needs a billed project) |
+| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: an exported notebook read with `--notebooks-dir` (outputs dropped), translated, published and run on AIDP, reading the migrated tables with the expected counts |
+| `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P10`) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: a translated PySpark job (BigQuery read, connector setting, `spark.sql` name, `sys.argv`), a Spark SQL job and a two-step template ran on the migrated tables with the expected counts; Dataproc inventory offline only |
 | `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
 | `plan` | ✅ built | live, on the sandbox inventory |
 | GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
@@ -416,12 +417,12 @@ tables, with the evidence for each decision, are
 A blocked statement is never partially translated: the artifact keeps the original,
 commented out.
 
-**BigQuery Studio notebooks (0.2, in progress):** `%%bigquery` cells become
+**BigQuery Studio notebooks:** `%%bigquery` cells become
 `spark.sql(...).toPandas()` through the GoogleSQL rules; Python cells take the Dataproc
 rules below. [`references/notebook-translation.md`](references/notebook-translation.md)
 has the `N01`–`N03` rules.
 
-**Dataproc PySpark and Spark SQL (0.2, in progress):** the code is Spark already, so only
+**Dataproc PySpark and Spark SQL:** the code is Spark already, so only
 what it reaches outside Spark changes. The full table is
 [`references/dataproc-translation.md`](references/dataproc-translation.md).
 
@@ -513,15 +514,18 @@ demo.sh                # offline end-to-end demo
 
 ## Roadmap
 
-0.1 automates the pipeline, one command per step, but not repair. `run` executes the
-whole migration job and reports the verdicts; a failure stops for a human, and a
-rerun skips the copies that finished. There is no execute-check-fix loop, one that
-runs migrated code cell by cell on a live cluster and has Claude repair the cells that
-fail. That is deliberate while what moves is data and DDL, where a wrong
-automatic fix silently corrupts a table. Whether it is worth building for code
-migration is decided with 0.2's results.
+The pipeline is automated, one command per step, but not repair: `run` executes a job
+and reports; a failure stops for a person, and a rerun skips the copies that finished.
+There is no execute-check-fix loop, one that runs migrated code cell by cell on a live
+cluster and has Claude repair the cells that fail. That is deliberate where what moves
+is data and DDL, where a wrong automatic fix silently corrupts a table, and 0.2 did not
+need one: its translated Dataproc jobs and notebooks ran on AIDP as written.
 
-- 0.2: BigQuery Studio notebooks and Dataproc (clusters, jobs).
-  Under consideration: a live execute-check-fix pass for the migrated code.
+- 0.1: BigQuery tables, views, materialized views, scheduled and saved queries, and Cloud
+  Storage.
+- 0.2: BigQuery Studio notebooks and Dataproc jobs, batches and workflow templates. Still
+  to come: Spark JAR jobs (once an AIDP `JAR_TASK` is proven) and a live check of the
+  Dataproc inventory on a billed project.
 - 0.3: Composer (Airflow DAGs → AIDP workflows), Dataform and BigQuery pipelines.
 - Later: Dataflow and Vertex AI.
+- Under consideration: an execute-check-fix pass for migrated code.

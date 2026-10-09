@@ -3,9 +3,11 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [Unreleased]
+## [0.2.0] - unreleased
 
-### Added (0.2, in progress)
+Dataproc and BigQuery Studio notebooks migrate. Built on 0.1, below.
+
+### Added
 - Dataproc inventory: job definitions grouped from the run history (region, type, main
   file or class or query, cluster; the newest run's arguments, a run count, the last run,
   and whether the arguments vary between runs), serverless batches grouped the same way,
@@ -47,12 +49,34 @@ All notable changes to this project are documented here. Format loosely follows
   removed and other `%` and `!` lines are commented out and flagged (`N03`); Python cells take
   the Dataproc rules. Translated notebooks upload with `publish`, without a job; one with a
   blocked cell is kept local for a person to finish. Rule table:
-  `references/notebook-translation.md`.
+  `references/notebook-translation.md`. Run live: an exported notebook was read with
+  `--notebooks-dir` on a real inventory (its saved output dropped), translated, published and
+  run on AIDP; its `%%bigquery` query and table read returned the 15,709 orders and 100,000
+  users reconcile had verified.
 - Run live on AIDP: a translated PySpark job, a Spark SQL job and a two-step workflow
   template, published and run against the migrated tables; the PySpark job read 3,923 of
   the 15,709 `orders` rows reconcile had verified, and the template ran its steps in order.
 - `publish` counts scripts as files, not notebooks; `run` points to `MIGRATION_REPORT.md`
   only after the migration job.
+
+### Fixed
+- `inventory` accepted any text as a project id, including a URL, and made a real call
+  with it. A value that is not a Google Cloud project id is refused before any call.
+- A notebook cell whose only content was the removed `%load_ext` became an empty cell; it
+  is now dropped.
+
+### Known gaps
+- Dataproc Spark JAR jobs, Hive, Pig, SparkR and the other engines are reported, not
+  migrated: an AIDP `JAR_TASK` is not yet proven.
+- The Dataproc inventory has run only against canned API responses; the translated jobs
+  and notebooks have run on AIDP.
+- Files Dataproc stages beside a job (`pythonFileUris`, `fileUris`, `archiveUris`, extra
+  JARs) are flagged (`P09`), not uploaded.
+- A BigQuery connector read built across variables is flagged, not rewritten.
+
+## [0.1.0] - unreleased
+
+BigQuery and Cloud Storage: inventory, plan, translate, copy, verify, publish and run.
 
 ### Added
 - Plugin skeleton: `.claude-plugin/plugin.json`, `pyproject.toml`, `gcp-aidp` CLI.

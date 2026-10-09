@@ -5,7 +5,7 @@ query runs and no bytes are billed. Row counts are the table metadata's
 `numRows`.
 
 Saved queries, BigQuery Studio notebooks and BigQuery pipelines have no read
-API this tool relies on in 0.1. They are recorded as not scanned, so the plan
+API this tool relies on. They are recorded as not scanned, so the plan
 says so. Saved queries exported as .sql files can be read with
 `--saved-queries-dir`.
 """
@@ -182,7 +182,7 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
     not_scanned: dict[str, str] = {
         "notebooks": "BigQuery Studio notebooks have no read API this tool uses; export them as .ipynb and "
                      "pass --notebooks-dir",
-        "pipelines": "BigQuery pipelines have no read API this tool uses in 0.1; list them by hand",
+        "pipelines": "BigQuery pipelines have no read API this tool uses; list them by hand",
     }
     warnings: list[str] = []
     if notebooks_dir:
@@ -191,7 +191,7 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
     if saved_queries_dir:
         items["saved_queries"] = _saved_queries(saved_queries_dir)
     else:
-        not_scanned["saved_queries"] = ("saved queries have no read API this tool uses in 0.1; "
+        not_scanned["saved_queries"] = ("saved queries have no read API this tool uses; "
                                         "export them as .sql files and pass --saved-queries-dir")
     row_policies = {"ok": True}
 

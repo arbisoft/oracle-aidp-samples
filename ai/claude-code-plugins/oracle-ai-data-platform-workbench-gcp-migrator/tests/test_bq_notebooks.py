@@ -50,6 +50,9 @@ class Rules(unittest.TestCase):
         self.assertEqual(code, "# gcp-aidp: !pip install seaborn\nx = 1")
         self.assertEqual(rules, {("N03_NOTEBOOK_COMMAND", "rewrite"), ("N03_NOTEBOOK_COMMAND", "flag")})
         self.assertIn(("N03_NOTEBOOK_COMMAND", "block"), cell("%%bash\nls")[1])
+        out, _ = translate_notebook([{"cell_type": "code", "source": "%load_ext bigquery_magics"},
+                                     {"cell_type": "code", "source": ""}], CTX)
+        self.assertEqual(out, [{"cell_type": "code", "source": ""}])  # emptied by a removal: dropped; empty: kept
 
     def test_python_cells_take_the_dataproc_rules_and_markdown_is_kept(self):
         out, findings = translate_notebook([{"cell_type": "markdown", "source": "# gs://landing/x"},

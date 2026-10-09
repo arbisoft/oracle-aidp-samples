@@ -64,7 +64,7 @@ must run.
 |---|---|---|
 | `G15_QUALIFY` | `QUALIFY` in a shape the rewrite does not cover: a window condition that uses a select alias, `SELECT * EXCEPT/REPLACE`, an unnamed select item, `WINDOW`, a set operation, `SELECT AS STRUCT` | Each one would need the output columns or a guess |
 | `G16_PSEUDO_COLUMN` | `_PARTITIONTIME`, `_PARTITIONDATE`, `_TABLE_SUFFIX`, wildcard tables | No Delta equivalent |
-| `G17_SCRIPTING` | `DECLARE`, `BEGIN…END`, `EXECUTE IMMEDIATE`, `SET`, `IF`, `LOOP`, `CALL`, ... and any multi-statement script | Not translated in 0.1 |
+| `G17_SCRIPTING` | `DECLARE`, `BEGIN…END`, `EXECUTE IMMEDIATE`, `SET`, `IF`, `LOOP`, `CALL`, ... and any multi-statement script | Not translated |
 | `G18_ML_AI_GEO` | `ML.*`, `AI.*`, `ST_*` | No equivalent |
 | `G97_LEGACY_SQL` | a view written in legacy SQL (checked in `migrate`) | Rewrite it in GoogleSQL first |
 | `G98_UNBALANCED` | unterminated quote, unbalanced parentheses | Cannot be read safely |

@@ -232,9 +232,17 @@ class Cli(unittest.TestCase):
                 mock.patch.object(GcpClient, "session", new_callable=mock.PropertyMock,
                                   side_effect=RuntimeError("no google-auth")):
             out = Path(tmp) / "inv.json"
-            self.assertEqual(main(["inventory", "--project", "p", "-o", str(out)]), 2)
+            self.assertEqual(main(["inventory", "--project", "my-proj-1", "-o", str(out)]), 2)
             self.assertFalse(out.exists())
         self.assertIn("cannot authenticate", err.getvalue())
+
+    def test_a_project_id_that_is_not_one_is_refused_before_any_call(self):
+        from gcp_aidp.gcp_client import GcpClient
+        for bad in ("https://github.com/x/y", "My Project", "ab", "proj-"):
+            with self.assertRaisesRegex(ValueError, "not a Google Cloud project id"):
+                GcpClient(bad)
+        for good in ("my-project-123456", "my-proj1", "example.com:my-proj"):
+            GcpClient(good)
 
     def test_fixture_name_cannot_traverse(self):
         with redirect_stderr(io.StringIO()):

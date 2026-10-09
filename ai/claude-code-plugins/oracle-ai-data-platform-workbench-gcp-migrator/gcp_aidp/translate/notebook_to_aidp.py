@@ -116,6 +116,9 @@ def translate_notebook(cells: list[dict], ctx: Context | None = None) -> tuple[l
                                    "rewrite the cell by hand")]
         else:
             code, f = _python(source, ctx)
+            if source.strip() and not code.strip() and not any(x.severity == "block" for x in f):
+                findings += [Finding(x.rule, x.severity, f"cell {n}: {x.detail}") for x in f]
+                continue  # nothing left but what was removed (%load_ext): no empty cell
         if any(x.severity == "block" for x in f):
             code = "# gcp-aidp: NOT TRANSLATED. The original cell, commented out:\n" + "\n".join(
                 f"# {line}" for line in source.splitlines())

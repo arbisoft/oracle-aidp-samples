@@ -1,6 +1,6 @@
 ---
 description: Run the published Google Cloud migration job on AIDP and follow it to the end
-argument-hint: "<migrated/> [--prefix <name>] [--job gcp_aidp_migration] [--wait <seconds>]"
+argument-hint: "<migrated/> [--prefix <name>] [--job <job name>] [--wait <seconds>]"
 allowed-tools: Bash(gcp-aidp run:*), Bash(python3 -m gcp_aidp.cli run:*)
 ---
 
@@ -22,3 +22,8 @@ When it ends, report each task's final state. On success, point the user to
 `PRESENT_NOT_REVERIFIED` table already had rows and matched the source count, which is
 not a failure. On failure, show the failing task's error and do not retry with
 different flags to make it green.
+
+`--job` runs another of the migration's jobs: a Dataproc job (its name is in the
+`publish` dry run, e.g. `etl_nightly_sessionize_py`), a template's job, or a
+materialized view's refresh job. `MIGRATION_REPORT.md` exists only after the migration
+job.

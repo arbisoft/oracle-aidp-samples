@@ -1,6 +1,6 @@
 ---
 name: gcp-aidp-migrator
-description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, publish and run."
+description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, migrate Dataproc jobs or BigQuery Studio notebooks, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, publish and run."
 ---
 
 # Oracle AIDP migrator for Google Cloud
@@ -87,11 +87,21 @@ gcp-aidp run       migrated                               # runs the published m
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | an rclone transfer job to Object Storage |
 | SQL UDF | → | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
+| Dataproc PySpark job or batch | → | an unscheduled job with a Python task running the translated script, its arguments as on Dataproc |
+| Dataproc Spark SQL job | → | an unscheduled job running its statements in a notebook |
+| Dataproc workflow template | → | one job: steps as tasks, prerequisites as `dependsOn` |
+| BigQuery Studio notebook (exported `.ipynb`, `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
 
 Reported, not translated: procedures, JavaScript and table functions, BigQuery ML
-models, row access policies and policy tags. 0.2, in progress: BigQuery Studio notebooks (exported `.ipynb`, `--notebooks-dir`) and
-Dataproc jobs migrate. Still skipped: BigQuery Studio notebooks not exported
-and Dataproc (0.2), Composer and Dataform (0.3), Dataflow and Vertex AI (later).
+models, row access policies and policy tags, Dataproc clusters (with their sizing), and
+Dataproc JAR, Hive, Pig and other engines' jobs. Skipped: BigQuery Studio notebooks not
+exported, Composer and Dataform (0.3), Dataflow and Vertex AI (later).
+
+Dataproc and notebook code is changed only where it reaches outside Spark: `gs://`
+paths, BigQuery connector reads (to `spark.table`), connector settings, Hive table names
+(a caveat). A BigQuery write, a query read, Google client libraries, files Dataproc staged
+beside the job and template parameters are flagged. Rule tables:
+`references/dataproc-translation.md`, `references/notebook-translation.md`.
 
 ## Reporting results
 

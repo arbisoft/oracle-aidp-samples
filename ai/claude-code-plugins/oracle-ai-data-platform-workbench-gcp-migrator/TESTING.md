@@ -115,6 +115,41 @@ creates exactly those, the second `--apply` skips all of them, and `run` ends wi
 every task succeeded. After a first run, tables already copied show as
 `PRESENT_NOT_REVERIFIED`: `skip-existing` left them alone and their counts matched.
 
+## 8. Live Dataproc jobs and BigQuery Studio notebooks (0.2)
+
+The translated code runs on AIDP; the Dataproc side needs no GCP Dataproc for this. Add
+to an inventory, as the scan would write them, a PySpark job, a Spark SQL job and a
+two-step workflow template whose code reads the migrated tables (see
+`gcp_aidp/fixtures/build_demo_manifest.py` for the shape), and export a BigQuery Studio
+notebook with a `%%bigquery` cell and a `%%bigquery` table read into a folder. Then:
+
+```bash
+gcp-aidp inventory --project <project> --notebooks-dir <folder> -o inv.json   # or add the jobs by hand
+gcp-aidp plan inv.json --catalog <catalog> --datasets <dataset> -o plan.json
+gcp-aidp migrate plan.json -o migrated
+gcp-aidp publish migrated --prefix <test-prefix> --apply
+gcp-aidp run migrated --prefix <test-prefix> --job <dataproc job name>        # each Dataproc job
+```
+
+A notebook gets no job; run it once from the workbench, or through a one-off notebook task.
+
+✅ Pass if each job and the notebook succeed and print the counts reconcile verified for
+the tables they read, and a template's steps run in their order. Make the code assert
+those counts, so a wrong translation fails the task instead of passing quietly.
+
+## 9. Live Dataproc inventory (billed project)
+
+Needs billing, the Dataproc API, Dataproc Viewer on the service account, and a small
+cluster with a PySpark job, a Spark SQL job and a workflow template submitted (see
+`test-estate/MANUAL_STEPS.md`, step 5b). Delete the cluster the same day.
+
+```bash
+gcp-aidp inventory --project <project> --sources dataproc --scan-services -o dp.json
+```
+
+✅ Pass if the runs are grouped into one definition per job with their run count, the
+`.py` and `.sql` code is read, and the template's steps and prerequisites are listed.
+
 ## Reporting a problem
 
 Include the command, the full output, `report.json` or `MIGRATION_REPORT.md` where

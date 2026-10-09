@@ -55,8 +55,8 @@ _REQUIRED = {
 assert set(_REQUIRED) == set(ALL_SOURCES)
 
 _SKIP_REASONS = {
-    "0.2": "planned for 0.2; inventoried only in 0.1",
-    "0.3": "planned for 0.3; inventoried only in 0.1",
+    "0.2": "planned for 0.2; inventoried only so far",
+    "0.3": "planned for 0.3; inventoried only so far",
     "later": "not on the 0.x roadmap; inventoried only",
 }
 
@@ -229,7 +229,7 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[di
             what = {"PROCEDURE": "stored procedure", "TABLE_VALUED_FUNCTION": "table function"}.get(
                 r["routine_type"], f"{r['language'].lower()} function")
             out.append(_row(rid, "code", "0.1", REPORT, src, {"type": "report"},
-                            reason=f"{what}: inventoried with an effort band, not translated in 0.1",
+                            reason=f"{what}: inventoried with an effort band, not translated",
                             effort=effort_band(r.get("body"))))
     for m in it["models"]:
         out.append(_row(f"bigquery.model.{m['dataset']}.{m['name']}", "code", "0.1", REPORT,
