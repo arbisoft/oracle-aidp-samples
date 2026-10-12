@@ -1,10 +1,12 @@
 # gcp-aidp-migrator
 
 Migrate a Google Cloud data estate centred on BigQuery to Oracle AI Data Platform
-(AIDP) in six verbs: `inventory`, `plan`, `migrate`, `verify`, `publish` and `run`.
+(AIDP) in seven verbs: `inventory`, `plan`, `migrate`, `verify`, `export`, `publish` and
+`run` (`export` only for large tables).
 It inventories the estate read-only, plans the mapping to AIDP for your approval,
 translates DDL and GoogleSQL with named, deterministic rules, generates the
-notebooks that copy BigQuery tables into Delta, verifies the output, and publishes
+notebooks that copy BigQuery tables into Delta (large ones through Parquet files on
+OCI), verifies the output, and publishes
 and runs it in an AIDP workspace on request. Dataproc PySpark and Spark SQL jobs and
 BigQuery Studio notebooks migrate too, as AIDP jobs and notebooks. Anything it cannot
 translate safely is flagged or blocked with the reason, never guessed.
@@ -19,7 +21,7 @@ optional layers on top of it that guide the workflow and help with setup and rev
 |---|---|---|
 | Project | → | INTERNAL catalog |
 | Dataset | → | Schema |
-| Table | → | Managed Delta table, rows copied by a generated notebook |
+| Table | → | Managed Delta table, rows copied by a generated notebook; a large table through Parquet files on OCI (`export`) |
 | Partitioning, clustering | → | `PARTITIONED BY` where exact, otherwise liquid `CLUSTER BY` |
 | View | → | Spark SQL view |
 | Materialized view | → | a table built on AIDP from the migrated tables, plus an unscheduled refresh job |
@@ -31,6 +33,22 @@ optional layers on top of it that guide the workflow and help with setup and rev
 | BigQuery Studio notebook, exported as `.ipynb` | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
 | Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | AIDP jobs: a Python task, a SQL notebook, or one job per template; a Cloud Scheduler schedule that starts one is carried, PAUSED |
 | Composer, Dataform, Dataflow, Vertex AI | → | inventoried, planned for a later version |
+
+### The verbs
+
+`gcp-aidp` is a command-line tool; it runs in any terminal, with or without Claude Code.
+
+| Verb | Purpose | Touches |
+|---|---|---|
+| `inventory` | Scans the GCP project: BigQuery and Cloud Storage, and with `--scan-services` also Dataproc, Studio notebooks and Cloud Scheduler. Writes a manifest | GCP, read-only metadata |
+| `plan` | Turns the manifest into `plan.json` and `plan.md`, the approval document. Every asset gets MIGRATE, REPORT or SKIP with a reason | local files only |
+| `migrate` | Writes the translated artifacts and the data-copy notebooks, with a report | local files only |
+| `verify` | Labels each asset PASS, REVIEW, SKIP or FAIL from the migrate report | local files only |
+| `export` | Large tables only (`plan --export-over-gb`): BigQuery exports them to Parquet in GCS, then copies them to OCI. A dry run until `--apply` | GCP (an export service account) and OCI |
+| `publish` | Uploads the notebooks and scripts and creates the jobs in AIDP. A dry run until `--apply`; never overwrites | AIDP |
+| `run` | Starts the published data-copy job on AIDP and follows it to the end | AIDP |
+
+Every flag is in [`skills/gcp-aidp-migrator/references/verbs.md`](skills/gcp-aidp-migrator/references/verbs.md).
 
 ## Status (0.2)
 
@@ -53,6 +71,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
 | Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | live for Cloud Scheduler: four scheduler jobs on a billed project inventoried, two carried onto published AIDP jobs and read back PAUSED as planned, one flagged, one reported; no run started. Scheduled queries offline only. Not yet checked that a schedule fires on time once turned on |
 | External tables, rclone transfer jobs | ✅ built | offline only |
+| Export route for large tables (`plan --export-over-gb`, `export`, the copy notebook loading Parquet) | ✅ built | live on a billed project: 7 tables (20 M rows, `JSON`, `TIME`, `BIGNUMERIC`, arrays, structs) exported by the same BigQuery jobs and copied to OCI, 5,629 files, which `export` then matched by MD5; the generated notebooks loaded them on local Spark 3.5 with the real BigQuery connector, all verified. Not yet: `export --apply` with an export account end to end, and the load on an AIDP cluster |
 | `verify` | ✅ built | offline (it reads the report only) |
 | `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |
 | MCP server | ✅ built | offline (needs `mcp`) |
@@ -233,6 +252,12 @@ Claude Code you can instead ask for the migration in plain words; the
 
    Check: no `FAIL`. `PASS` means no known issue, not that the artifact has run.
 
+   **Only if the plan used `--export-over-gb`:** now run `gcp-aidp export migrated` (a
+   dry run listing the tables and which use a billed `EXPORT DATA` query), then
+   `gcp-aidp export migrated --apply`, which exports the large tables to Parquet and
+   copies them to OCI. It must finish before step 7. See
+   [`references/export-route.md`](references/export-route.md).
+
 5. **Publish, dry run first:**
 
    ```bash
@@ -300,7 +325,9 @@ Every asset gets a plan row with one of three actions:
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate
 (`--datasets sales,finance`), and whether `BIGNUMERIC` and `GEOGRAPHY` columns are
-carried as text (`--bignumeric string`, `--geography wkt`). Without `--datasets`,
+carried as text (`--bignumeric string`, `--geography wkt`), and which tables take
+the export route (`--export-over-gb`, below). `--bucket-mapping` names the OCI
+bucket each GCS bucket lands in (an unmapped one keeps its name). Without `--datasets`,
 every dataset in the project is planned and copied. With it, the other datasets'
 assets stay in the plan as `SKIP`, so the approval document still shows the whole
 estate, and its first lines say which datasets are in scope. A view that reads a
@@ -345,6 +372,14 @@ connector write a temporary table in BigQuery, so views are rebuilt from their
 translated SQL and materialized views from their query. Nothing is dropped:
 the default `skip-existing` mode leaves a table with rows untouched, and
 `overwrite` rewrites rows, never the table.
+
+**Large tables: the export route.** With `plan --export-over-gb N --export-bucket B`,
+each table of at least N GB is not read through the connector: `gcp-aidp export --apply`
+has BigQuery export it to Parquet in `gs://B/gcp-aidp-export/<plan id>/` and copies the
+files to OCI, and `02_copy_dataset` loads them with the same checks and casts, checking
+the count against the files and against BigQuery. The export runs as a separate export
+service account (`GCP_EXPORT_CREDENTIALS`); the migration's key stays read-only. Steps,
+permissions and the per-type rules: [`references/export-route.md`](references/export-route.md).
 
 > **Consistency.** Each table is copied at its own moment. If the source keeps
 > changing during the copy, the target is consistent per table but not across
@@ -443,23 +478,29 @@ what it reaches outside Spark changes. The full table is
 
 ## Safety posture
 
-- **Read-only against Google Cloud.** Inventory makes `GET` calls only: metadata, and
-  for Dataproc the job's own code file in Cloud Storage. It uses a
-  `cloud-platform.read-only` token wherever the API accepts one. No query runs and no
-  bytes are billed; row counts come from table metadata. The one exception is a maintainer script outside the
-  verbs, `scripts/probe_bigquery_semantics.py`: it runs zero-byte queries on literals,
-  each dry-run first, to check the translator's BigQuery side.
+- **Read-only against Google Cloud, except `export --apply`.** Inventory makes `GET`
+  calls only: metadata, and for Dataproc the job's own code file in Cloud Storage. It
+  uses a `cloud-platform.read-only` token wherever the API accepts one. No query runs
+  and no bytes are billed; row counts come from table metadata. The one verb that
+  writes on Google Cloud is `export --apply` (large tables only): it runs BigQuery
+  export jobs into your staging bucket as a **separate export service account**
+  (`GCP_EXPORT_CREDENTIALS`), never with the migration's read-only key, and its dry run
+  names every table that uses a billed `EXPORT DATA` query. Outside the verbs, a
+  maintainer script, `scripts/probe_bigquery_semantics.py`, runs zero-byte queries on
+  literals, each dry-run first, to check the translator's BigQuery side.
 - **No hidden writes in BigQuery.** The copy reads tables only. Reading a view or a
   query result through the connector would create a temporary table, so views are
   rebuilt from translated SQL and materialized views from their query.
-- **Local until you publish.** `inventory`, `plan`, `migrate` and `verify` write files
-  only. `publish` is a dry run until `--apply`, and the dry run lists the destination
+- **Local until you export or publish.** `inventory`, `plan`, `migrate` and `verify`
+  write files only. `export` and `publish` are dry runs until `--apply`; `export` never
+  overwrites a folder or a file already copied. `publish` and the dry run lists the destination
   and every object; it never overwrites, and creates jobs unscheduled or with their
   schedule PAUSED, so nothing runs until you turn it on.
 - **Nothing is dropped.** Every statement is `CREATE ... IF NOT EXISTS`; the copy's
   default `skip-existing` leaves a table with rows untouched.
-- **Secrets stay put.** The key is read from `GOOGLE_APPLICATION_CREDENTIALS` locally
-  and from the AIDP credential store on the cluster, and is never printed. `.env`
+- **Secrets stay put.** The keys are read from `GOOGLE_APPLICATION_CREDENTIALS` (and,
+  for `export`, `GCP_EXPORT_CREDENTIALS`) locally and from the AIDP credential store on
+  the cluster, and are never printed. `.env`
   takes only `GCP_`, `GOOGLE_APPLICATION_CREDENTIALS`, `AIDP_` and `OCI_` keys.
 - **Deterministic.** Named rules only, no LLM in the translation path. A name
   collision halts the plan rather than picking a winner.
@@ -485,8 +526,9 @@ profile for any `aidp` or OCI command. To limit that:
 - **Run `publish --apply` and `run` yourself.** Let the agent prepare and review the
   dry run.
 
-On the Google side, the service account needs read-only BigQuery roles only, and its
-key stays in the AIDP credential store.
+On the Google side, the migration's service account needs read-only roles only, and
+its key stays in the AIDP credential store. Only the export route adds a second,
+writing account, used by `export --apply` alone.
 
 ## Testing
 
@@ -501,7 +543,7 @@ python3 -m unittest discover -s tests -t .
 
 ```
 gcp_aidp/
-  cli.py               # argparse, 6 verbs
+  cli.py               # argparse, 7 verbs
   _env.py              # .env loader (allowed prefixes only)
   gcp_client.py        # read-only REST GETs through google-auth
   inventory/           # BigQuery, Cloud Storage, other services → manifest
@@ -510,11 +552,12 @@ gcp_aidp/
   migrate/             # writes artifacts, notebooks and report locally
   dataplane/           # the code inside the 00–03 notebooks
   verify/              # PASS / REVIEW / SKIP / FAIL
+  export/              # export: large tables → Parquet in GCS → OCI
   publish/             # publish and run, through aidp-cli
   mcp_server.py        # MCP server for the four offline verbs
   fixtures/            # the Northwind Retail demo manifest
 commands/  skills/     # Claude Code slash commands and skill
-references/            # type mapping and dialect translation rules
+references/            # type, dialect, Dataproc, notebook, schedule rules; the export route
 test-estate/           # seed.sql, MANUAL_STEPS.md, teardown.sql
 demo.sh                # offline end-to-end demo
 ```

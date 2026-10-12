@@ -26,6 +26,32 @@ All notable changes to this project are documented here. Format loosely follows
   (`--scan-services`, Cloud Scheduler Viewer); a scheduled query's next run time and
   whether it is disabled. A schedule that starts nothing in the plan is a REPORT row.
 - `publish` dry run shows each job's schedule.
+- Export route for large tables: `plan --export-over-gb N --export-bucket B`, then the new
+  verb `gcp-aidp export migrated [--apply]` (dry run by default; `/export` command). Tables
+  of at least N GB are exported by BigQuery to Parquet in `gs://B/gcp-aidp-export/<plan id>/`
+  and copied to OCI in Python (no `bq`, `gcloud` or rclone; OCI checks each file's MD5),
+  then loaded into Delta by `02_copy_dataset` with the same checks and casts as the
+  connector path; the count is checked against the files and against BigQuery
+  (`X01_EXPORT_ROUTE`). The export runs as a separate export service account
+  (`GCP_EXPORT_CREDENTIALS`, new); the migration's key stays read-only and only reads the
+  files back. `bq extract` (free) where it can; where a column cannot go into Parquet as
+  Spark reads it (`JSON`, `TIME`, `BIGNUMERIC`, `GEOGRAPHY`), an `EXPORT DATA` query
+  (billed) exports it as text and the notebook casts it back; such a type inside a
+  `STRUCT` or `ARRAY` keeps the table on the connector. A re-run skips exported tables and
+  files already in OCI. Loaded, not converted: `CONVERT TO DELTA` fails on AIDP's `oci://`
+  paths. New optional extra `[oci]`. Live: the same export jobs and a copy to OCI on a
+  billed project (7 tables, 5,629 files; `export` found them all identical by MD5); the
+  generated notebooks then loaded the real files on local Spark 3.5 with the real BigQuery
+  connector, all verified. Not yet: `export --apply` with an export account end to end,
+  and the load on an AIDP cluster. Runbook: `references/export-route.md`.
+- rclone transfer scripts for inventoried buckets take their OCI side from `.env`:
+  `OCI_REGION`, `OCI_COMPARTMENT_ID` (new keys) and `OCI_CLI_PROFILE`, checked before they
+  are written into the script. An unset one stays a placeholder and is flagged
+  (`GS03_TRANSFER`). Transfers run 64 files at a time.
+- `plan --bucket-mapping <json>`: the OCI bucket each GCS bucket lands in
+  (`{"buckets": {"<gcs>": {"oci_bucket": "<oci>"}}, "default_namespace": "<ns>"}`), for
+  transfer jobs, the export route and every `gs://` → `oci://` rewrite. Unmapped buckets
+  keep their names, as before.
 
 ### Changed
 - `J01_UNSCHEDULED` is now a flag, used only when a source schedule is not carried; a

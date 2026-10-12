@@ -1,9 +1,11 @@
 """02 copy: copy ONE dataset's tables from BigQuery into Delta, and verify them.
 
 One job per dataset (the `dataset` parameter), table by table through the
-BigQuery connector. Per table:
+BigQuery connector. A table the plan sends by the export route is instead
+loaded from its Parquet files on OCI (put there by `gcp-aidp export --apply`);
+its count is still checked against BigQuery. Per table:
 
-  1. read the table (a TABLE, never a view or a query);
+  1. read the table (a TABLE, never a view or a query), or its exported files;
   2. compare its columns with the plan by name: renamed, dropped or added
      since the plan is `type_drift`, and nothing is copied;
   3. skip-existing (default): a target that already holds rows is not
@@ -49,7 +51,7 @@ def _sums(df, columns) -> dict:
 def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
     fqn = quote(*t["target"])
     started = time.time()
-    source = read(t["source"])
+    source = spark.read.parquet(t["files"]) if t.get("files") else read(t["source"])
     source_types = {f.name: f.dataType.simpleString() for f in source.schema.fields}
     planned = [c["name"] for c in t["columns"]]
     if set(source_types) != set(planned):
@@ -61,7 +63,7 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
 
     existing = spark.table(fqn).count()
     if existing and mode == "skip-existing":
-        src = source.count()
+        src = read(t["source"]).count()
         return {"status": "skipped_nonempty" if src == existing else "count_mismatch",
                 "source_rows": src, "target_rows": existing, "copied": False}
 
@@ -78,9 +80,14 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
            "seconds": round(time.time() - started, 1), "plan_rows": t.get("num_rows")}
     if mode == "append":
         rec["target_rows_before"] = existing
+    if t.get("files"):
+        rec["files"], rec["export_rows"] = t["files"], source.count()
     expected = rec["source_rows"] + (existing if mode == "append" else 0)
-    if rec["target_rows"] != expected:
+    if rec["target_rows"] != expected or rec.get("export_rows", rec["source_rows"]) != rec["source_rows"]:
         rec["status"] = "count_mismatch"
+        if "export_rows" in rec and rec["export_rows"] != rec["source_rows"]:
+            rec["reason"] = (f"the exported files hold {rec['export_rows']} rows, BigQuery {rec['source_rows']}: "
+                             "the table changed since the export, or the export is incomplete")
     elif verify == "counts+sums":
         rec["source_sums"], rec["target_sums"] = _sums(read(t["source"]), t["columns"]), _sums(target, t["columns"])
         # Compared as exact decimals: the source's scale (DECIMAL(38,9)) need not be the target's.
@@ -100,7 +107,9 @@ def main(spark, params: dict, plan: dict) -> list[str]:
     mode, verify = params.get("mode") or "skip-existing", params.get("verify") or "counts"
     if mode not in ("skip-existing", "overwrite", "append") or verify not in ("counts", "counts+sums"):
         raise ValueError(f"mode {mode!r} / verify {verify!r}: see the PARAMS cell for the choices")
-    spark.conf.set("spark.sql.session.timeZone", "UTC")  # DATETIME is carried as TIMESTAMP in UTC
+    # DATETIME is carried as TIMESTAMP in UTC; and BigQuery's Parquet export writes TIMESTAMP and
+    # DATETIME as TIMESTAMP_NTZ (UTC wall clock, measured), which the cast reads through this zone.
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
     only = set(as_list(params.get("tables")))
     tables = [t for t in plan["tables"] if t["dataset"] == dataset and (not only or t["name"] in only)]
     if not tables:

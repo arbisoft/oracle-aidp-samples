@@ -1,6 +1,6 @@
 ---
 description: Turn a Google Cloud inventory manifest into an AIDP mapping plan and approval document
-argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--bignumeric block|string] [--geography block|wkt]"
+argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--bignumeric block|string] [--geography block|wkt] [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]"
 allowed-tools: Bash(gcp-aidp plan:*), Bash(python3 -m gcp_aidp.cli plan:*), Read
 ---
 
@@ -18,6 +18,11 @@ REPORT / SKIP counts, the not-scanned list at the top, and every table blocked b
 type (`BIGNUMERIC`, `GEOGRAPHY`, `INTERVAL`, `RANGE`). For `BIGNUMERIC` and
 `GEOGRAPHY`, say that `--bignumeric string` or `--geography wkt` carries the column as
 text, and what that gives up. Do not re-plan with those flags unless the user asks.
+
+For large tables, `--export-over-gb N --export-bucket B` sends tables of at least N GB
+through Parquet files instead of the connector. Only suggest it; it needs an export
+service account, a GCS staging bucket and an OCI bucket that AIDP can read
+(`references/export-route.md`). If no table reaches N, nothing changes.
 
 A name collision halts the plan. Tell the user which assets collide and that one must
 be renamed; never pick a winner. Ask the user to approve the plan before

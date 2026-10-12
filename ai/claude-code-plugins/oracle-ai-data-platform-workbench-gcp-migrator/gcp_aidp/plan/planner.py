@@ -184,7 +184,47 @@ def _schedule_note(expr, quartz, why, tz) -> str:
     return f"schedule {expr!r} not carried ({why or 'none'}): the job is created unscheduled"
 
 
-def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[dict]:
+# Types the export cannot write as Parquet that Spark reads, each exported as text instead
+# (EXPORT DATA ... SELECT * REPLACE); the copy notebook casts the text to the planned type.
+# BigQuery refuses JSON in a Parquet export ("Type JSON is not currently supported for
+# parquet exports", measured); Spark cannot read a Parquet TIME column or a DECIMAL(76,38).
+# TIME gets the connector path's text form, HH:MM:SS.ffffff.
+_AS_TEXT = {"JSON": "TO_JSON_STRING({c})", "TIME": "FORMAT_TIME('%H:%M:%E6S', {c})",
+            "BIGNUMERIC": "CAST({c} AS STRING)", "BIGDECIMAL": "CAST({c} AS STRING)",
+            "GEOGRAPHY": "ST_ASTEXT({c})"}
+_NEEDS_TEXT = re.compile(r"\b(" + "|".join(_AS_TEXT) + r")\b")
+
+
+def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]:
+    """Large tables go BigQuery → Parquet on GCS → OCI → loaded into Delta, not through the connector."""
+    size = t.get("num_bytes")
+    if not export or size is None or size < export["over_bytes"]:
+        return None, []
+    gb = f"{size / 1e9:.1f} GB"
+    as_text, nested = {}, []
+    for c in t.get("columns", []):
+        kind, repeated = str(c.get("type", "")).upper(), str(c.get("mode", "")).upper() == "REPEATED"
+        if kind in _AS_TEXT and not repeated:
+            as_text[c["name"]] = _AS_TEXT[kind].format(c="`" + c["name"].replace("`", "\\`") + "`")
+        elif _NEEDS_TEXT.search(_col_type(c)):
+            nested.append(c["name"])
+    if nested:  # ponytail: SELECT * REPLACE reaches top-level columns only; rebuild the STRUCT/ARRAY if one matters
+        return None, [f"{gb}, but column(s) {', '.join(nested)} hold JSON, TIME, BIGNUMERIC or GEOGRAPHY inside "
+                      "a STRUCT or ARRAY, which the export cannot convert: copied through the connector"]
+    rel = f"{export['prefix']}/{t['dataset']}/{t['name']}/"
+    route = {"gcs": f"gs://{export['bucket']}/{rel}", "oci": f"oci://{export['oci_bucket']}@{export['namespace']}/{rel}"}
+    how = "Parquet"
+    if as_text:
+        route["as_text"] = as_text
+        how = f"Parquet by EXPORT DATA (a billed query; {', '.join(as_text)} as text)"
+    return route, [f"export route ({gb}): {how} to {route['gcs']}, transferred to {route['oci']}, loaded into Delta"]
+
+
+def _col_type(c: dict) -> str:
+    return " ".join([str(c.get("type", ""))] + [_col_type(f) for f in c.get("fields", [])]).upper()
+
+
+def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: dict | None = None) -> list[dict]:
     out = []
 
     def rel(ds, name):
@@ -198,12 +238,17 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[di
                         chain=["create_schema"]))
     for t in it["tables"]:
         target, notes = _table_target(t, rel(t["dataset"], t["name"]), mapping)
+        route, route_notes = _export_route(t, export)
+        chain = ["map_types", "create_delta_table", "copy_dataset_job"]
+        if route:
+            target["load_from"] = route
+            chain[2:] = ["export_parquet_to_gcs", "transfer_to_oci", "load_dataset_job"]
         out.append(_row(f"bigquery.table.{t['dataset']}.{t['name']}", "data", "0.1", MIGRATE,
                         {"type": "bq_table", "dataset": t["dataset"], "name": t["name"],
                          "num_rows": t.get("num_rows"), "num_bytes": t.get("num_bytes"),
                          "partitioning": t.get("partitioning"), "clustering": t.get("clustering"),
                          "columns": t.get("columns", [])},
-                        target, chain=["map_types", "create_delta_table", "copy_dataset_job"], notes=notes))
+                        target, chain=chain, notes=notes + route_notes))
     for v in it["views"]:
         out.append(_row(f"bigquery.view.{v['dataset']}.{v['name']}", "code", "0.1", MIGRATE,
                         {"type": "bq_view", "dataset": v["dataset"], "name": v["name"], "query": v["query"],
@@ -289,14 +334,40 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict) -> list[di
 _BUCKET = re.compile(r"[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]")
 
 
-def _gcs(it, ns):
+# An OCI bucket name, as OCI allows it; it is written into the same shell script.
+_OCI_BUCKET = re.compile(r"[A-Za-z0-9._-]{1,256}")
+
+
+def bucket_mapping(mapping: dict, namespace: str | None) -> tuple[dict[str, str], str | None]:
+    """A `--bucket-mapping` file → ({gcs bucket: oci bucket}, namespace).
+
+    `{"buckets": {"<gcs>": {"oci_bucket": "<oci>", "oci_namespace": "<ns>"}}, "default_namespace": "<ns>"}`.
+    One namespace per plan: `--namespace`, else `default_namespace`; a bucket naming another fails.
+    """
+    buckets = mapping.get("buckets")
+    if not isinstance(buckets, dict):
+        raise ValueError('bucket mapping: "buckets" must be an object of {gcs bucket: {"oci_bucket": ...}}')
+    ns = namespace or mapping.get("default_namespace")
+    out = {}
+    for gcs, entry in buckets.items():
+        oci = entry.get("oci_bucket") if isinstance(entry, dict) else None
+        if not _BUCKET.fullmatch(gcs) or not isinstance(oci, str) or not _OCI_BUCKET.fullmatch(oci):
+            raise ValueError(f"bucket mapping: {gcs!r} needs a valid \"oci_bucket\" (got {oci!r})")
+        if entry.get("oci_namespace") and entry["oci_namespace"] != ns:
+            raise ValueError(f"bucket mapping: {gcs!r} names namespace {entry['oci_namespace']!r}, the plan "
+                             f"uses {ns!r}; one namespace per plan")
+        out[gcs] = oci
+    return out, ns
+
+
+def _gcs(it, ns, buckets: dict[str, str]):
     bad = [b["name"] for b in it["buckets"] if not _BUCKET.fullmatch(b["name"])]
     if bad:
         raise ValueError(f"not a Cloud Storage bucket name: {bad}")
     return [_row(f"gcs.bucket.{b['name']}", "data", "0.1", MIGRATE,
                  {"type": "gcs_bucket", "name": b["name"], "location": b.get("location"),
                   "storage_class": b.get("storage_class")},
-                 {"type": "oci_bucket", "name": b["name"], "namespace": ns},
+                 {"type": "oci_bucket", "name": buckets.get(b["name"], b["name"]), "namespace": ns},
                  chain=["copy_gcs_to_oci"]) for b in it["buckets"]]
 
 
@@ -489,8 +560,25 @@ def _scope_to_datasets(assets: list[dict], items: dict, datasets: list[str]) -> 
 
 def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
                catalog: str | None = None, bignumeric: str = "block", geography: str = "block",
-               datasets: list[str] | None = None) -> dict:
-    """`datasets`: migrate only these BigQuery datasets (None: every dataset)."""
+               datasets: list[str] | None = None, export_over_gb: float | None = None,
+               export_bucket: str | None = None, buckets: dict[str, str] | None = None) -> dict:
+    """`datasets`: migrate only these BigQuery datasets (None: every dataset).
+
+    `export_over_gb` + `export_bucket`: tables of at least that size are exported
+    to Parquet in that GCS bucket, transferred to the OCI bucket of the same
+    name (or the one `buckets` maps it to), and loaded from there; smaller ones
+    still go through the connector.
+
+    `buckets`: GCS bucket → OCI bucket, from `--bucket-mapping`; an unmapped
+    bucket keeps its name. Every gs:// → oci:// rewrite follows it.
+    """
+    buckets = buckets or {}
+    if (export_over_gb is None) != (export_bucket is None):
+        raise ValueError("--export-over-gb and --export-bucket go together")
+    if export_bucket is not None and not _BUCKET.fullmatch(export_bucket):
+        raise ValueError(f"not a Cloud Storage bucket name: {export_bucket!r}")
+    if export_over_gb is not None and export_over_gb < 0:
+        raise ValueError("--export-over-gb must be 0 or more")
     if bignumeric not in ("block", "string") or geography not in ("block", "wkt"):
         raise ValueError("bignumeric must be block|string and geography block|wkt")
     mapping = {"bignumeric": bignumeric, "geography": geography}
@@ -498,15 +586,20 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
     items, scan_errors = _validated_items(manifest)
     project = manifest.get("project_id") or ""
     catalog = _validated_catalog(catalog or default_catalog(project))
+    plan_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{uuid.uuid4().hex[:12]}"
+    export = None if export_bucket is None else {
+        "bucket": export_bucket, "oci_bucket": buckets.get(export_bucket, export_bucket),
+        "namespace": oci_namespace, "over_bytes": export_over_gb * 1e9,
+        "prefix": f"gcp-aidp-export/{plan_id}"}
 
     assets: list[dict] = []
     for source in ALL_SOURCES:
         if source not in items:
             continue
         if source == "bigquery":
-            assets += _bigquery(items[source], catalog, mapping)
+            assets += _bigquery(items[source], catalog, mapping, export)
         elif source == "gcs":
-            assets += _gcs(items[source], oci_namespace)
+            assets += _gcs(items[source], oci_namespace, buckets)
         elif source == "dataproc":
             assets += _dataproc(items[source])
         else:
@@ -526,7 +619,7 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
     for a in assets:
         by_action[a["action"]] += 1
     return {
-        "plan_id": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{uuid.uuid4().hex[:12]}",
+        "plan_id": plan_id,
         "source_project": project,
         "source_scanned_at": manifest.get("scanned_at"),
         "sources_scanned": manifest.get("sources_scanned", sorted(items)),
@@ -535,6 +628,7 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
         "scope": {"datasets": datasets,
                   "inventoried": sorted(d["name"] for d in items.get("bigquery", {}).get("datasets", []))},
         "type_modes": mapping,
+        "export": export and {k: export[k] for k in ("bucket", "oci_bucket", "prefix")} | {"over_gb": export_over_gb},
         "summary": {"asset_count": len(assets), "by_action": by_action},
         "assets": assets,
     }

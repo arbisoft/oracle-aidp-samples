@@ -101,8 +101,16 @@ def cmd_plan(args: argparse.Namespace) -> int:
         datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
         if not datasets:
             raise ValueError("--datasets is empty; leave it out to plan every dataset")
-    plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog,
-                      bignumeric=args.bignumeric, geography=args.geography, datasets=datasets)
+    buckets = {}
+    if args.bucket_mapping:
+        from gcp_aidp.plan.planner import bucket_mapping
+
+        buckets, mapped_ns = bucket_mapping(_load_json_object(Path(args.bucket_mapping), "bucket mapping"),
+                                            args.namespace or os.environ.get("OCI_NAMESPACE"))
+        ns = mapped_ns or ns
+    plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog, buckets=buckets,
+                      bignumeric=args.bignumeric, geography=args.geography, datasets=datasets,
+                      export_over_gb=args.export_over_gb, export_bucket=args.export_bucket)
     out = Path(args.output) if args.output else Path(args.manifest).with_suffix(".plan.json")
     write_plan(plan, out)
     md = write_plan_markdown(plan, out.with_suffix(".md"))
@@ -178,6 +186,32 @@ def cmd_publish(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    from gcp_aidp.export import ExportError, export
+
+    try:
+        result = export(args.out_dir, apply=args.apply, log=lambda line: print(line, flush=True))
+    except ExportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    spec = result["spec"]
+    if not args.apply:
+        print(f"dry run: nothing was sent. Would export {len(spec['tables'])} table(s) from {spec['project']} to "
+              f"gs://{spec['bucket']}/{spec['prefix']}/, then copy them to "
+              f"oci://{spec['oci_bucket']}@{spec['namespace']}/{spec['prefix']}/:")
+        for t in spec["tables"]:
+            how = (f"EXPORT DATA, a billed query; as text: {', '.join(t['as_text'])}" if t.get("as_text")
+                   else "bq extract, free")
+            print(f"    {t['dataset']}.{t['name']}  ({how})")
+        print("the export runs as GCP_EXPORT_CREDENTIALS; the copy reads with the read-only key and writes with "
+              "~/.oci/config. Re-run with --apply.")
+        return 0
+    bad = [k for k, r in result["tables"].items() if r["export"] == "failed" or r.get("copy_failures")]
+    print(f"\nexport: {len(result['tables']) - len(bad)}/{len(result['tables'])} table(s) on OCI; "
+          f"{len(bad)} failed. Report: {result['report']}")
+    return 1 if bad else 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from gcp_aidp.publish import PublishError, run
 
@@ -237,6 +271,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BIGNUMERIC columns: block the table (default) or carry exact decimal text")
     pl.add_argument("--geography", choices=("block", "wkt"), default="block",
                     help="GEOGRAPHY columns: block the table (default) or carry WKT text")
+    pl.add_argument("--export-over-gb", type=float, metavar="GB",
+                    help="tables of at least GB gigabytes go the export route: Parquet in GCS, transferred to "
+                         "OCI, loaded into Delta (default: every table through the connector)")
+    pl.add_argument("--export-bucket", metavar="BUCKET",
+                    help="with --export-over-gb: the GCS bucket the Parquet files are staged in; the OCI "
+                         "bucket of the same name (or its --bucket-mapping entry) receives them")
+    pl.add_argument("--bucket-mapping", metavar="JSON",
+                    help='GCS bucket → OCI bucket: {"buckets": {"<gcs>": {"oci_bucket": "<oci>"}}, '
+                         '"default_namespace": "<ns>"}; an unmapped bucket keeps its name')
     pl.set_defaults(func=cmd_plan)
 
     mg = sub.add_parser("migrate", help="write translated artifacts and a report locally; contacts nothing")
@@ -256,6 +299,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="let jobs use notebooks already at their paths (finishing a publish whose job "
                          "creation failed); they are still never overwritten")
     pb.set_defaults(func=cmd_publish)
+
+    ex = sub.add_parser("export", help="large tables: export to Parquet in GCS and copy to OCI; a dry run until --apply")
+    ex.add_argument("out_dir", help="the directory `migrate` wrote")
+    ex.add_argument("--apply", action="store_true", help="actually export and copy; without it nothing is sent")
+    ex.set_defaults(func=cmd_export)
 
     rn = sub.add_parser("run", help="start a published job on AIDP and follow it to the end")
     _aidp_args(rn)

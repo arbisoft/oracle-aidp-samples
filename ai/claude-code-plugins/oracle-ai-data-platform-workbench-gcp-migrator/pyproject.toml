@@ -15,6 +15,8 @@ dependencies = []
 [project.optional-dependencies]
 # Live inventory: read-only REST GETs through google-auth; no Google client libraries.
 gcp = ["google-auth[requests]>=2.20"]
+# `export`: copies the export route's files to OCI Object Storage (with [gcp]).
+oci = ["oci>=2.100"]
 # MCP server; SDK 2.x removed mcp.server.fastmcp.
 mcp = ["mcp>=1.2,<2; python_version >= '3.10'"]
 

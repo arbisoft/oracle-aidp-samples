@@ -27,6 +27,7 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 ```
 gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
               [--datasets a,b] [--bignumeric block|string] [--geography block|wkt]
+              [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]
 ```
 - Writes `plan.json` and `plan.md` beside it. Actions: `MIGRATE`, `REPORT`, `SKIP`.
 - `--datasets`: migrate only these BigQuery datasets (default: all). The others'
@@ -36,6 +37,16 @@ gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
 - `--namespace`: OCI namespace for target buckets (default `$OCI_NAMESPACE`).
 - `--bignumeric string` / `--geography wkt`: carry those columns as text instead of
   blocking the table.
+- `--export-over-gb` + `--export-bucket`: tables of at least GB gigabytes take the
+  export route: `gcp-aidp export` (below) puts them on OCI as Parquet, and the copy
+  notebook loads them. Steps, permissions and per-type rules:
+  `references/export-route.md` at the plugin root.
+- `--bucket-mapping`: which OCI bucket each GCS bucket lands in, for the transfer jobs,
+  the export route and every `gs://` → `oci://` rewrite. An unmapped bucket keeps its
+  name. One namespace per plan (`--namespace`, else `default_namespace`):
+  ```json
+  {"buckets": {"<gcs-bucket>": {"oci_bucket": "<oci-bucket>"}}, "default_namespace": "<ns>"}
+  ```
 - Halts on a name collision (case-insensitive, as Spark compares) or a duplicate id.
 
 ## migrate: plan → artifacts, locally
@@ -57,6 +68,20 @@ gcp-aidp verify <migrated/ | report.json>
 - Exit 1 only when FAIL > 0. Exit 2, with an error and no verdicts, when the report
   is not found or `migrate` was interrupted (its in-progress marker is still there):
   re-run `migrate`.
+
+## export: large tables → Parquet in GCS → OCI
+```
+gcp-aidp export <migrated/> [--apply]
+```
+- Only for a plan with `--export-over-gb`; the tables are those `migrate` recorded in
+  `report.json` (`export`).
+- Dry run by default: each table, its folders, and `bq extract` (free) or `EXPORT DATA`
+  (billed; `JSON`, `TIME`, `BIGNUMERIC`, `GEOGRAPHY` as text).
+- `--apply`: BigQuery jobs as `GCP_EXPORT_CREDENTIALS` (required), then a copy to OCI that
+  reads with the read-only key and writes with `~/.oci/config` (`OCI_CLI_PROFILE`,
+  `OCI_REGION`). Skips exported folders and files already in OCI with the same MD5; OCI
+  checks each MD5. Writes `exports/export_report.json`; exits 1 if a table failed.
+- Needs `pip install -e '.[gcp,oci]'`.
 
 ## publish: upload to AIDP (dry run by default)
 ```

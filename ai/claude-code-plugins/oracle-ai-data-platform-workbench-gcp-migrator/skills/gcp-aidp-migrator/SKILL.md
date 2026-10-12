@@ -1,6 +1,6 @@
 ---
 name: gcp-aidp-migrator
-description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, migrate Dataproc jobs or BigQuery Studio notebooks, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, publish and run."
+description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, migrate Dataproc jobs or BigQuery Studio notebooks, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, export (large tables), publish and run."
 ---
 
 # Oracle AIDP migrator for Google Cloud
@@ -35,6 +35,11 @@ Every verb also runs as `python3 -m gcp_aidp.cli <verb>`.
   from the working directory, then from the plugin folder.
 - **The copy notebooks** need the Spark BigQuery connector JAR as a cluster library and
   the key in the AIDP credential store. See the README's *Copying the data*.
+- **Large tables** (`plan --export-over-gb N --export-bucket B`) go by Parquet files:
+  `gcp-aidp export` exports them and copies them to OCI before `run`. It needs
+  `GCP_EXPORT_CREDENTIALS` (a separate export service account; the read-only key never
+  writes) and `pip install -e '.[gcp,oci]'`. Steps and permissions:
+  `references/export-route.md`.
 
 Never read, print or copy the service account key, and never echo a credential back.
 
@@ -49,12 +54,13 @@ gcp-aidp inventory --project <id> -o inv.json            # or --fixture demo
 gcp-aidp plan      inv.json -o plan.json --catalog <aidp-catalog> --namespace <oci-ns>
 gcp-aidp migrate   plan.json -o migrated                 # local files only
 gcp-aidp verify    migrated
+gcp-aidp export    migrated                               # only with plan --export-over-gb; dry run, then --apply
 gcp-aidp publish   migrated                               # dry run; then --apply
 gcp-aidp run       migrated                               # runs the published migration job
 ```
 
 `migrate` has no `--demo` flag: it always writes locally and contacts nothing. Only
-`publish --apply` and `run` reach AIDP.
+`export --apply`, `publish --apply` and `run` write anywhere.
 
 ## How to help the user
 
@@ -69,7 +75,9 @@ gcp-aidp run       migrated                               # runs the published m
 4. **Read the reports.** After `migrate`, open `migrated/report.md` and surface every
    flag, caveat and block; they need a human. After `verify`, give the PASS / REVIEW /
    SKIP / FAIL counts.
-5. **Publish only after a dry run the user has read.** See the `/publish` command.
+5. **Export, then publish, each only after a dry run the user has read.** `export` only if
+   the plan routed tables (`X01_EXPORT_ROUTE`); its dry run names the tables that use a
+   billed `EXPORT DATA` query. See the `/export` and `/publish` commands.
 6. **After `run`**, point the user to `MIGRATION_REPORT.md` in `/Workspace/<prefix>/reports/`
    and explain each verdict.
 

@@ -258,5 +258,144 @@ class Cli(unittest.TestCase):
             self.assertEqual(main(["inventory", "--fixture", "../x"]), 2)
 
 
+class ExportRoute(unittest.TestCase):
+    """Tables of at least --export-over-gb go BigQuery → Parquet on GCS → OCI → loaded into Delta."""
+
+    def test_large_tables_take_the_export_route(self):
+        plan = build_plan(DEMO, oci_namespace="ns", export_over_gb=1, export_bucket="stage-bkt")
+        routed = {a["id"]: a["target"]["load_from"] for a in plan["assets"] if a["target"].get("load_from")}
+        self.assertEqual(sorted(routed), ["bigquery.table.finance.gl_entries", "bigquery.table.marketing.web_events",
+                                          "bigquery.table.sales.order_items"])
+        prefix = f"gcp-aidp-export/{plan['plan_id']}"
+        self.assertEqual(routed["bigquery.table.sales.order_items"],
+                         {"gcs": f"gs://stage-bkt/{prefix}/sales/order_items/",
+                          "oci": f"oci://stage-bkt@ns/{prefix}/sales/order_items/"})
+        self.assertEqual(plan["export"], {"bucket": "stage-bkt", "oci_bucket": "stage-bkt", "prefix": prefix,
+                                          "over_gb": 1})
+        self.assertIsNone(build_plan(DEMO)["export"])
+
+    def test_columns_parquet_cannot_carry_are_exported_as_text(self):
+        plan = build_plan(DEMO, export_over_gb=0, export_bucket="stage-bkt", bignumeric="string")
+        by_id = {a["id"]: a["target"] for a in plan["assets"]}
+        self.assertEqual(by_id["bigquery.table.logs.app_events_20260901"]["load_from"]["as_text"],
+                         {"attributes": "TO_JSON_STRING(`attributes`)"})
+        self.assertEqual(by_id["bigquery.table.finance.fx_rates"]["load_from"]["as_text"],
+                         {"rate": "CAST(`rate` AS STRING)"})
+        self.assertNotIn("as_text", by_id["bigquery.table.sales.orders"]["load_from"])  # plain: bq extract
+        with tempfile.TemporaryDirectory() as d:
+            from gcp_aidp.migrate import migrate
+
+            report = migrate(plan, out_dir=Path(d))
+        from gcp_aidp.export import job_config
+
+        blocked = next(r for r in report["results"] if r["asset_id"] == "bigquery.table.sales.store_visits")
+        self.assertIn("load_from", by_id["bigquery.table.sales.store_visits"])  # routed, but blocked (INTERVAL):
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertNotIn("X01_EXPORT_ROUTE", [f["rule"] for f in blocked["findings"]])  # no export instruction
+        tables = {t["name"]: t for t in report["export"]["tables"]}
+        self.assertNotIn("store_visits", tables)
+        query = job_config("northwind-analytics-demo", tables["fx_rates"])["query"]
+        self.assertFalse(query["useLegacySql"])
+        self.assertIn("SELECT * REPLACE (CAST(`rate` AS STRING) AS `rate`) FROM `northwind-analytics-demo.finance.fx_rates`",
+                      query["query"])
+        extract = job_config("northwind-analytics-demo", tables["orders"])["extract"]  # nothing to convert: free
+        self.assertEqual((extract["sourceTable"]["tableId"], extract["destinationFormat"]), ("orders", "PARQUET"))
+
+    def test_text_types_and_nesting(self):
+        C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}  # noqa: E731
+        t = {"dataset": "d", "name": "t", "num_bytes": 10**10,
+             "columns": [C("id", "INTEGER"), C("j", "JSON"), C("tm", "TIME"), C("g", "GEOGRAPHY")]}
+        nested = dict(t, name="n", columns=[C("id", "INTEGER"), C("s", "RECORD", fields=[C("j", "JSON")])])
+        repeated = dict(t, name="r", columns=[C("tags", "JSON", "REPEATED")])
+        plan = build_plan(_manifest(datasets=[{"name": "d"}], tables=[t, nested, repeated]),
+                          export_over_gb=1, export_bucket="b-1", geography="wkt")
+        by = {a["source"]["name"]: a for a in plan["assets"] if a["source"]["type"] == "bq_table"}
+        self.assertEqual(by["t"]["target"]["load_from"]["as_text"],
+                         {"j": "TO_JSON_STRING(`j`)", "tm": "FORMAT_TIME('%H:%M:%E6S', `tm`)", "g": "ST_ASTEXT(`g`)"})
+        for name in ("n", "r"):
+            self.assertNotIn("load_from", by[name]["target"])
+            self.assertIn("inside a STRUCT or ARRAY", by[name]["notes"][-1])
+
+    def test_bucket_mapping_sends_files_and_paths_to_the_mapped_oci_bucket(self):
+        from gcp_aidp.plan.planner import bucket_mapping
+
+        buckets, ns = bucket_mapping({"buckets": {"stage-bkt": {"oci_bucket": "aidp-ws-bucket"},
+                                                  "northwind-landing": {"oci_bucket": "Landing_OCI",
+                                                                        "oci_namespace": "tenancy"}},
+                                      "default_namespace": "tenancy"}, None)
+        plan = build_plan(DEMO, oci_namespace=ns, export_over_gb=1, export_bucket="stage-bkt", buckets=buckets)
+        by_id = {a["id"]: a for a in plan["assets"]}
+        self.assertTrue(by_id["bigquery.table.sales.order_items"]["target"]["load_from"]["oci"]
+                        .startswith("oci://aidp-ws-bucket@tenancy/gcp-aidp-export/"))
+        self.assertEqual(by_id["gcs.bucket.northwind-landing"]["target"]["name"], "Landing_OCI")
+        with tempfile.TemporaryDirectory() as d:
+            from gcp_aidp.migrate import migrate
+
+            report = migrate(plan, out_dir=Path(d))
+        self.assertEqual((report["export"]["bucket"], report["export"]["oci_bucket"]), ("stage-bkt", "aidp-ws-bucket"))
+        for bad in ({"buckets": {"b-1": {"oci_bucket": "x; rm -rf /"}}},
+                    {"buckets": {"b-1": {"oci_bucket": "x", "oci_namespace": "other"}}, "default_namespace": "ns"},
+                    {"buckets": ["b-1"]}):
+            with self.assertRaises(ValueError, msg=bad):
+                bucket_mapping(bad, None)
+
+    def test_transfer_scripts_take_oci_settings_from_env(self):
+        from unittest import mock
+
+        from gcp_aidp.migrate import migrate
+
+        plan = build_plan(DEMO, oci_namespace="ns")
+        env = {"OCI_REGION": "us-phoenix-1", "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..aaaexample",
+               "OCI_CLI_PROFILE": "gcp_migration"}
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict("os.environ", env):
+            report = migrate(plan, out_dir=Path(d))
+            bucket = next(r for r in report["results"] if r["kind"] == "gcs_bucket")
+            transfer = (Path(d) / bucket["output_path"]).read_text()
+        self.assertIn("region = us-phoenix-1\ncompartment = ocid1.compartment.oc1..aaaexample", transfer)
+        self.assertIn("config_profile = gcp_migration", transfer)
+        self.assertNotIn("set OCI_REGION", " ".join(f["detail"] for f in bucket["findings"]))
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict("os.environ", {k: "" for k in env}):
+            report = migrate(plan, out_dir=Path(d))
+            bucket = next(r for r in report["results"] if r["kind"] == "gcs_bucket")
+            transfer = (Path(d) / bucket["output_path"]).read_text()
+        self.assertIn("region = <oci-region>", transfer)
+        self.assertIn("set OCI_REGION and OCI_COMPARTMENT_ID in .env", " ".join(f["detail"] for f in bucket["findings"]))
+
+        from gcp_aidp.translate.gcs_to_oci import build_transfer
+        for bad in ({"oci_region": "us-ashburn-1\n[x]"}, {"compartment_ocid": "nope"}, {"oci_profile": "a b"}):
+            with self.assertRaises(ValueError, msg=bad):
+                build_transfer("b", "b", "ns", **bad)
+
+    def test_flags_go_together_and_are_checked(self):
+        for kw in ({"export_over_gb": 1}, {"export_bucket": "b-1"},
+                   {"export_over_gb": 1, "export_bucket": "Bad Bucket"}, {"export_over_gb": -1, "export_bucket": "b-1"}):
+            with self.assertRaises(ValueError, msg=kw):
+                build_plan(DEMO, **kw)
+
+    def test_migrate_records_what_export_runs_and_the_load_path(self):
+        from gcp_aidp.migrate import migrate
+
+        plan = build_plan(DEMO, oci_namespace="ns", export_over_gb=1, export_bucket="stage-bkt")
+        with tempfile.TemporaryDirectory() as d:
+            report = migrate(plan, out_dir=Path(d))
+            dp = json.loads((Path(d) / "notebooks/data_plan.json").read_text())
+            self.assertFalse((Path(d) / "exports").exists())  # nothing for a person to run by hand
+        prefix = f"gcp-aidp-export/{plan['plan_id']}"
+        spec = report["export"]
+        self.assertEqual({k: spec[k] for k in ("project", "bucket", "oci_bucket", "namespace", "prefix")},
+                         {"project": DEMO["project_id"], "bucket": "stage-bkt", "oci_bucket": "stage-bkt",
+                          "namespace": "ns", "prefix": prefix})
+        self.assertEqual(sorted(t["name"] for t in spec["tables"]), ["gl_entries", "order_items", "web_events"])
+        files = {t["name"]: t["files"] for t in dp["tables"]}
+        self.assertEqual(files["order_items"], f"oci://stage-bkt@ns/{prefix}/sales/order_items/")
+        self.assertIsNone(files["orders"])
+        row = next(r for r in report["results"] if r["asset_id"] == "bigquery.table.sales.order_items")
+        self.assertIn("X01_EXPORT_ROUTE", [f["rule"] for f in row["findings"]])
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(migrate(build_plan(DEMO), out_dir=Path(d))["export"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

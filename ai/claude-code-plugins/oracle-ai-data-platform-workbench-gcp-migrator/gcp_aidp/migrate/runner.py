@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Callable
@@ -99,6 +100,20 @@ _DATAPROC = ("dataproc_job", "dataproc_batch", "dataproc_workflow_template")
 _TRANSLATED = ("pyspark", "spark_sql")
 _SETTINGS = ("step_id", "prerequisites", "job_type", "cluster", "main_file", "main_class", "args", "python_files",
              "jars", "files", "archives", "properties", "variables", "runtime_version", "code_not_read")
+
+
+def _oci_settings() -> dict:
+    """The rclone transfer scripts' OCI side from .env (OCI_REGION, OCI_COMPARTMENT_ID, OCI_CLI_PROFILE);
+    an unset one stays a placeholder that the script's reader fills in."""
+    env = {"oci_region": "OCI_REGION", "compartment_ocid": "OCI_COMPARTMENT_ID", "oci_profile": "OCI_CLI_PROFILE"}
+    return {arg: os.environ[name] for arg, name in env.items() if os.environ.get(name)}
+
+
+def _transfer_flag(what: str) -> dict:
+    missing = [name for name in ("OCI_REGION", "OCI_COMPARTMENT_ID") if not os.environ.get(name)]
+    fill = f"set {' and '.join(missing)} in .env and re-run migrate, or fill them in the script; " if missing else ""
+    return _f("GS03_TRANSFER", "flag", f"before running {what}: {fill}install rclone, and authenticate to "
+                                       "Google Cloud (read-only) and OCI (~/.oci/config)")
 
 
 def _job_title(src: dict) -> str:
@@ -212,6 +227,11 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         findings += [_f(*f) for f in tgt.get("layout_findings", [])]
         if not tgt["columns"]:
             findings.append(_f("TY99_UNKNOWN", "block", "no columns in the manifest"))
+        if tgt.get("load_from") and _status(findings) != "blocked":
+            findings.append(_f("X01_EXPORT_ROUTE", "flag",
+                               f"before the copy job, `gcp-aidp export --apply` exports it to {tgt['load_from']['gcs']} "
+                               f"and copies the files to {tgt['load_from']['oci']}; the job loads them and "
+                               "checks the count against BigQuery"))
         if _status(findings) == "blocked":
             translated = ""
             path = w.sql("tables", stem, aid, findings, "-- table not created: a column is blocked")
@@ -346,11 +366,10 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             translated = r.sql
             path = w.sql(category, name, aid, findings, translated)
     elif t == "oci_bucket":
-        translated = build_transfer(src["name"], tgt["name"], tgt["namespace"])
+        translated = build_transfer(src["name"], tgt["name"], tgt["namespace"], **_oci_settings())
         source_sql = f"gs://{src['name']}/  ({src.get('location')}, {src.get('storage_class')})"
         findings = [_f("GS03_TRANSFER", "rewrite", f"rclone copy gs://{src['name']} → oci://{tgt['name']}@{tgt['namespace']}"),
-                    _f("GS03_TRANSFER", "flag", "before running: install rclone, authenticate to Google Cloud "
-                       "(read-only), and set a real OCI region, compartment and ~/.oci/config profile")]
+                    _transfer_flag("it")]
         p = w.path("transfers", src["name"], ".transfer.sh", aid)
         write_text_atomic(p, translated)
         path = p.relative_to(w.out_dir).as_posix()
@@ -382,6 +401,7 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
         if log:
             log(f"  {r['status']:<20s} {r['asset_id']}")
     counts = {s: sum(r["status"] == s for r in results) for s in STATUSES}
+    export = _export_spec(plan, results)
     dp = data_plan(plan, results)
     write_text_atomic(out_dir / "notebooks" / "data_plan.json", json.dumps(dp, indent=2))
     notebooks = write_notebooks(dp, out_dir)
@@ -394,11 +414,23 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
             f"{len(dp['views'])} views to create); jobs: {', '.join(j['name'] for j in jobs)}")
     report = {"plan_id": plan.get("plan_id"), "source_project": plan.get("source_project"),
               "complete": True, "counts": counts, "results": results, "notebooks": notebooks, "files": files,
-              "jobs": jobs}
+              "jobs": jobs, "export": export}
     write_text_atomic(out_dir / "report.json", json.dumps(report, indent=2))
     write_text_atomic(out_dir / "report.md", _markdown(report))
     marker.unlink()
     return report
+
+
+def _export_spec(plan: dict, results: list[dict]) -> dict | None:
+    """What `gcp-aidp export` exports and copies: the routed tables that were not blocked."""
+    export = plan.get("export")
+    created = {r["asset_id"] for r in results if r.get("status") in ("ok", "needs_manual_review")}
+    tables = [{"dataset": a["source"]["dataset"], "name": a["source"]["name"], **a["target"]["load_from"]}
+              for a in plan["assets"] if a["id"] in created and a["target"].get("load_from")]
+    if not export or not tables:
+        return None
+    return {"project": plan["source_project"], "bucket": export["bucket"], "oci_bucket": export["oci_bucket"],
+            "namespace": plan["target"]["oci_namespace"], "prefix": export["prefix"], "tables": tables}
 
 
 def _markdown(report: dict) -> str:

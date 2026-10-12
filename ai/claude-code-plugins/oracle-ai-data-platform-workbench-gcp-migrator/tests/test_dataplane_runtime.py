@@ -226,6 +226,67 @@ class DataPlaneNotebooks(unittest.TestCase):
         self.assertIn("diagnose: OK", out.getvalue())
         self.assertNotIn("not-a-real-key", out.getvalue())  # the key is never printed
 
+    def test_5_export_route_loads_the_files_and_checks_bigquery(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"][0]["num_bytes"] = 2_000_000_000  # orders
+        plan = build_plan(manifest, catalog="spark_catalog", oci_namespace="ns", export_over_gb=1,
+                          export_bucket="stage-bkt")
+        out = Path(self.tmp.name) / "migrated-export"
+        migrate(plan, out_dir=out)
+        # The exported files, "transferred": a local folder stands in for the oci:// folder.
+        oci = f"oci://stage-bkt@ns/gcp-aidp-export/{plan['plan_id']}/shop/orders/"
+        files = Path(self.tmp.name) / "exported" / "orders"
+        schema, rows = SOURCE["proj.shop.orders"]  # BigQuery's Parquet: NUMERIC as decimal(38,9)
+        self.spark.createDataFrame(rows, schema).write.parquet(str(files))
+        text = (out / "notebooks/02_copy_dataset.ipynb").read_text().replace(oci, files.as_uri())
+        self.assertIn(files.as_uri(), text)
+        self.notebooks["02_copy_dataset"] = json.loads(text)
+
+        self.source["proj.shop.orders"] = SOURCE["proj.shop.orders"]
+        # The exit code also counts the profiles type_drift test 2 left in this dataset's report.
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite", verify="counts+sums")
+        rec = self.report("copy_report_shop.json")["tables"]["shop.orders"]
+        self.assertEqual((rec["status"], rec["export_rows"], rec["source_rows"], rec["target_rows"]),
+                         ("verified", 3, 3, 3))
+        self.assertEqual(rec["target_sums"]["total"], "100000010.50")
+
+        # BigQuery moved on after the export: the load is not passed as verified.
+        self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal("1"))])
+        self.assertEqual(self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite"), 1)
+        rec = self.report("copy_report_shop.json")["tables"]["shop.orders"]
+        self.assertEqual((rec["status"], rec["export_rows"], rec["source_rows"]), ("count_mismatch", 3, 4))
+        self.assertIn("changed since the export", rec["reason"])
+
+    def test_6_export_route_text_columns_land_in_their_planned_types(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"][2]["num_bytes"] = 2_000_000_000  # type_carried
+        plan = build_plan(manifest, catalog="spark_catalog", oci_namespace="ns", export_over_gb=1,
+                          export_bucket="stage-bkt")
+        route = next(a["target"]["load_from"] for a in plan["assets"] if a["source"]["name"] == "type_carried")
+        self.assertEqual(sorted(route["as_text"]), ["opening", "payload", "precise"])
+        out = Path(self.tmp.name) / "migrated-text"
+        migrate(plan, out_dir=out)
+        # What EXPORT DATA writes: the converted columns as text, DATETIME as a local timestamp.
+        files = Path(self.tmp.name) / "exported" / "type_carried"
+        self.spark.createDataFrame(
+            [(1, '{"a":1}', dt.datetime(2026, 1, 1, 10), "10:30:00.123456", "12345678901234567890.0123456789"),
+             (2, '"x"', dt.datetime(2026, 6, 30, 23, 59, 59, 999999), "00:00:00.000000", "-1")],
+            "id long, payload string, local_time timestamp_ntz, opening string, precise string",
+        ).write.parquet(str(files))
+        text = (out / "notebooks/02_copy_dataset.ipynb").read_text().replace(route["oci"], files.as_uri())
+        self.notebooks["02_copy_dataset"] = json.loads(text)
+
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="type_carried", mode="overwrite",
+                          verify="counts+sums")  # exit code: see test 5
+        rec = self.report("copy_report_shop.json")["tables"]["shop.type_carried"]
+        self.assertEqual((rec["status"], rec["export_rows"], rec["target_rows"]), ("verified", 2, 2))
+        row = self.spark.table("spark_catalog.shop.type_carried").where("id = 1").collect()[0]
+        self.assertEqual((row["payload"], row["opening"]), ('{"a":1}', "10:30:00.123456"))
+        self.assertEqual(row["precise"], Decimal("12345678901234567890.0123456789"))  # text → DECIMAL(30,10), exact
+        self.spark.conf.set("spark.sql.session.timeZone", "UTC")
+        self.assertEqual(self.spark.sql("SELECT CAST(local_time AS STRING) FROM spark_catalog.shop.type_carried "
+                                        "WHERE id = 2").collect()[0][0], "2026-06-30 23:59:59.999999")
+
 
 if __name__ == "__main__":
     unittest.main()

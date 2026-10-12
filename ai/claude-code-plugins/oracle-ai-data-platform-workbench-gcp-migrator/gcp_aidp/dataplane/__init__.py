@@ -118,7 +118,7 @@ def data_plan(plan: dict, results: list[dict]) -> dict:
                     "dataset": src["dataset"], "name": src["name"],
                     "source": f"{plan.get('source_project')}.{src['dataset']}.{src['name']}",
                     "target": [tgt["catalog"], tgt["schema"], tgt["name"]], "ddl": r["translated_sql"],
-                    "num_rows": src.get("num_rows"),
+                    "num_rows": src.get("num_rows"), "files": (tgt.get("load_from") or {}).get("oci"),
                     "columns": [{"name": c["name"], "source_type": c["source_type"],
                                  "target_type": c["target_type"]} for c in tgt["columns"]]})
             else:

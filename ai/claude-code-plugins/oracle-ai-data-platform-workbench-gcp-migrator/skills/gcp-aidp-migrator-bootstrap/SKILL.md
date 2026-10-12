@@ -38,6 +38,16 @@ c.refresh(r.Request()); print('token ok, project', p)"
 `ImportError` → `pip install -e '.[gcp]'`. A refresh error → the key is revoked or
 wrong. The fixture (`--fixture demo`) needs none of this.
 
+Only if the plan uses the export route (`plan --export-over-gb`):
+
+```bash
+test -f "$GCP_EXPORT_CREDENTIALS" && echo "export key present" || echo "GCP_EXPORT_CREDENTIALS not set or missing"
+python3 -c "import oci; print('oci sdk', oci.__version__)"
+```
+
+Missing → a separate export service account's key (`references/export-route.md`), and
+`pip install -e '.[gcp,oci]'`. Never point it at the read-only key.
+
 ## 3. aidp-cli
 
 ```bash
