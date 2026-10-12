@@ -54,6 +54,12 @@ All notable changes to this project are documented here. Format loosely follows
   keep their names, as before.
 
 ### Changed
+- README restructured as a short landing page for someone arriving through Claude Code:
+  what it does, when to use it, install, prerequisites, skill index, engine, privacy.
+  The setup, the step-by-step migration and the safety posture moved, unchanged, to
+  `docs/RUNBOOK.md`; the live-versus-offline status table to `TESTING.md`; the rule tables
+  are in `references/` only (`J02_DESTINATION_TABLE` added to
+  `references/schedule-translation.md`, where it was missing). New `PRIVACY.md`.
 - `J01_UNSCHEDULED` is now a flag, used only when a source schedule is not carried; a
   scheduled query whose job is blocked gets no schedule finding.
 

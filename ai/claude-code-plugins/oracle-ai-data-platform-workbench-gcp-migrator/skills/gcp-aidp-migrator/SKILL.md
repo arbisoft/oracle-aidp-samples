@@ -34,7 +34,7 @@ Every verb also runs as `python3 -m gcp_aidp.cli <verb>`.
   `AIDP_AUTH=api_key`: `aidp-cli` defaults to `security_token`. The CLI reads `.env`
   from the working directory, then from the plugin folder.
 - **The copy notebooks** need the Spark BigQuery connector JAR as a cluster library and
-  the key in the AIDP credential store. See the README's *Copying the data*.
+  the key in the AIDP credential store. See *Copying the data* in `docs/RUNBOOK.md`.
 - **Large tables** (`plan --export-over-gb N --export-bucket B`) go by Parquet files:
   `gcp-aidp export` exports them and copies them to OCI before `run`. It needs
   `GCP_EXPORT_CREDENTIALS` (a separate export service account; the read-only key never
@@ -45,7 +45,7 @@ Never read, print or copy the service account key, and never echo a credential b
 
 Before the first live inventory or publish, or after an auth, config or connection
 error, run the `gcp-aidp-migrator-bootstrap` skill: it checks each of these and says
-what to fix. The full setup is the README's **Setup** section.
+what to fix. The full setup is the **Setup** section of `docs/RUNBOOK.md`.
 
 ## Workflow
 
@@ -140,4 +140,4 @@ say what that gives up.
 Each table is copied at its own moment: a source that keeps changing is consistent per
 table, not across tables. Say so before a cutover.
 
-See `references/verbs.md` for every flag, and the plugin README for the rule tables.
+See `references/verbs.md` for every flag, and the plugin's `references/` for the rule tables.

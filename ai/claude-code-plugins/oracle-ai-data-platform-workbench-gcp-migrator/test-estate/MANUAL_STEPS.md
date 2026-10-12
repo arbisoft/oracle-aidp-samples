@@ -138,7 +138,7 @@ gcp-aidp migrate $WORK/plan.json -o $WORK/migrated
 gcp-aidp verify $WORK/migrated
 ```
 
-On AIDP, as in the README's **Setup**, step 2: create the standard catalog
+On AIDP, as in **Setup**, step 2, of `docs/RUNBOOK.md`: create the standard catalog
 `gcp_migration_test`, add the credential `gcp_bigquery_reader` (key
 `credentials_b64`, the base64 service account key), and give a Spark 3.5 cluster
 the `spark-bigquery-with-dependencies_2.12-<version>.jar` library. Then either:

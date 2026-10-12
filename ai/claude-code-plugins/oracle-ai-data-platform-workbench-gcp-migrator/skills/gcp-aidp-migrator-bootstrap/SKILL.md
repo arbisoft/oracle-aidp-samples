@@ -14,7 +14,7 @@ change of project, profile, instance, workspace or cluster.
 ("an aidataplatform OCID, 89 characters"), as the commands below do.
 
 Only check what the user's next step needs: steps 1–2 for `inventory`, all of them for
-`publish` and `run`. Setup instructions for anything missing are in the README's
+`publish` and `run`. Setup instructions for anything missing are in `docs/RUNBOOK.md`,
 **Setup** section; point the user there rather than improvising.
 
 ## 1. The CLI
@@ -125,7 +125,7 @@ report its `displayName` and `state`.
 - `security_token auth requires security_token_file` → set `AIDP_AUTH=api_key`.
 - 401 → the API key is not uploaded to that user, or the fingerprint is wrong (step 4).
 - 404 or "not authorized" → wrong instance OCID or region, or the user lacks access
-  to the instance or workspace (README **Setup**, step 2).
+  to the instance or workspace (`docs/RUNBOOK.md`, **Setup**, step 2).
 
 ## 7. What the copy needs on the cluster
 

@@ -4,6 +4,34 @@ The core pass needs no Google Cloud or OCI account: everything runs offline agai
 the bundled Northwind Retail fixture. The live passes at the end need a BigQuery
 project and an AIDP workspace.
 
+
+## What has run live (0.2)
+
+Live means run against a real system: a BigQuery sandbox project (no billing) and an
+AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
+
+| Area | State | Tested |
+|---|---|---|
+| `inventory`: BigQuery datasets, tables, views, materialized views, routines, models, row access policies, policy tags, IAM | ✅ built | live |
+| `inventory`: external tables, scheduled queries, Cloud Storage | ✅ built | offline only (the sandbox has no billing) |
+| `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | live on a billed project, two regions: two runs of one script grouped into one definition (newest arguments kept), a Spark SQL job, a workflow template's steps and order, job code read from Cloud Storage, cluster sizing |
+| `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks, read through the Dataform API (`--scan-services`) or from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: a BigQuery Studio notebook with a SQL cell and a `%%bigquery` cell read through Dataform on a billed project (outputs dropped), translated, published and run on AIDP; an exported notebook through `--notebooks-dir` too |
+| `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P11`; `P11`, job Spark properties, offline only) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: synthetic and then real Dataproc jobs, inventoried from a live project, translated and run on the migrated tables with the expected counts; a write to a bucket not yet on OCI failed where the plan flagged it |
+| `inventory`: Composer, Dataform, Dataflow, Vertex AI (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
+| `plan` | ✅ built | live, on the sandbox inventory |
+| GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
+| Type mapping and table layout | ✅ built | live: 7 tables created and read back against the plan |
+| Data copy notebooks (`00`–`03`) | ✅ built | live: 7 tables, 293,886 rows, counts matching |
+| Materialized view snapshot | ✅ built | live, inside the migration job; the refresh job on its own offline only |
+| Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
+| Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | live for Cloud Scheduler: four scheduler jobs on a billed project inventoried, two carried onto published AIDP jobs and read back PAUSED as planned, one flagged, one reported; no run started. Scheduled queries offline only. Not yet checked that a schedule fires on time once turned on |
+| External tables, rclone transfer jobs | ✅ built | offline only |
+| Export route for large tables (`plan --export-over-gb`, `export`, the copy notebook loading Parquet) | ✅ built | live on a billed project: 7 tables (20 M rows, `JSON`, `TIME`, `BIGNUMERIC`, arrays, structs) exported by the same BigQuery jobs and copied to OCI, 5,629 files, which `export` then matched by MD5; the generated notebooks loaded them on local Spark 3.5 with the real BigQuery connector, all verified. Not yet: `export --apply` with an export account end to end, and the load on an AIDP cluster |
+| `verify` | ✅ built | offline (it reads the report only) |
+| `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |
+| MCP server | ✅ built | offline (needs `mcp`) |
+| Live cell-by-cell execution and repair | 🚧 not built | |
+
 ## 1. Setup
 
 ```bash

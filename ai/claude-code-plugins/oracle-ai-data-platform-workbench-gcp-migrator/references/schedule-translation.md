@@ -32,6 +32,7 @@ Scheduler locations are scanned in the same regions as Dataproc.
 | `J03_SCHEDULE` | the schedule translates exactly | Quartz on the job, `pauseStatus: PAUSED` | rewrite |
 | `J03_SCHEDULE` | `every N hours` / `every N minutes` | placed by the query's next run time, on the assumption that the interval counts from each scheduled start | caveat |
 | `J01_UNSCHEDULED` | the schedule does not translate, or two scheduler jobs start one definition | job created unscheduled; the source schedule is in the finding | flag |
+| `J02_DESTINATION_TABLE` | a scheduled query writes its result into a destination table | no job is created: the inventory does not record the table or the write mode, so the `INSERT` is added by hand | flag |
 
 A blocked job is not created, so it carries no schedule finding.
 
