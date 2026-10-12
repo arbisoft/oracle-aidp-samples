@@ -362,9 +362,10 @@ need one: its translated Dataproc jobs and notebooks ran on AIDP as written.
 
 - 0.1: BigQuery tables, views, materialized views, scheduled and saved queries, and Cloud
   Storage.
-- 0.2: BigQuery Studio notebooks and Dataproc jobs, batches and workflow templates. Still
-  to come: Spark JAR jobs (once an AIDP `JAR_TASK` is proven), and the schedules of
-  templates triggered from Cloud Scheduler.
+- 0.2: BigQuery Studio notebooks and Dataproc jobs, batches and workflow templates.
+- 0.2.1: source schedules carried onto AIDP jobs, PAUSED (scheduled queries and Cloud
+  Scheduler jobs that start Dataproc); Dataproc job Spark properties; the export route for
+  large tables (`export`). Still to come: Spark JAR jobs, once an AIDP `JAR_TASK` is proven.
 - 0.3: Composer (Airflow DAGs → AIDP workflows), Dataform and BigQuery pipelines.
 - Later: Dataflow and Vertex AI.
 - Under consideration: an execute-check-fix pass for migrated code.
