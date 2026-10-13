@@ -288,5 +288,66 @@ class DataPlaneNotebooks(unittest.TestCase):
                                         "WHERE id = 2").collect()[0][0], "2026-06-30 23:59:59.999999")
 
 
+    def test_7_export_route_text_inside_structs_and_arrays(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"].append(
+            {"dataset": "shop", "name": "nested_text", "num_rows": 2, "num_bytes": 2_000_000_000, "columns": [
+                C("id", "INTEGER"),
+                C("s", "RECORD", fields=[C("j", "JSON"), C("t", "TIME"),
+                                         C("p", "BIGNUMERIC", precision="30", scale="10")]),
+                C("items", "RECORD", "REPEATED", fields=[C("sku", "STRING"), C("tms", "TIME", "REPEATED")])]})
+        plan = build_plan(manifest, catalog="spark_catalog", oci_namespace="ns", export_over_gb=1,
+                          export_bucket="stage-bkt")
+        route = next(a["target"]["load_from"] for a in plan["assets"] if a["source"]["name"] == "nested_text")
+        self.assertEqual(sorted(route["as_text"]), ["items", "s"])
+        out = Path(self.tmp.name) / "migrated-nested"
+        migrate(plan, out_dir=out)
+        # What EXPORT DATA writes for that SELECT: the same nesting, the converted fields as text.
+        files = Path(self.tmp.name) / "exported" / "nested_text"
+        self.spark.createDataFrame(
+            [(1, ('{"a":1}', "10:30:00.123456", "12345678901234567890.0123456789"),
+              [("x", ["01:02:03.000000", "23:59:59.999999"]), ("y", [])]),
+             (2, None, [])],
+            "id long, s struct<j:string,t:string,p:string>, items array<struct<sku:string,tms:array<string>>>",
+        ).write.parquet(str(files))
+        for stage in ("01_structure", "02_copy_dataset"):
+            text = (out / f"notebooks/{stage}.ipynb").read_text().replace(route["oci"], files.as_uri())
+            self.notebooks[stage] = json.loads(text)
+        self.run_notebook("01_structure")
+        self.source["proj.shop.nested_text"] = ("id long", [(1,), (2,)])  # only its count is read
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="nested_text", mode="overwrite")
+        rec = self.report("copy_report_shop.json")["tables"]["shop.nested_text"]
+        self.assertEqual((rec["status"], rec["export_rows"], rec["target_rows"]), ("verified", 2, 2))
+        rows = {r["id"]: r for r in self.spark.table("spark_catalog.shop.nested_text").collect()}
+        self.assertEqual(rows[1]["s"]["p"], Decimal("12345678901234567890.0123456789"))  # text → DECIMAL(30,10)
+        self.assertEqual((rows[1]["s"]["j"], rows[1]["s"]["t"]), ('{"a":1}', "10:30:00.123456"))
+        self.assertEqual([(i["sku"], i["tms"]) for i in rows[1]["items"]],
+                         [("x", ["01:02:03.000000", "23:59:59.999999"]), ("y", [])])
+        self.assertIsNone(rows[2]["s"])  # a NULL struct stays NULL
+
+    def test_8_connector_time_inside_structs_and_arrays_lands_as_text(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"].append(
+            {"dataset": "shop", "name": "nested_time", "num_rows": 2, "columns": [
+                C("id", "INTEGER"), C("s", "RECORD", fields=[C("t", "TIME"), C("n", "INTEGER")]),
+                C("items", "RECORD", "REPEATED", fields=[C("sku", "STRING"), C("tms", "TIME", "REPEATED")])]})
+        out = Path(self.tmp.name) / "migrated-nested-time"
+        migrate(build_plan(manifest, catalog="spark_catalog", oci_namespace="ns"), out_dir=out)
+        for stage in ("01_structure", "02_copy_dataset"):
+            self.notebooks[stage] = json.loads((out / f"notebooks/{stage}.ipynb").read_text())
+        self.run_notebook("01_structure")
+        # As the connector delivers TIME at any depth: microseconds since midnight.
+        self.source["proj.shop.nested_time"] = (
+            "id long, s struct<t:bigint,n:bigint>, items array<struct<sku:string,tms:array<bigint>>>",
+            [(1, (37_800_123_456, 7), [("x", [3_723_000_000, 86_399_999_999]), ("y", [])]), (2, None, [])])
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="nested_time", mode="overwrite")
+        rec = self.report("copy_report_shop.json")["tables"]["shop.nested_time"]
+        self.assertEqual((rec["status"], rec["target_rows"]), ("verified", 2))
+        rows = {r["id"]: r for r in self.spark.table("spark_catalog.shop.nested_time").collect()}
+        self.assertEqual((rows[1]["s"]["t"], rows[1]["s"]["n"]), ("10:30:00.123456", 7))
+        self.assertEqual([(i["sku"], i["tms"]) for i in rows[1]["items"]],
+                         [("x", ["01:02:03.000000", "23:59:59.999999"]), ("y", [])])
+        self.assertIsNone(rows[2]["s"])
+
 if __name__ == "__main__":
     unittest.main()

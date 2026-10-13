@@ -44,7 +44,7 @@ copy converts each to the target type above:
 | `STRUCT` / `ARRAY` | `struct<...>` / `array<...>`, fields intact | nothing to convert |
 | `NUMERIC(P,S)`, `BIGNUMERIC(P,S)` with P ≤ 38 | `decimal(P,S)` | nothing to convert |
 | `JSON` | `string` | nothing to convert |
-| `TIME` | `bigint` (microseconds since midnight) | `date_format(timestamp_micros(c), 'HH:mm:ss.SSSSSS')` |
+| `TIME` | `bigint` (microseconds since midnight) | `date_format(timestamp_micros(c), 'HH:mm:ss.SSSSSS')`, also inside a `STRUCT` or `ARRAY` |
 | `DATETIME` | `string` (ISO 8601) | `CAST(c AS TIMESTAMP)` with the session time zone at UTC |
 
 Every conversion runs with ANSI casts, so a value that does not fit or parse

@@ -192,7 +192,6 @@ def _schedule_note(expr, quartz, why, tz) -> str:
 _AS_TEXT = {"JSON": "TO_JSON_STRING({c})", "TIME": "FORMAT_TIME('%H:%M:%E6S', {c})",
             "BIGNUMERIC": "CAST({c} AS STRING)", "BIGDECIMAL": "CAST({c} AS STRING)",
             "GEOGRAPHY": "ST_ASTEXT({c})"}
-_NEEDS_TEXT = re.compile(r"\b(" + "|".join(_AS_TEXT) + r")\b")
 
 
 def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]:
@@ -201,16 +200,7 @@ def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]
     if not export or size is None or size < export["over_bytes"]:
         return None, []
     gb = f"{size / 1e9:.1f} GB"
-    as_text, nested = {}, []
-    for c in t.get("columns", []):
-        kind, repeated = str(c.get("type", "")).upper(), str(c.get("mode", "")).upper() == "REPEATED"
-        if kind in _AS_TEXT and not repeated:
-            as_text[c["name"]] = _AS_TEXT[kind].format(c="`" + c["name"].replace("`", "\\`") + "`")
-        elif _NEEDS_TEXT.search(_col_type(c)):
-            nested.append(c["name"])
-    if nested:  # ponytail: SELECT * REPLACE reaches top-level columns only; rebuild the STRUCT/ARRAY if one matters
-        return None, [f"{gb}, but column(s) {', '.join(nested)} hold JSON, TIME, BIGNUMERIC or GEOGRAPHY inside "
-                      "a STRUCT or ARRAY, which the export cannot convert: copied through the connector"]
+    as_text = {c["name"]: e for c in t.get("columns", []) if (e := _text_expr(c, _q(c["name"])))}
     rel = f"{export['prefix']}/{t['dataset']}/{t['name']}/"
     route = {"gcs": f"gs://{export['bucket']}/{rel}", "oci": f"oci://{export['oci_bucket']}@{export['namespace']}/{rel}"}
     how = "Parquet"
@@ -220,8 +210,26 @@ def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]
     return route, [f"export route ({gb}): {how} to {route['gcs']}, transferred to {route['oci']}, loaded into Delta"]
 
 
-def _col_type(c: dict) -> str:
-    return " ".join([str(c.get("type", ""))] + [_col_type(f) for f in c.get("fields", [])]).upper()
+def _q(name: str) -> str:
+    return "`" + name.replace("`", "\\`") + "`"
+
+
+def _text_expr(c: dict, ref: str, depth: int = 0) -> str | None:
+    """The GoogleSQL expression that exports column `c` (at `ref`) with its _AS_TEXT types as
+    text, at any depth of STRUCT and ARRAY; None when nothing in it needs converting. Struct
+    fields keep their order, which the notebook's positional CAST to the planned type relies on."""
+    if str(c.get("mode", "")).upper() == "REPEATED":
+        e, o = f"_gcp_aidp_e{depth}", f"_gcp_aidp_o{depth}"
+        inner = _text_expr({**c, "mode": "NULLABLE"}, e, depth + 1)
+        return inner and f"ARRAY(SELECT {inner} FROM UNNEST({ref}) AS {e} WITH OFFSET AS {o} ORDER BY {o})"
+    kind = str(c.get("type", "")).upper()
+    if kind in _AS_TEXT:
+        return _AS_TEXT[kind].format(c=ref)
+    fields = [(f, _text_expr(f, f"{ref}.{_q(f['name'])}", depth)) for f in c.get("fields", [])]
+    if not any(e for _, e in fields):
+        return None
+    body = ", ".join(f"{e or ref + '.' + _q(f['name'])} AS {_q(f['name'])}" for f, e in fields)
+    return f"IF({ref} IS NULL, NULL, STRUCT({body}))"  # STRUCT(NULL.a, ...) would be a non-null struct
 
 
 def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: dict | None = None) -> list[dict]:

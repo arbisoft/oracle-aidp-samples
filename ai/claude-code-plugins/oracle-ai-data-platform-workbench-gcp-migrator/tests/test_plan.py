@@ -305,16 +305,25 @@ class ExportRoute(unittest.TestCase):
         C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}  # noqa: E731
         t = {"dataset": "d", "name": "t", "num_bytes": 10**10,
              "columns": [C("id", "INTEGER"), C("j", "JSON"), C("tm", "TIME"), C("g", "GEOGRAPHY")]}
-        nested = dict(t, name="n", columns=[C("id", "INTEGER"), C("s", "RECORD", fields=[C("j", "JSON")])])
+        nested = dict(t, name="n", columns=[
+            C("id", "INTEGER"), C("plain", "RECORD", fields=[C("a", "STRING")]),
+            C("s", "RECORD", fields=[C("a", "STRING"), C("j", "JSON")]),
+            C("items", "RECORD", "REPEATED", fields=[C("sku", "STRING"), C("tms", "TIME", "REPEATED")])])
         repeated = dict(t, name="r", columns=[C("tags", "JSON", "REPEATED")])
         plan = build_plan(_manifest(datasets=[{"name": "d"}], tables=[t, nested, repeated]),
                           export_over_gb=1, export_bucket="b-1", geography="wkt")
         by = {a["source"]["name"]: a for a in plan["assets"] if a["source"]["type"] == "bq_table"}
         self.assertEqual(by["t"]["target"]["load_from"]["as_text"],
                          {"j": "TO_JSON_STRING(`j`)", "tm": "FORMAT_TIME('%H:%M:%E6S', `tm`)", "g": "ST_ASTEXT(`g`)"})
-        for name in ("n", "r"):
-            self.assertNotIn("load_from", by[name]["target"])
-            self.assertIn("inside a STRUCT or ARRAY", by[name]["notes"][-1])
+        self.assertEqual(by["n"]["target"]["load_from"]["as_text"], {  # plain struct: exported as is
+            "s": "IF(`s` IS NULL, NULL, STRUCT(`s`.`a` AS `a`, TO_JSON_STRING(`s`.`j`) AS `j`))",
+            "items": "ARRAY(SELECT IF(_gcp_aidp_e0 IS NULL, NULL, STRUCT(_gcp_aidp_e0.`sku` AS `sku`, "
+                     "ARRAY(SELECT FORMAT_TIME('%H:%M:%E6S', _gcp_aidp_e1) FROM UNNEST(_gcp_aidp_e0.`tms`) "
+                     "AS _gcp_aidp_e1 WITH OFFSET AS _gcp_aidp_o1 ORDER BY _gcp_aidp_o1) AS `tms`)) "
+                     "FROM UNNEST(`items`) AS _gcp_aidp_e0 WITH OFFSET AS _gcp_aidp_o0 ORDER BY _gcp_aidp_o0)"})
+        self.assertEqual(by["r"]["target"]["load_from"]["as_text"],
+                         {"tags": "ARRAY(SELECT TO_JSON_STRING(_gcp_aidp_e0) FROM UNNEST(`tags`) AS _gcp_aidp_e0 "
+                                  "WITH OFFSET AS _gcp_aidp_o0 ORDER BY _gcp_aidp_o0)"})
 
     def test_bucket_mapping_sends_files_and_paths_to_the_mapped_oci_bucket(self):
         from gcp_aidp.plan.planner import bucket_mapping

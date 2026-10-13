@@ -76,7 +76,7 @@ gcp-aidp export <migrated/> [--apply]
 - Only for a plan with `--export-over-gb`; the tables are those `migrate` recorded in
   `report.json` (`export`).
 - Dry run by default: each table, its folders, and `bq extract` (free) or `EXPORT DATA`
-  (billed; `JSON`, `TIME`, `BIGNUMERIC`, `GEOGRAPHY` as text).
+  (billed; `JSON`, `TIME`, `BIGNUMERIC`, `GEOGRAPHY` as text, also inside structs and arrays).
 - `--apply`: BigQuery jobs as `GCP_EXPORT_CREDENTIALS` (required), then a copy to OCI that
   reads with the read-only key and writes with `~/.oci/config` (`OCI_CLI_PROFILE`,
   `OCI_REGION`). Skips exported folders and files already in OCI with the same MD5; OCI

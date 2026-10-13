@@ -2,7 +2,7 @@
 
 Source: `gcp_aidp/plan/planner.py` (`_export_route`), `gcp_aidp/export/` (the `export`
 verb), `gcp_aidp/dataplane/stage_02_copy_dataset.py`. Tests: `tests/test_plan.py`
-(`ExportRoute`), `tests/test_export.py`, `tests/test_dataplane_runtime.py` (tests 5, 6).
+(`ExportRoute`), `tests/test_export.py`, `tests/test_dataplane_runtime.py` (tests 5–7).
 
 By default the copy notebook reads every table through the Spark BigQuery connector. For
 large tables the plan can send them another way: BigQuery writes the table as Parquet
@@ -113,8 +113,18 @@ those columns into text; the copy notebook casts the text to the planned type.
 | `TIMESTAMP`, `DATETIME` | as is | `TIMESTAMP` | the file holds them without a zone (UTC clock time); the notebook reads them in UTC |
 | everything else, `ARRAY` and `STRUCT` included | as is | the planned type | read natively |
 
-A table with one of the first four types **inside** a `STRUCT` or `ARRAY` stays on the
-connector, and `plan.md` says so: `SELECT * REPLACE` reaches top-level columns only.
+The same holds at any depth inside a `STRUCT` or `ARRAY`: the query rebuilds the column
+with only those fields turned into text, keeping every field's name and order and each
+array's element order, and a `NULL` struct stays `NULL`. For example
+`items ARRAY<STRUCT<sku STRING, attrs JSON>>` is exported as
+
+```sql
+ARRAY(SELECT IF(e IS NULL, NULL, STRUCT(e.`sku` AS `sku`, TO_JSON_STRING(e.`attrs`) AS `attrs`))
+      FROM UNNEST(`items`) AS e WITH OFFSET AS o ORDER BY o) AS `items`
+```
+
+and the notebook's `CAST` to the planned `ARRAY<STRUCT<…>>` turns the text back field by
+field.
 
 ## What is checked
 

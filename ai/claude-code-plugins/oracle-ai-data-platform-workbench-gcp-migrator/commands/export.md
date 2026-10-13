@@ -13,9 +13,9 @@ Only for a migration planned with `--export-over-gb`. `migrate` records the tabl
 
 Without `--apply` this is a dry run: it lists each table, its GCS and OCI folders, and
 whether it goes by `bq extract` (free) or an `EXPORT DATA` query (billed for the bytes it
-scans; it turns `JSON`, `TIME`, `BIGNUMERIC` and `GEOGRAPHY` into text). **Always run it
-that way first and show the user the list, including the billed tables.** Only after they
-have read it:
+scans; it turns `JSON`, `TIME`, `BIGNUMERIC` and `GEOGRAPHY` into text, also inside structs
+and arrays). **Always run it that way first and show the user the list, including the
+billed tables.** Only after they have read it:
 
 ```bash
 gcp-aidp export ./migrated --apply

@@ -36,8 +36,9 @@ All notable changes to this project are documented here. Format loosely follows
   (`GCP_EXPORT_CREDENTIALS`, new); the migration's key stays read-only and only reads the
   files back. `bq extract` (free) where it can; where a column cannot go into Parquet as
   Spark reads it (`JSON`, `TIME`, `BIGNUMERIC`, `GEOGRAPHY`), an `EXPORT DATA` query
-  (billed) exports it as text and the notebook casts it back; such a type inside a
-  `STRUCT` or `ARRAY` keeps the table on the connector. A re-run skips exported tables and
+  (billed) exports it as text and the notebook casts it back, at any depth inside a
+  `STRUCT` or `ARRAY` (the query rebuilds the column with field names, field order and
+  array order kept; checked in BigQuery on literal data). A re-run skips exported tables and
   files already in OCI. Loaded, not converted: `CONVERT TO DELTA` fails on AIDP's `oci://`
   paths. New optional extra `[oci]`. Live: the same export jobs and a copy to OCI on a
   billed project (7 tables, 5,629 files; `export` found them all identical by MD5); the
@@ -62,6 +63,12 @@ All notable changes to this project are documented here. Format loosely follows
   `references/schedule-translation.md`, where it was missing). New `PRIVACY.md`.
 - `J01_UNSCHEDULED` is now a flag, used only when a source schedule is not carried; a
   scheduled query whose job is blocked gets no schedule finding.
+
+### Fixed
+- A `TIME` inside a `STRUCT` or `ARRAY` copied through the connector landed as its
+  microsecond count (`"37800123456"`), and the table still passed as verified: the
+  conversion to `HH:MM:SS.ffffff` text applied to top-level columns only. `02_copy_dataset`
+  now converts it at any depth, keeping a `NULL` struct `NULL`.
 
 ## [0.2.0] - unreleased
 

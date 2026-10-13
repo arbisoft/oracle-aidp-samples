@@ -27,13 +27,44 @@ from gcp_aidp.dataplane.common import *  # noqa: F403 - inlined above in the not
 PROBLEMS = ("count_mismatch", "sum_mismatch", "type_drift", "failed")
 
 
-def column_expr(column: dict, source_type: str) -> str:
-    """The SELECT expression that turns the connector's column into the planned type."""
+def _time_text(expr: str) -> str:
+    # The connector may deliver TIME as microseconds since midnight.
+    return f"date_format(timestamp_micros({expr}), 'HH:mm:ss.SSSSSS')"
+
+
+def _nested_times(expr: str, src, tgt, depth: int = 0) -> str | None:
+    """`expr` with every bigint the plan wants as a string turned into TIME text, inside
+    STRUCTs and ARRAYs; None when there is none. In the planned types only a TIME maps a
+    connector bigint to STRING. Struct fields pair by position, as CAST pairs them."""
+    from pyspark.sql.types import ArrayType, LongType, StringType, StructType
+
+    if isinstance(src, LongType) and isinstance(tgt, StringType):
+        return _time_text(expr)
+    if isinstance(src, ArrayType) and isinstance(tgt, ArrayType):
+        x = f"_e{depth}"
+        inner = _nested_times(x, src.elementType, tgt.elementType, depth + 1)
+        return inner and f"transform({expr}, {x} -> {inner})"
+    if isinstance(src, StructType) and isinstance(tgt, StructType) and len(src.fields) == len(tgt.fields):
+        parts = [(f.name, _nested_times(f"{expr}.`{f.name.replace('`', '``')}`", f.dataType, g.dataType, depth))
+                 for f, g in zip(src.fields, tgt.fields)]
+        if not any(e for _, e in parts):
+            return None
+        body = ", ".join("'" + n.replace("\\", "\\\\").replace("'", "\\'") + "', "
+                         + (e or f"{expr}.`{n.replace('`', '``')}`") for n, e in parts)
+        return f"IF({expr} IS NULL, NULL, named_struct({body}))"  # named_struct of a NULL is not NULL
+    return None
+
+
+def column_expr(spark, column: dict, source) -> str:
+    """The SELECT expression that turns the connector's column (a StructField) into the planned type."""
     name = "`" + column["name"].replace("`", "``") + "`"
-    if column["source_type"] == "TIME" and source_type in ("bigint", "long"):
-        # The connector may deliver TIME as microseconds since midnight.
-        return f"date_format(timestamp_micros({name}), 'HH:mm:ss.SSSSSS') AS {name}"
-    return f"CAST({name} AS {column['target_type']}) AS {name}"
+    expr, simple = name, source.dataType.simpleString()
+    if column["source_type"] == "TIME" and simple in ("bigint", "long"):
+        return f"{_time_text(name)} AS {name}"
+    if "bigint" in simple and ("struct<" in simple or "array<" in simple):
+        target = spark.sql(f"SELECT CAST(NULL AS {column['target_type']}) AS c").schema[0].dataType
+        expr = _nested_times(name, source.dataType, target) or name
+    return f"CAST({expr} AS {column['target_type']}) AS {name}"
 
 
 def _dec(value):
@@ -67,7 +98,8 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
         return {"status": "skipped_nonempty" if src == existing else "count_mismatch",
                 "source_rows": src, "target_rows": existing, "copied": False}
 
-    exprs = [column_expr(c, source_types[c["name"]]) for c in t["columns"]]
+    fields = {f.name: f for f in source.schema.fields}
+    exprs = [column_expr(spark, c, fields[c["name"]]) for c in t["columns"]]
     ansi = spark.conf.get("spark.sql.ansi.enabled")
     spark.conf.set("spark.sql.ansi.enabled", "true")
     try:

@@ -78,9 +78,11 @@ python3 -m unittest tests.test_mcp_server
 and caveats on Spark, and checks the `QUALIFY` rewrite keeps the same rows.
 `test_dataplane_runtime` executes every cell of the generated `00`–`03` notebooks,
 with the BigQuery connector replaced by a local reader typed the way the connector
-delivered on AIDP; tests 5 and 6 load export-route tables from Parquet files written the
-way BigQuery's export wrote them. `test_export` (no extra dependencies) runs the `export`
-verb against fake BigQuery, Cloud Storage and OCI endpoints.
+delivered on AIDP; tests 5 to 7 load export-route tables from Parquet files written the
+way BigQuery's export wrote them, test 7 with text fields inside structs and arrays; test 8
+checks a `TIME` inside structs and arrays from the connector.
+`test_export` (no extra dependencies) runs the `export` verb against fake BigQuery, Cloud
+Storage and OCI endpoints.
 
 ## 4. The verbs by hand
 
