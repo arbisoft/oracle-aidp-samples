@@ -95,8 +95,8 @@ _DATE_LITERALS = set("-/:., _")
 
 # Left in place: Spark has the name or a near equivalent, but not the meaning.
 _FLAGGED_CALLS = {
-    "SAFE_CAST": ("G02_SAFE_CAST", "try_cast parses strings differently: Spark reads 'yes' and '1' as TRUE "
-                  "and '0x1A' as NULL, where BigQuery gives NULL, NULL and 26"),
+    "SAFE_CAST": ("G02_SAFE_CAST", ("try_cast parses strings differently: Spark reads 'yes' and '1' as TRUE "
+                                    "and '0x1A' as NULL, where BigQuery gives NULL, NULL and 26")),
     "GENERATE_ARRAY": ("G05_GENERATE_ARRAY", "sequence(5, 1) counts down; GENERATE_ARRAY(5, 1) is empty"),
     "PARSE_DATE": ("G08_PARSE_DATE", "to_date is strict about digit counts where PARSE_DATE is lenient"),
     "ARRAY_LENGTH": ("G09_ARRAY_LENGTH", "size(NULL) is -1 on Spark 3.5; ARRAY_LENGTH(NULL) is NULL"),
@@ -317,7 +317,7 @@ def _qualify_one(s: _Sql, q: int) -> tuple[str | None, Finding]:
     refs = {norm(s.t(k)) for k in range(q + 1, end) if s.t(k).kind in ("word", "ident")
             and not s.is_punct(k - 1, ".") and not s.is_punct(k + 1, "(")}
     if refs & aliases:
-        return blocked(f"its window condition uses the select alias {sorted(refs & aliases)[0]}")
+        return blocked(f"its window condition uses the select alias {min(refs & aliases)}")
     new = (f"SELECT {'DISTINCT ' if distinct else ''}_qualify_row.* FROM (SELECT struct({', '.join(items)}) "
            f"AS _qualify_row, ({cond}) AS _qualify_keep {s.text(frm, q)}) AS _qualified WHERE _qualify_keep")
     s.replace(sel, end, new)
@@ -403,7 +403,7 @@ def _cast_types(s: _Sql, out: list[Finding]) -> None:
             # A word followed by a word is a STRUCT field name (`STRUCT<x INT64>`), not a type.
             if not w or w in ("ARRAY", "STRUCT") or s.word(k + 1):
                 continue
-            target, rule, severity, detail = map_type_name(w)
+            target, _rule, severity, detail = map_type_name(w)
             if s.is_punct(k + 1, "(") and w in ("NUMERIC", "BIGNUMERIC"):
                 target, severity = "DECIMAL", "map" if w == "NUMERIC" else "flag"
             if severity == "block" or target is None:

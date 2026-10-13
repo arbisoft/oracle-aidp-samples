@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
 
-C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}  # noqa: E731
+C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}
 MANIFEST = {"project_id": "proj", "sources": {"bigquery": {"items": {
     "datasets": [{"name": "shop"}],
     "tables": [
@@ -66,7 +66,7 @@ SOURCE = {  # what the connector is expected to return, per table
     "proj.shop.type_carried": ("id long, payload string, local_time string, opening long, precise decimal(30,10)",
                                [(1, '{"a":1}', "2026-01-01T10:00:00", 37_800_123_456,
                                  Decimal("12345678901234567890.0123456789")),
-                                (2, '"x"', "2026-06-30T23:59:59.999999", 0, Decimal("-1"))]),
+                                (2, '"x"', "2026-06-30T23:59:59.999999", 0, Decimal(-1))]),
 }
 FAKE_KEY = base64.b64encode(json.dumps({"type": "service_account", "client_email": "reader@proj.iam",
                                         "private_key": "-----not-a-real-key-----"}).encode()).decode()
@@ -76,7 +76,7 @@ class _Params:
     def __init__(self, values):
         self.values = values
 
-    def getParameter(self, name, default):  # noqa: N802 - the AIDP API's spelling
+    def getParameter(self, name, default):  # the AIDP API's spelling
         return self.values.get(name, default)
 
 
@@ -118,12 +118,12 @@ class DataPlaneNotebooks(unittest.TestCase):
               "aidputils": type("A", (), {"secrets": secrets})}
         cells = [c for c in self.notebooks[stage]["cells"] if c["cell_type"] == "code"]
         for cell in cells[:-1]:
-            exec("".join(cell["source"]), ns)
+            exec("".join(cell["source"]), ns)  # noqa: S102 - runs the generated notebook
         source = self.source
         ns["bigquery_reader"] = lambda spark, credentials, project: (
             lambda fqn: spark.createDataFrame(source[fqn][1], source[fqn][0]))
         try:
-            exec("".join(cells[-1]["source"]), ns)
+            exec("".join(cells[-1]["source"]), ns)  # noqa: S102 - runs the generated notebook
         except RuntimeError as exc:
             if "problem(s)" not in str(exc):
                 raise
@@ -164,7 +164,7 @@ class DataPlaneNotebooks(unittest.TestCase):
         # The materialized view's job notebook (a task of the migration job) builds the snapshot.
         for cell in self.notebooks["refresh_shop_mv_daily"]["cells"]:
             if cell["cell_type"] == "code":
-                exec("".join(cell["source"]), {"spark": self.spark})
+                exec("".join(cell["source"]), {"spark": self.spark})  # noqa: S102 - runs the generated notebook
         self.assertEqual(self.spark.table("spark_catalog.shop.mv_daily").count(), 2)
         self.run_notebook("03_reconcile")
         verdicts = {o["object"]: o["verdict"] for o in self.report("MIGRATION_REPORT.json")["objects"]}
@@ -189,7 +189,7 @@ class DataPlaneNotebooks(unittest.TestCase):
 
         # The source grew since the copy: the target is not touched, and the mismatch is recorded.
         schema, rows = self.source["proj.shop.orders"]
-        self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal("1"))])
+        self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal(1))])
         self.assertEqual(self.run_notebook("02_copy_dataset", dataset="shop", tables="orders"), 1)
         self.assertEqual(self.report("copy_report_shop.json")["tables"]["shop.orders"]["status"], "count_mismatch")
 
@@ -207,7 +207,7 @@ class DataPlaneNotebooks(unittest.TestCase):
         self.assertEqual(self.spark.table("spark_catalog.shop.orders").count(), 4)
 
     def test_3_value_that_does_not_fit_fails_instead_of_null(self):
-        schema, rows = SOURCE["proj.shop.orders"]
+        schema, _rows = SOURCE["proj.shop.orders"]
         self.source["proj.shop.orders"] = (schema, [(9, "paid", dt.date(2026, 2, 1), Decimal("123456789.00"))])
         self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite")
         rec = self.report("copy_report_shop.json")["tables"]["shop.orders"]
@@ -251,7 +251,7 @@ class DataPlaneNotebooks(unittest.TestCase):
         self.assertEqual(rec["target_sums"]["total"], "100000010.50")
 
         # BigQuery moved on after the export: the load is not passed as verified.
-        self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal("1"))])
+        self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal(1))])
         self.assertEqual(self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite"), 1)
         rec = self.report("copy_report_shop.json")["tables"]["shop.orders"]
         self.assertEqual((rec["status"], rec["export_rows"], rec["source_rows"]), ("count_mismatch", 3, 4))

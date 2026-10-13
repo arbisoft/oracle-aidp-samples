@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from gcp_aidp.translate import ddl
-from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_text, rewrite_uri
+from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_text, rewrite_uri
 from gcp_aidp.translate.types import map_column
 
 T = {"catalog": "c", "schema": "s", "name": "t"}
@@ -100,13 +100,6 @@ class Gcs(unittest.TestCase):
         self.assertEqual(location_for(["gs://a/p/file.csv"]), ("gs://a/p/file.csv", ""))
         self.assertIsNone(location_for(["gs://a/*/x.csv"])[0])
         self.assertIsNone(location_for(["gs://a/1", "gs://a/2"])[0])
-
-    def test_GS03_TRANSFER(self):
-        script = build_transfer("src", "dst", "ns")
-        self.assertIn('rclone --config "$CONF" copy "gcssrc:src" "ocidest:dst"', script)
-        self.assertIn("bash src.transfer.sh", script)  # the file migrate writes, named after the GCS bucket
-        commands = [l for l in script.splitlines() if l.startswith("rclone")]
-        self.assertEqual([c.split()[3] for c in commands], ["mkdir", "copy"])  # never sync/delete/purge
 
 
 if __name__ == "__main__":

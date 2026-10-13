@@ -26,7 +26,15 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
     defaults to a client with the cloud-platform scope.
     """
     from gcp_aidp.gcp_client import CLOUD_PLATFORM_SCOPE, GcpClient
-    from gcp_aidp.inventory import bigquery, composer, dataflow, dataform, dataproc, gcs, vertex
+    from gcp_aidp.inventory import (
+        bigquery,
+        composer,
+        dataflow,
+        dataform,
+        dataproc,
+        gcs,
+        vertex,
+    )
 
     scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "composer": composer.scan,
                 "dataform": dataform.scan, "dataflow": dataflow.scan, "vertex": vertex.scan}
@@ -51,7 +59,7 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
                 data[source] = scanners[source](service_client, regions=regions)
             else:
                 data[source] = scanners[source](client, regions=regions)
-        except Exception as exc:  # recorded in the manifest; the plan shows it at the top
+        except Exception as exc:  # noqa: BLE001 - recorded in the manifest; the plan shows it at the top
             data[source] = {"summary": {"error": f"{type(exc).__name__}: {exc}"}, "items": {}}
             if log:
                 log(f"  {source}: failed: {exc}")
@@ -60,26 +68,43 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
             "scan_services": scan_services, "sources": data}
 
 
+STUDIO_ASSETS = ("notebooks", "saved_queries", "pipelines")
+
+
 def _studio_notebooks(bq: dict, client, log=None) -> None:
-    """Fill the BigQuery source's notebooks from the Dataform API, or say why not."""
-    from gcp_aidp.gcp_client import GcpError
+    """Fill the BigQuery source's notebooks, saved queries and pipelines from the Dataform API.
+
+    A failure here marks those three not scanned; the rest of the BigQuery scan is kept."""
     from gcp_aidp.inventory import studio_notebooks
     summary = bq["summary"]
     try:
-        notebooks, warnings = studio_notebooks.scan(client)
-    except GcpError as exc:
-        summary.setdefault("not_scanned", {})["notebooks"] = (f"Dataform API refused ({exc}): grant Dataform "
-                                                               "Viewer, or export them and pass --notebooks-dir")
+        assets, warnings = studio_notebooks.scan(client)
+    except Exception as exc:  # noqa: BLE001 - a refusal or a timeout
+        not_scanned = summary.setdefault("not_scanned", {})
+        for what in STUDIO_ASSETS:
+            if what == "saved_queries" and bq["items"]["saved_queries"]:
+                continue  # read from --saved-queries-dir
+            not_scanned[what] = (f"Dataform API failed ({type(exc).__name__}: {exc}): grant Dataform Viewer or "
+                                 "run again; or export notebooks and saved queries and pass --notebooks-dir "
+                                 "and --saved-queries-dir")
         return
-    bq["items"]["notebooks"] = notebooks
-    summary["notebooks"] = len(notebooks)
-    (summary.get("not_scanned") or {}).pop("notebooks", None)
+    # A query also given in --saved-queries-dir keeps that copy.
+    known = {q["name"] for q in bq["items"]["saved_queries"]}
+    assets["saved_queries"] = bq["items"]["saved_queries"] + [q for q in assets["saved_queries"]
+                                                             if q["name"] not in known]
+    for what in STUDIO_ASSETS:
+        bq["items"][what] = assets[what]
+        summary[what] = len(assets[what])
+        (summary.get("not_scanned") or {}).pop(what, None)
     if not summary.get("not_scanned"):
         summary.pop("not_scanned", None)
     if warnings:
         summary.setdefault("warnings", []).extend(warnings)
     if log:
-        log(f"    {len(notebooks)} BigQuery Studio notebook(s) read through Dataform")
+        names = {"notebooks": ("notebook", "notebooks"), "saved_queries": ("saved query", "saved queries"),
+                 "pipelines": ("pipeline", "pipelines")}
+        log("    read through Dataform: " + ", ".join(f"{len(assets[w])} {names[w][len(assets[w]) != 1]}"
+                                                     for w in STUDIO_ASSETS))
 
 
 def write_manifest(manifest: dict, out_path: str | Path) -> Path:

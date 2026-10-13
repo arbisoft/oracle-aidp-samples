@@ -7,7 +7,7 @@ Reading each table's column list (no rows) is the connector check.
 The type table is the check the plan asks for: confirm each type mapping
 against what the connector returns.
 """
-from gcp_aidp.dataplane.common import *  # noqa: F403 - inlined above in the notebook
+from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 
 def main(spark, params: dict, plan: dict) -> list[str]:
@@ -30,7 +30,7 @@ def main(spark, params: dict, plan: dict) -> list[str]:
     for t in plan["tables"]:  # export route: the files must be on OCI before the copy
         if t.get("files"):
             try:
-                spark.read.parquet(t["files"]).schema
+                _ = spark.read.parquet(t["files"]).schema  # reading the footers is the check
                 print(f"export files {t['dataset']}.{t['name']}: readable at {t['files']}")
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{t['dataset']}.{t['name']}: export files not readable at {t['files']} "

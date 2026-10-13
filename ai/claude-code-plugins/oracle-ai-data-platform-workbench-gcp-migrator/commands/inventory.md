@@ -14,6 +14,6 @@ If no output path is given, add `-o inv.json`. If the user has no service accoun
 read or print the key.
 
 After it runs, summarize the counts per source and **everything recorded as not
-scanned** (saved queries without `--saved-queries-dir`, refused API calls, services
+scanned** (notebooks and saved queries without `--scan-services`, refused API calls, services
 skipped without `--scan-services`). A gap is unknown, not zero. Then point the user to
 `/oracle-ai-data-platform-workbench-gcp-migrator:plan`.

@@ -3,8 +3,9 @@
 Exposes the four offline migration verbs as MCP tools so any MCP-compatible
 client (OpenAI Codex, Cursor, Claude Desktop, etc.) gets the same workflow the
 Claude Code plugin does. Each tool shells out to the already-tested
-`gcp_aidp.cli` pipeline rather than reimplementing logic. `export`, `publish`
-and `run` write to Google Cloud, OCI or an AIDP workspace, so they stay CLI-only.
+`gcp_aidp.cli` pipeline rather than reimplementing logic. `export`, `transfer`,
+`publish` and `run` write to Google Cloud, OCI or an AIDP workspace, so they stay
+CLI-only.
 
 Run:   gcp-aidp-mcp                 (after `pip install -e '.[mcp]'`)
    or:  python3 -m gcp_aidp.mcp_server
@@ -13,7 +14,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Optional
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -33,6 +33,7 @@ def _run(args: list[str], *, timeout: float = 300.0) -> str:
             [sys.executable, "-m", "gcp_aidp.cli", *args],
             capture_output=True,
             text=True,
+            check=False,
             timeout=timeout,
             # Detach the child's stdin from the MCP stdio transport pipe, or the
             # spawned CLI blocks forever at interpreter start on Windows.
@@ -49,12 +50,12 @@ def _run(args: list[str], *, timeout: float = 300.0) -> str:
 
 @mcp.tool()
 def inventory(
-    project: Optional[str] = None,
-    fixture: Optional[str] = None,
-    sources: Optional[str] = None,
-    regions: Optional[str] = None,
-    saved_queries_dir: Optional[str] = None,
-    notebooks_dir: Optional[str] = None,
+    project: str | None = None,
+    fixture: str | None = None,
+    sources: str | None = None,
+    regions: str | None = None,
+    saved_queries_dir: str | None = None,
+    notebooks_dir: str | None = None,
     scan_services: bool = False,
     output: str = "inv.json",
 ) -> str:
@@ -93,14 +94,14 @@ def inventory(
 def plan(
     manifest: str,
     output: str = "plan.json",
-    namespace: Optional[str] = None,
-    catalog: Optional[str] = None,
-    datasets: Optional[str] = None,
+    namespace: str | None = None,
+    catalog: str | None = None,
+    datasets: str | None = None,
     bignumeric: str = "block",
     geography: str = "block",
-    export_over_gb: Optional[float] = None,
-    export_bucket: Optional[str] = None,
-    bucket_mapping: Optional[str] = None,
+    export_over_gb: float | None = None,
+    export_bucket: str | None = None,
+    bucket_mapping: str | None = None,
 ) -> str:
     """Turn an inventory manifest into an AIDP migration plan and approval document.
 

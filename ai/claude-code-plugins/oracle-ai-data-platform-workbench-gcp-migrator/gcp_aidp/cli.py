@@ -1,4 +1,4 @@
-"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, export, publish, run."""
+"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, export, transfer, publish, run."""
 from __future__ import annotations
 
 import argparse
@@ -57,7 +57,7 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
         client = GcpClient(args.project or os.environ.get("GCP_PROJECT", ""))
         try:
-            client.session  # fail fast on missing google-auth or credentials, before any scan
+            _ = client.session  # fail fast on missing google-auth or credentials, before any scan
         except Exception as exc:  # noqa: BLE001 - reported, never echoing a credential
             print(f"error: cannot authenticate to Google Cloud: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 2
@@ -92,7 +92,12 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    from gcp_aidp.plan import build_plan, summarize_plan, write_plan, write_plan_markdown
+    from gcp_aidp.plan import (
+        build_plan,
+        summarize_plan,
+        write_plan,
+        write_plan_markdown,
+    )
 
     manifest = _load_json_object(Path(args.manifest), "manifest")
     ns = args.namespace or os.environ.get("OCI_NAMESPACE") or "<your-oci-namespace>"
@@ -187,11 +192,12 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    from gcp_aidp.export import ExportError, export
+    from gcp_aidp._copy import CopyError
+    from gcp_aidp.export import export
 
     try:
         result = export(args.out_dir, apply=args.apply, log=lambda line: print(line, flush=True))
-    except ExportError as exc:
+    except CopyError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     spec = result["spec"]
@@ -208,6 +214,28 @@ def cmd_export(args: argparse.Namespace) -> int:
         return 0
     bad = [k for k, r in result["tables"].items() if r["export"] == "failed" or r.get("copy_failures")]
     print(f"\nexport: {len(result['tables']) - len(bad)}/{len(result['tables'])} table(s) on OCI; "
+          f"{len(bad)} failed. Report: {result['report']}")
+    return 1 if bad else 0
+
+
+def cmd_transfer(args: argparse.Namespace) -> int:
+    from gcp_aidp._copy import CopyError
+    from gcp_aidp.transfer import transfer
+
+    print("transfer: " + ("copying" if args.apply else "dry run, nothing is sent; listing") +
+          " Cloud Storage → OCI (read-only key on Google Cloud, ~/.oci/config on OCI)", flush=True)
+    try:
+        result = transfer(args.out_dir, apply=args.apply, buckets=args.bucket or None,
+                          log=lambda line: print(line, flush=True))
+    except CopyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    bad = [b for b, r in result["buckets"].items() if r.get("error") or r.get("copy_failures")]
+    if not args.apply:
+        print("Re-run with --apply to copy (never deletes; files already in OCI are skipped)."
+              + (f" {len(bad)} bucket(s) could not be read." if bad else ""))
+        return 1 if bad else 0
+    print(f"\ntransfer: {len(result['buckets']) - len(bad)}/{len(result['buckets'])} bucket(s) on OCI; "
           f"{len(bad)} failed. Report: {result['report']}")
     return 1 if bad else 0
 
@@ -305,6 +333,13 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("out_dir", help="the directory `migrate` wrote")
     ex.add_argument("--apply", action="store_true", help="actually export and copy; without it nothing is sent")
     ex.set_defaults(func=cmd_export)
+
+    tr = sub.add_parser("transfer", help="copy the Cloud Storage buckets to OCI; a dry run until --apply")
+    tr.add_argument("out_dir", help="the directory `migrate` wrote")
+    tr.add_argument("--apply", action="store_true", help="actually copy; without it nothing is sent")
+    tr.add_argument("--bucket", action="append", metavar="GCS_BUCKET",
+                    help="only this bucket (repeat for more); default: every bucket in the migration")
+    tr.set_defaults(func=cmd_transfer)
 
     rn = sub.add_parser("run", help="start a published job on AIDP and follow it to the end")
     _aidp_args(rn)

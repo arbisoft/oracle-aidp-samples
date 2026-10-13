@@ -25,7 +25,7 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | Materialized view snapshot | ✅ built | live, inside the migration job; the refresh job on its own offline only |
 | Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
 | Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | live for Cloud Scheduler: four scheduler jobs on a billed project inventoried, two carried onto published AIDP jobs and read back PAUSED as planned, one flagged, one reported; no run started. Scheduled queries offline only. Not yet checked that a schedule fires on time once turned on |
-| External tables, rclone transfer jobs | ✅ built | offline only |
+| External tables, `transfer` (buckets → OCI) | ✅ built | `transfer` shares `export`'s copy, run live; `transfer` itself offline only |
 | Export route for large tables (`plan --export-over-gb`, `export`, the copy notebook loading Parquet) | ✅ built | live on a billed project: 7 tables (20 M rows, `JSON`, `TIME`, `BIGNUMERIC`, arrays, structs) exported by the same BigQuery jobs and copied to OCI, 5,629 files, which `export` then matched by MD5; the generated notebooks loaded them on local Spark 3.5 with the real BigQuery connector, all verified. Not yet: `export --apply` with an export account end to end, and the load on an AIDP cluster |
 | `verify` | ✅ built | offline (it reads the report only) |
 | `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |

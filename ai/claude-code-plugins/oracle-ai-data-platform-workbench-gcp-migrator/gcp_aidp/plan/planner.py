@@ -336,12 +336,12 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: di
     return out
 
 
-# A GCS bucket name, as Google allows it. The name is written into the rclone
-# transfer job, a shell script, so anything else in a manifest fails closed.
+# A GCS bucket name, as Google allows it. The name goes into API calls and file
+# paths, so anything else in a manifest fails closed.
 _BUCKET = re.compile(r"[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]")
 
 
-# An OCI bucket name, as OCI allows it; it is written into the same shell script.
+# An OCI bucket name, as OCI allows it.
 _OCI_BUCKET = re.compile(r"[A-Za-z0-9._-]{1,256}")
 
 
@@ -402,9 +402,9 @@ def _scheduled(row: dict, kind: str, schedules: list[dict], used: set[str]) -> t
     if not mine:
         return row, []
     if len(mine) > 1:
-        return {**row, "schedules": mine}, [f"{len(mine)} Cloud Scheduler jobs start it "
-                                            f"({', '.join(sc['name'] for sc in mine)}); an AIDP job holds one "
-                                            "schedule, so none is carried"]
+        return {**row, "schedules": mine}, [(f"{len(mine)} Cloud Scheduler jobs start it "
+                                             f"({', '.join(sc['name'] for sc in mine)}); an AIDP job holds one "
+                                             "schedule, so none is carried")]
     sc = mine[0]
     return {**row, "schedules": mine}, [f"Cloud Scheduler job {sc['name']} ({sc.get('state') or '?'}): "
                                         + _schedule_note(sc["schedule"], *from_unix_cron(sc["schedule"]),
@@ -435,8 +435,8 @@ def _dataproc_definition(row: dict, collection: str) -> dict:
 def _cluster_sizing(c: dict) -> list[str]:
     """The source cluster's size, to size the AIDP cluster from (no AIDP shape is invented)."""
     if c.get("worker_count"):
-        notes = [f"{c['worker_count']} workers {c.get('machine_type', '?')}, master "
-                 f"{c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
+        notes = [(f"{c['worker_count']} workers {c.get('machine_type', '?')}, master "
+                  f"{c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}")]
     else:  # a single-node cluster has no workers: the master runs everything
         notes = [f"single node: master {c.get('master_machine_type', '?')}, image {c.get('image_version', '?')}"]
     if c.get("secondary_worker_count"):

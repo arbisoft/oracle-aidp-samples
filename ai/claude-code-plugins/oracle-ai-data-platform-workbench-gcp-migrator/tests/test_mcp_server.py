@@ -15,7 +15,7 @@ HAS_MCP = importlib.util.find_spec("mcp") is not None
 
 def run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, "-m", "gcp_aidp.cli", *args],
-                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
 
 
 @unittest.skipUnless(HAS_MCP, "install the mcp extra to enable the MCP parity tests")

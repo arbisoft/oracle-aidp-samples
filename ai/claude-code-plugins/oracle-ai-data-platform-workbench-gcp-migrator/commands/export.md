@@ -24,8 +24,8 @@ gcp-aidp export ./migrated --apply
 `--apply` needs:
 
 - `GCP_EXPORT_CREDENTIALS`: the key file of the **export** service account (BigQuery Job
-  User and Data Viewer on the project, Storage Object Creator on the staging bucket). The
-  migration's read-only key is never used to write; the command refuses without this one.
+  User and Data Viewer on the project, Storage Object Creator and Storage Object Viewer on
+  the staging bucket). The migration's read-only key is never used to write; the command refuses without this one.
 - `GOOGLE_APPLICATION_CREDENTIALS` (the read-only key) with Storage Object Viewer on the
   bucket: the copy reads the files with it.
 - `~/.oci/config` (`OCI_CLI_PROFILE`, `OCI_REGION`) that can write to the OCI bucket, and

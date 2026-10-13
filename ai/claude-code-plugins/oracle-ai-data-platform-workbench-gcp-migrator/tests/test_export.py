@@ -12,11 +12,12 @@ from types import SimpleNamespace
 from unittest import mock
 
 import gcp_aidp.export as export_mod
+from gcp_aidp import _copy
 from gcp_aidp.export import ExportError, export
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
 
-C = lambda name, type_: {"name": name, "type": type_, "mode": "NULLABLE"}  # noqa: E731
+C = lambda name, type_: {"name": name, "type": type_, "mode": "NULLABLE"}
 MANIFEST = {"project_id": "proj-1", "sources": {"bigquery": {"items": {
     "datasets": [{"name": "shop"}],
     "tables": [{"dataset": "shop", "name": "orders", "num_bytes": 10, "columns": [C("id", "INTEGER")]},
@@ -86,12 +87,18 @@ class FakeOci:
         self.puts: list[str] = []
 
     def list_objects(self, namespace, bucket, prefix, fields, start, limit):
-        objs = [SimpleNamespace(name=n, md5=m) for n, (_, m) in sorted(self.objects.items()) if n.startswith(prefix)]
+        objs = [SimpleNamespace(name=n, md5=m, size=len(d)) for n, (d, m) in sorted(self.objects.items())
+                if n.startswith(prefix)]
         return SimpleNamespace(data=SimpleNamespace(objects=objs, next_start_with=None))
 
     def put_object(self, namespace, bucket, name, body, content_length, content_md5=None):
+        # The SDK's requests takes anything with a fileno() for a file and reads its .mode:
+        # a raw download stream has the first and not the second (seen live).
+        assert not hasattr(body, "fileno") or hasattr(body, "mode"), "a raw stream fails in the OCI SDK"
         data = body.read()
-        assert len(data) == content_length and md5(data) == content_md5  # what OCI checks on upload
+        assert len(data) == content_length  # what OCI checks on upload
+        assert content_md5 is None or md5(data) == content_md5
+        content_md5 = content_md5 or md5(data)  # OCI computes it when none is sent
         self.objects[name] = (data, content_md5)
         self.puts.append(name)
 
@@ -143,6 +150,31 @@ class Export(unittest.TestCase):
         self.assertEqual(google.posted, [])
         self.assertEqual(oci.puts, [])
         self.assertEqual({r["export"] for r in again["tables"].values()}, {"already_exported"})
+
+    def test_uploads_wait_long_enough_on_a_slow_line(self):
+        try:
+            import oci
+        except ImportError:
+            self.skipTest("needs the OCI SDK (pip install -e '.[oci]')")
+        with mock.patch.object(oci.config, "from_file", return_value={"region": "r"}), \
+                mock.patch.object(oci.object_storage, "ObjectStorageClient") as client:
+            _copy.oci_client()
+        self.assertEqual(client.call_args.kwargs["timeout"], (10, 600))
+
+    def test_a_long_copy_shows_its_progress(self):
+        google, lines = FakeGoogle(), []
+
+        class SlowOci(FakeOci):
+            def put_object(self, *a, **kw):
+                import time
+                time.sleep(0.05)
+                super().put_object(*a, **kw)
+        with mock.patch.object(_copy, "PROGRESS_SECONDS", 0.01):
+            export(self.out, apply=True, writer=google, reader=google, oci_client=SlowOci(), log=lines.append)
+        progress = [line for line in lines if line.lstrip().startswith("copying")]
+        self.assertTrue(progress, lines)
+        self.assertRegex(progress[-1], r"\d+/\d+ file\(s\), \d+/\d+ MB, [\d.]+ MB/s")
+        self.assertIn("1.0 MB/s, about 10 min left", _copy.progress_line("d.t", 1, 2, 10e6, 610e6, 10))
 
     def test_a_failed_export_is_reported_and_not_copied(self):
         google, oci = FakeGoogle(fail_tables={"events"}), FakeOci()

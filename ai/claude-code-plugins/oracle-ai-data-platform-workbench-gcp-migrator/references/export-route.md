@@ -66,9 +66,10 @@ suggests: in our test, two 7 MB tables made 5,575 files.
 - the migration's **read-only** account (`GOOGLE_APPLICATION_CREDENTIALS`) also needs
   **Storage Object Viewer** on the staging bucket: `export` reads the files with it;
 - an **export** account (`GCP_EXPORT_CREDENTIALS`) with **BigQuery Job User** and
-  **BigQuery Data Viewer** on the project, and **Storage Object Creator** on the staging
-  bucket. It is the only identity that writes on Google Cloud, and only `export --apply`
-  uses it.
+  **BigQuery Data Viewer** on the project, and **Storage Object Creator** and **Storage
+  Object Viewer** on the staging bucket (`EXPORT DATA` lists the folder before writing;
+  seen live, 2026-10-13). It is the only identity that writes on Google Cloud, and only
+  `export --apply` uses it; neither role lets it delete or overwrite a file.
 
 The staging bucket must be in the tables' location, or a multi-region holding it.
 

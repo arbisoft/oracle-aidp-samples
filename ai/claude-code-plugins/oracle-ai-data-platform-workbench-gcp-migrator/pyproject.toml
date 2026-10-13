@@ -32,3 +32,8 @@ include = ["gcp_aidp*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "gcp_aidp.__version__" }
+
+[tool.ruff.lint]
+# A JSON input of the wrong shape is a bad value, not a programming error: the CLI
+# reports ValueError as a clean "error: ..." line, so these checks keep it.
+ignore = ["TRY004"]

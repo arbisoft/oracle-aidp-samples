@@ -1,9 +1,9 @@
 """01 structure: create the schemas and empty Delta tables, read each back, then the views.
 
 Every statement is CREATE ... IF NOT EXISTS: nothing is dropped or replaced.
-External tables are created only with `external-tables` = True, once the
-transfer job has copied their files to OCI Object Storage: Spark reads the
-files to infer their schema.
+External tables are created only with `external-tables` = True, once
+`gcp-aidp transfer --apply` has copied their files to OCI Object Storage: Spark
+reads the files to infer their schema.
 `IF NOT EXISTS` does nothing on a table that is already there, so each table is
 read back and compared with the plan, column by column and in order: a stale
 layout is `type_drift`, never certified as created. Blocked tables are not
@@ -12,7 +12,7 @@ created; reconcile lists them.
 Statuses: created, already_existed, type_drift, failed, dry_run (tables);
 created, already_existed, failed, dry_run (external tables, views).
 """
-from gcp_aidp.dataplane.common import *  # noqa: F403 - inlined above in the notebook
+from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 
 def _layout_drift(spark, t) -> list[str]:

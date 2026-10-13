@@ -1,6 +1,6 @@
 ---
 name: gcp-aidp-migrator
-description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, migrate Dataproc jobs or BigQuery Studio notebooks, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, export (large tables), publish and run."
+description: "Migrate a Google Cloud data stack (BigQuery datasets, tables, views, materialized views, scheduled and saved queries, Cloud Storage, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks) to Oracle AI Data Platform (AIDP). Use when the user wants to inventory a GCP or BigQuery estate, plan a migration to AIDP, translate GoogleSQL to Spark SQL or BigQuery types to Delta, migrate Dataproc jobs or BigQuery Studio notebooks, copy BigQuery tables into AIDP, verify a migration's output, or publish and run it in an AIDP workspace. Wraps the `gcp-aidp` CLI, with the verbs inventory, plan, migrate, verify, export (large tables), transfer (Cloud Storage buckets), publish and run."
 ---
 
 # Oracle AIDP migrator for Google Cloud
@@ -40,6 +40,8 @@ Every verb also runs as `python3 -m gcp_aidp.cli <verb>`.
   `GCP_EXPORT_CREDENTIALS` (a separate export service account; the read-only key never
   writes) and `pip install -e '.[gcp,oci]'`. Steps and permissions:
   `references/export-route.md`.
+- **Cloud Storage buckets** go to OCI with `gcp-aidp transfer` (read-only on Google
+  Cloud, never deletes, the OCI bucket must exist), before the external tables are created.
 
 Never read, print or copy the service account key, and never echo a credential back.
 
@@ -55,12 +57,13 @@ gcp-aidp plan      inv.json -o plan.json --catalog <aidp-catalog> --namespace <o
 gcp-aidp migrate   plan.json -o migrated                 # local files only
 gcp-aidp verify    migrated
 gcp-aidp export    migrated                               # only with plan --export-over-gb; dry run, then --apply
+gcp-aidp transfer  migrated                               # only with Cloud Storage buckets; dry run, then --apply
 gcp-aidp publish   migrated                               # dry run; then --apply
 gcp-aidp run       migrated                               # runs the published migration job
 ```
 
 `migrate` has no `--demo` flag: it always writes locally and contacts nothing. Only
-`export --apply`, `publish --apply` and `run` write anywhere.
+`export --apply`, `transfer --apply`, `publish --apply` and `run` write anywhere.
 
 ## How to help the user
 
@@ -75,9 +78,11 @@ gcp-aidp run       migrated                               # runs the published m
 4. **Read the reports.** After `migrate`, open `migrated/report.md` and surface every
    flag, caveat and block; they need a human. After `verify`, give the PASS / REVIEW /
    SKIP / FAIL counts.
-5. **Export, then publish, each only after a dry run the user has read.** `export` only if
-   the plan routed tables (`X01_EXPORT_ROUTE`); its dry run names the tables that use a
-   billed `EXPORT DATA` query. See the `/export` and `/publish` commands.
+5. **Export, transfer, then publish, each only after a dry run the user has read.**
+   `export` only if the plan routed tables (`X01_EXPORT_ROUTE`); its dry run names the
+   tables that use a billed `EXPORT DATA` query. `transfer` only if the plan has buckets
+   (`GS03_TRANSFER`); its dry run gives the files and MB per bucket, and the user may skip
+   some with `--bucket`. See the `/export`, `/transfer` and `/publish` commands.
 6. **After `run`**, point the user to `MIGRATION_REPORT.md` in `/Workspace/<prefix>/reports/`
    and explain each verdict.
 
@@ -93,7 +98,7 @@ gcp-aidp run       migrated                               # runs the published m
 | Materialized view | → | a table built on AIDP, plus an unscheduled refresh job |
 | Scheduled query (no destination) | → | an AIDP job, its schedule as Quartz and PAUSED (unscheduled if it does not translate exactly) |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
-| Cloud Storage bucket | → | an rclone transfer job to Object Storage |
+| Cloud Storage bucket | → | copied to Object Storage by `transfer` |
 | SQL UDF | → | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
 | Dataproc PySpark job or batch | → | a job with a Python task running the translated script, its arguments as on Dataproc; a Cloud Scheduler schedule carried PAUSED |
 | Dataproc Spark SQL job | → | a job running its statements in a notebook |

@@ -49,9 +49,9 @@ def table_layout(table: dict, columns: list[dict]) -> dict:
 
     if part and not field:
         findings.append(("D03_INGESTION_TIME", "flag",
-                         f"{part.get('type', 'DAY')} ingestion-time partitioning: no column carries "
-                         "_PARTITIONTIME, so the target is not partitioned and queries filtering on it "
-                         "need rewriting"))
+                         (f"{part.get('type', 'DAY')} ingestion-time partitioning: no column carries "
+                          "_PARTITIONTIME, so the target is not partitioned and queries filtering on it "
+                          "need rewriting")))
     elif field and not clustering and part.get("type") == "DAY" and source_types.get(field) == "DATE":
         partitioned_by = [field]
         findings.append(("D01_PARTITION", "rewrite", f"DAY partitioning on DATE {field} → PARTITIONED BY ({field})"))
@@ -124,18 +124,18 @@ def create_external_table(target: dict, fmt: str | None, location: str) -> tuple
     if spark_fmt is None:
         return None, [("D05_EXTERNAL_FORMAT", "block", f"external format {fmt!r} has no Spark data source")]
     findings = [("D05_EXTERNAL_FORMAT", "rewrite", f"{fmt} → USING {spark_fmt}"),
-                ("D05_EXTERNAL_FORMAT", "caveat", "no column list in the manifest: Spark infers the schema "
-                 "from the files; compare it with BigQuery's")]
+                ("D05_EXTERNAL_FORMAT", "caveat", ("no column list in the manifest: Spark infers the schema "
+                                                   "from the files; compare it with BigQuery's"))]
     if spark_fmt == "CSV":
-        findings.append(("D05_EXTERNAL_FORMAT", "flag", "CSV options (header rows, delimiter, quote) are not "
-                         "in the manifest; Spark's defaults apply"))
+        findings.append(("D05_EXTERNAL_FORMAT", "flag", ("CSV options (header rows, delimiter, quote) are not "
+                                                         "in the manifest; Spark's defaults apply")))
     sql = f"CREATE TABLE IF NOT EXISTS {fqn(target)}\nUSING {spark_fmt}\nLOCATION {sql_string(location)}"
     return sql, findings
 
 
 def create_function(target: dict, arguments: list[dict], return_type: str | None, body: str) -> tuple[str, list[tuple[str, str, str]]]:
-    findings = [("D06_SQL_FUNCTION", "flag", "Apache Spark 3.5 cannot parse CREATE FUNCTION ... RETURN; "
-                 "inline the expression in its callers or register a Python UDF")]
+    findings = [("D06_SQL_FUNCTION", "flag", ("Apache Spark 3.5 cannot parse CREATE FUNCTION ... RETURN; "
+                                              "inline the expression in its callers or register a Python UDF"))]
     args = []
     for a in arguments:
         t, _, sev, detail = map_type_name(a.get("type", ""))

@@ -78,10 +78,9 @@ def from_bigquery(expr: str, next_run: str | None = None) -> tuple[str | None, s
     s = " ".join((expr or "").lower().split())
     if m := re.fullmatch(rf"every day {_TIME}", s):
         return f"0 {int(m[2])} {int(m[1])} * * ?", ""
-    if m := re.fullmatch(rf"every ([a-z]+(?:,[a-z]+)*) {_TIME}", s):
-        if all(d in _NAMES for d in m[1].split(",")):
-            days = sorted({_NAMES[d] for d in m[1].split(",")}, key=_DAYS.index)
-            return f"0 {int(m[3])} {int(m[2])} ? * {','.join(days)}", ""
+    if (m := re.fullmatch(rf"every ([a-z]+(?:,[a-z]+)*) {_TIME}", s)) and all(d in _NAMES for d in m[1].split(",")):
+        days = sorted({_NAMES[d] for d in m[1].split(",")}, key=_DAYS.index)
+        return f"0 {int(m[3])} {int(m[2])} ? * {','.join(days)}", ""
     if m := re.fullmatch(rf"(\d{{1,2}}(?:,\d{{1,2}})*) of month {_TIME}", s):
         return f"0 {int(m[3])} {int(m[2])} {','.join(str(int(d)) for d in m[1].split(','))} * ?", ""
     if m := re.fullmatch(r"every (\d+) (minutes|hours)", s):

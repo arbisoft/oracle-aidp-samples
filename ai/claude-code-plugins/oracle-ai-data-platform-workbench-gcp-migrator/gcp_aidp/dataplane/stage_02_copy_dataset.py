@@ -22,7 +22,7 @@ not across tables. A per-table failure is recorded and the run continues.
 """
 from decimal import Decimal
 
-from gcp_aidp.dataplane.common import *  # noqa: F403 - inlined above in the notebook
+from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 PROBLEMS = ("count_mismatch", "sum_mismatch", "type_drift", "failed")
 
@@ -32,7 +32,7 @@ def _time_text(expr: str) -> str:
     return f"date_format(timestamp_micros({expr}), 'HH:mm:ss.SSSSSS')"
 
 
-def _nested_times(expr: str, src, tgt, depth: int = 0) -> str | None:
+def _nested_times(expr: str, src, tgt, depth: int = 0) -> "str | None":
     """`expr` with every bigint the plan wants as a string turned into TIME text, inside
     STRUCTs and ARRAYs; None when there is none. In the planned types only a TIME maps a
     connector bigint to STRING. Struct fields pair by position, as CAST pairs them."""

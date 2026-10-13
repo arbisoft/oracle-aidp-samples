@@ -25,7 +25,7 @@ secret.
    records that collection as *not scanned*, so add those only if you need them. For
    Dataproc add **Dataproc Viewer**, plus **Storage Object Viewer** on the buckets holding
    job code, and **Cloud Scheduler Viewer** to carry the schedules that start Dataproc
-   jobs; for BigQuery Studio notebooks add **Dataform Viewer**. All are read-only; run
+   jobs; for BigQuery Studio notebooks, saved queries and pipelines add **Dataform Viewer**. All are read-only; run
    the inventory with `--scan-services` for these.
 2. Create a JSON key for it (**IAM → Service accounts → Keys → Add key**). Keep it
    outside the repository, `chmod 600` it, and
@@ -46,13 +46,25 @@ secret.
    `base64 -i key.json | tr -d '\n' | pbcopy`, paste it, then `pbcopy < /dev/null`.
 4. **A migration identity** (recommended). The plugin acts with whatever the OCI
    profile can do, so give it its own user rather than an administrator's key:
-   an OCI user in a group `aidp-migrators`, with one policy statement
+   an OCI user in a group `aidp-migrators` (OCI Console, home region: **Identity &
+   Security → Domains → Default → User management**), with an API key as its OCI
+   profile (`OCI_CLI_PROFILE`), and one policy statement (**Identity & Security →
+   Policies**, in the AIDP compartment)
 
    ```
    allow group <domain>/aidp-migrators to use ai-data-platforms in compartment id <aidp_compartment_ocid>
    ```
 
-   and, inside the workbench, only these AIDP permissions:
+   For the [export route](../references/export-route.md), `export --apply` uploads
+   the files to OCI with this same profile, so add, in the bucket's compartment:
+
+   ```
+   allow group <domain>/aidp-migrators to manage objects in compartment id <bucket_compartment_ocid> where target.bucket.name='<oci_bucket>'
+   allow group <domain>/aidp-migrators to read buckets in compartment id <bucket_compartment_ocid> where target.bucket.name='<oci_bucket>'
+   ```
+
+   Then, inside the workbench, create a role (**Roles**), add the user to it, and
+   give the role only these AIDP permissions, each on the object's **Permissions** tab:
 
    | Object | Permission | For |
    |---|---|---|
@@ -99,7 +111,7 @@ secret.
 
 ## Run a migration
 
-After [Setup](#setup-live-use), seven commands, in order. Stop at each check before
+After [Setup](#setup-live-use), seven commands, in order (plus `export` and `transfer` when the plan needs them). Stop at each check before
 the next one: the plan, the report and the dry run are where a person decides. In
 Claude Code you can instead ask for the migration in plain words; the
 `gcp-aidp-migrator` skill runs the same steps and stops at the same checks.
@@ -143,6 +155,13 @@ Claude Code you can instead ask for the migration in plain words; the
    `gcp-aidp export migrated --apply`, which exports the large tables to Parquet and
    copies them to OCI. It must finish before step 7. See
    [`references/export-route.md`](../references/export-route.md).
+
+   **Only if the plan has Cloud Storage buckets:** run `gcp-aidp transfer migrated` (a
+   dry run: per bucket, the files and MB still to copy), then
+   `gcp-aidp transfer migrated --apply [--bucket <gcs-bucket>]`, which copies them to
+   OCI, read-only on Google Cloud and never deleting. External tables read these files:
+   after step 7, create them by running the `01_structure` notebook with
+   `external-tables` = True.
 
 5. **Publish, dry run first:**
 
@@ -197,9 +216,9 @@ Storage (an object read, at most 1 MB), so it can be translated; JARs are record
 read. Dataproc's run history is grouped into job definitions: one per main file and
 cluster, with its newest arguments and a run count. No query runs, and no bytes are billed. Row counts
 come from table metadata. Anything the scan could not read is recorded as *not
-scanned* and shown at the top of the plan: saved queries (pass
-`--saved-queries-dir` instead), BigQuery Studio notebooks without `--scan-services` (or
-export them as `.ipynb` and pass `--notebooks-dir`), BigQuery pipelines,
+scanned* and shown at the top of the plan: BigQuery Studio notebooks, saved queries and
+pipelines without `--scan-services` (or export notebooks and saved queries as `.ipynb` and
+`.sql` files and pass `--notebooks-dir` and `--saved-queries-dir`),
 and any API call that was refused. A service whose API is disabled is recorded
 as having nothing to migrate.
 
@@ -232,7 +251,7 @@ as Spark does) halt the plan. The planner does not pick a winner.
 
 `migrate` writes one reviewable artifact per asset (schemas, tables, views,
 materialized views, external tables, functions, saved and scheduled queries,
-rclone transfer jobs) plus `report.json` and `report.md`. It writes files
+bucket transfer specs) plus `report.json` and `report.md`. It writes files
 locally only; nothing reaches AIDP before `publish --apply`. `verify` labels
 every asset:
 
@@ -273,6 +292,12 @@ files to OCI, and `02_copy_dataset` loads them with the same checks and casts, c
 the count against the files and against BigQuery. The export runs as a separate export
 service account (`GCP_EXPORT_CREDENTIALS`); the migration's key stays read-only. Steps,
 permissions and the per-type rules: [`references/export-route.md`](../references/export-route.md).
+
+**Cloud Storage buckets.** `gcp-aidp transfer --apply` copies each bucket in the plan to
+its OCI bucket (`--bucket-mapping`), with the same copy as `export`: read with the
+read-only key, written with `~/.oci/config`, every file's MD5 checked by OCI, a file
+already there skipped, nothing deleted. The OCI bucket must exist. A dry run (without
+`--apply`) lists what is still to copy.
 
 > **Consistency.** Each table is copied at its own moment. If the source keeps
 > changing during the copy, the target is consistent per table but not across

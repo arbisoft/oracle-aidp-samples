@@ -43,18 +43,24 @@ All notable changes to this project are documented here. Format loosely follows
   paths. New optional extra `[oci]`. Live: the same export jobs and a copy to OCI on a
   billed project (7 tables, 5,629 files; `export` found them all identical by MD5); the
   generated notebooks then loaded the real files on local Spark 3.5 with the real BigQuery
-  connector, all verified. Not yet: `export --apply` with an export account end to end,
-  and the load on an AIDP cluster. Runbook: `references/export-route.md`.
-- rclone transfer scripts for inventoried buckets take their OCI side from `.env`:
-  `OCI_REGION`, `OCI_COMPARTMENT_ID` (new keys) and `OCI_CLI_PROFILE`, checked before they
-  are written into the script. An unset one stays a placeholder and is flagged
-  (`GS03_TRANSFER`). Transfers run 64 files at a time.
+  connector, all verified. Then `export --apply` end to end with an export account (one
+  table, 50 files, 770 MB, `EXPORT DATA`). Not yet: the load on an AIDP cluster. Runbook: `references/export-route.md`.
+- `transfer`: Cloud Storage buckets → OCI Object Storage, replacing the generated rclone
+  script (the one step without a dry run). `gcp-aidp transfer migrated` is a dry run (per
+  bucket, the files and MB still to copy); `--apply` copies; `--bucket` picks buckets. It is
+  the copy `export` uses: read-only on Google Cloud, every MD5 checked by OCI, files already
+  there skipped, nothing deleted, a composite object compared by size, a report in
+  `transfers/transfer_report.json`. `migrate` writes `transfers/<bucket>.transfer.json`
+  (`GS03_TRANSFER`); rclone and `OCI_COMPARTMENT_ID` are no longer needed.
 - `plan --bucket-mapping <json>`: the OCI bucket each GCS bucket lands in
   (`{"buckets": {"<gcs>": {"oci_bucket": "<oci>"}}, "default_namespace": "<ns>"}`), for
-  transfer jobs, the export route and every `gs://` → `oci://` rewrite. Unmapped buckets
+  `transfer`, the export route and every `gs://` → `oci://` rewrite. Unmapped buckets
   keep their names, as before.
 
 ### Changed
+- A saved query is also published: `migrate` writes it as a notebook (its translated SQL,
+  the result shown with `.toPandas()`) and `publish` uploads it to the workspace, with no
+  job, so it opens and runs there as it did in BigQuery. It used to stay a local `.sql` file.
 - README restructured as a short landing page for someone arriving through Claude Code:
   what it does, when to use it, install, prerequisites, skill index, engine, privacy.
   The setup, the step-by-step migration and the safety posture moved, unchanged, to
@@ -76,12 +82,30 @@ All notable changes to this project are documented here. Format loosely follows
   microsecond count (`"37800123456"`), and the table still passed as verified: the
   conversion to `HH:MM:SS.ffffff` text applied to top-level columns only. `02_copy_dataset`
   now converts it at any depth, keeping a `NULL` struct `NULL`.
-- The rclone transfer script told you to run `<oci-bucket>.transfer.sh`; the file is
-  `<gcs-bucket>.transfer.sh`, which differs under `--bucket-mapping`.
 - `export`: after a failed BigQuery job, or one still running at the time limit, the
   message said to run `export` again, which would have copied a partial folder (the
   row-count check would have caught it). It now says to delete the folder, or to wait
   for the named job to finish.
+- Saved queries were never read from Google: the inventory said they have no read API and
+  asked for `.sql` files. BigQuery Studio stores each one in Dataform, like a notebook, so
+  `inventory --scan-services` now reads them there (Dataform Viewer); `--saved-queries-dir`
+  stays for anything it cannot read.
+- BigQuery pipelines were reported as having no read API, and a pipeline was counted as a
+  Dataform repository. They are Dataform repositories labelled `bigquery-workflow`:
+  `--scan-services` now lists them under BigQuery, and the plan reports them for 0.3.
+- One Dataform call timing out while reading notebooks discarded the whole BigQuery
+  inventory. It now marks only notebooks, saved queries and pipelines as not scanned, and
+  every Google API call is tried once more after a timeout or a dropped connection.
+- The export account's documented roles missed **Storage Object Viewer** on the staging
+  bucket: `EXPORT DATA` lists the folder before writing, so with Storage Object Creator
+  alone the export failed with `storage.objects.list` denied.
+- `export --apply` could not copy any file to OCI: each GCS download was handed to
+  `put_object` as a raw stream, which the OCI SDK takes for a file and fails on
+  (`'HTTPResponse' object has no attribute 'mode'`). It now passes a read-only body
+  with the file's length.
+- `export --apply` shows the copy's progress every 10 seconds (files, MB, MB/s, time left),
+  and waits up to 600 s on an upload: on a slow uplink with many files in flight, the
+  OCI SDK's 60 s default dropped one.
 
 ## [0.2.0] - unreleased
 

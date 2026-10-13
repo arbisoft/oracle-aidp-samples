@@ -73,7 +73,7 @@ def _magic(header: str, body: str, ctx: Context) -> tuple[str, list[Finding]]:
     return (f"{var} = {expr}" if var else expr), out
 
 
-_SQL_CELL = re.compile(r'_sql = """(?P<sql>.*?)"""', re.S)
+_SQL_CELL = re.compile(r'_sql = """(?P<sql>.*?)"""', re.DOTALL)
 
 
 def _sql_cell(source: str, ctx: Context) -> tuple[str, list[Finding]]:

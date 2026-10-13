@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import ast
 import unittest
+from typing import ClassVar
 
 from gcp_aidp.translate.googlesql_to_spark import Context
-from gcp_aidp.translate.pyspark_to_aidp import spark_properties, translate_pyspark, translate_spark_sql
+from gcp_aidp.translate.pyspark_to_aidp import (
+    spark_properties,
+    translate_pyspark,
+    translate_spark_sql,
+)
 
 CTX = Context(project="proj", relations={("sales", "orders"): ("cat", "sales", "orders")},
               buckets={"landing": "landing-oci"}, namespace="ns")
@@ -108,7 +113,7 @@ class Flags(unittest.TestCase):
 
 
 class Properties(unittest.TestCase):
-    PROPS = {"spark.sql.shuffle.partitions": "400", "spark.executor.memory": "8g",
+    PROPS: ClassVar[dict[str, str]] = {"spark.sql.shuffle.partitions": "400", "spark.executor.memory": "8g",
              "spark.dataproc.driver.compute.tier": "premium", "spark.sql.extensions": "x.Ext", "spark.jars": "a.jar"}
 
     def test_P11_SPARK_PROPERTY(self):

@@ -32,7 +32,7 @@ EXPECTED = {
     "bigquery.routine.finance.close_month": "SKIP",     # reported
     "bigquery.saved_query.Churn_scoring": "REVIEW",     # blocked: ML.PREDICT
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
-    "gcs.bucket.northwind-landing": "REVIEW",           # transfer prerequisites
+    "gcs.bucket.northwind-landing": "PASS",             # copied by `transfer`; nothing to set up
     "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
     "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
     "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
@@ -60,6 +60,17 @@ class Demo(unittest.TestCase):
             self.assertEqual(got[aid], verdict, aid)
         self.assertEqual(self.result["summary"]["FAIL"], 0)
         self.assertEqual(sum(self.result["summary"].values()), len(self.report["results"]))
+
+    def test_a_saved_query_is_published_as_a_notebook_that_shows_its_result(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        top = by_id["bigquery.saved_query.Top_products_last_30_days"]
+        self.assertIn(top["notebook"], self.report["notebooks"])  # publish uploads it; no job runs it
+        self.assertFalse(any(t.get("notebook") == top["notebook"] for j in self.report["jobs"] for t in j["tasks"]))
+        cells = json.loads((self.out / top["notebook"]).read_text())["cells"]
+        code = "".join(cells[-1]["source"])
+        self.assertTrue(code.startswith("spark.sql(") and code.endswith(".toPandas()"), code)
+        ast.parse(code)
+        self.assertNotIn("notebook", by_id["bigquery.saved_query.Churn_scoring"])  # blocked: stays local
 
     def test_blocked_artifacts_are_not_runnable(self):
         for r in self.report["results"]:

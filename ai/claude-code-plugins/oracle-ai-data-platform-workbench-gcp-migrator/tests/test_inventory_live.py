@@ -348,5 +348,31 @@ class LiveInventory(unittest.TestCase):
         self.assertNotIn("saved_queries", bq["summary"]["not_scanned"])
 
 
+class Retry(unittest.TestCase):
+    def test_a_timed_out_get_is_tried_once_more(self):
+        try:
+            import requests
+        except ImportError:
+            self.skipTest("needs requests (pip install -e '.[gcp]')")
+
+        class Session:
+            def __init__(self, failures):
+                self.failures, self.calls = failures, 0
+
+            def get(self, url, params=None, timeout=None):
+                self.calls += 1
+                if self.calls <= self.failures:
+                    raise requests.ReadTimeout("read timed out")
+                return type("R", (), {"status_code": 200, "content": b"{}", "json": lambda s: {"ok": 1}})()
+
+        client = GcpClient(P)
+        client._session = Session(1)
+        self.assertEqual((client.get("u"), client._session.calls), ({"ok": 1}, 2))
+        client._session = Session(2)
+        with self.assertRaises(requests.ReadTimeout):
+            client.get("u")
+        self.assertEqual(client._session.calls, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

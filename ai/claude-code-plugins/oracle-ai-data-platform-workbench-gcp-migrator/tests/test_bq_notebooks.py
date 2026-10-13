@@ -112,7 +112,11 @@ class StudioNotebooks(unittest.TestCase):
                 f"{self.BASE}/us-east1/repositories": {"repositories": [
                     repo("nb1", {"single-file-asset-type": "notebook"}),
                     repo("q1", {"single-file-asset-type": "sql"}),
+                    repo("ds1", {"single-file-asset-type": "data_canvas"}),
+                    repo("pl1", {"bigquery-workflow": "preview"}),
                     repo("df1", None)]},
+                f"{self.BASE}/us-east1/repositories/q1:readFile?path=content.sql":
+                    {"contents": base64.b64encode(b"SELECT 2").decode()},
                 f"{self.BASE}/us-east1/repositories/nb1:readFile?path=content.ipynb":
                     {"contents": base64.b64encode(json.dumps(nb).encode()).decode()},
             }
@@ -126,12 +130,40 @@ class StudioNotebooks(unittest.TestCase):
         def pages(self, url, key, params=None):
             return self.get(url, params).get(key, [])
 
-    def test_notebooks_are_read_in_any_region_without_outputs(self):
+    def test_notebooks_and_saved_queries_are_read_in_any_region_without_outputs(self):
         from gcp_aidp.inventory import studio_notebooks
-        notebooks, warnings = studio_notebooks.scan(self.Fake())
-        self.assertEqual(notebooks, [{"id": "nb1", "name": "repo nb1", "region": "us-east1",
-                                      "cells": [{"cell_type": "code", "source": "%%bigquery x\nSELECT 1"}]}])
-        self.assertEqual(warnings, ["BigQuery Studio sql asset repo q1 (us-east1) is not read"])
+        assets, warnings = studio_notebooks.scan(self.Fake())
+        self.assertEqual(assets["notebooks"], [{"id": "nb1", "name": "repo nb1", "region": "us-east1",
+                                                "cells": [{"cell_type": "code", "source": "%%bigquery x\nSELECT 1"}]}])
+        self.assertEqual(assets["saved_queries"], [{"name": "repo q1", "query": "SELECT 2"}])
+        self.assertEqual(assets["pipelines"], [{"id": "pl1", "name": "repo pl1", "region": "us-east1"}])
+        self.assertEqual(warnings, ["BigQuery Studio data_canvas asset repo ds1 (us-east1) is not read"])
+
+    def test_saved_queries_join_the_manifest_and_a_folder_copy_wins(self):
+        from gcp_aidp.inventory.manifest import _studio_notebooks
+        bq = {"summary": {"not_scanned": {"saved_queries": "x", "pipelines": "y"}},
+              "items": {"notebooks": [], "saved_queries": [{"name": "repo q1", "query": "SELECT 'folder'"}]}}
+        _studio_notebooks(bq, self.Fake())
+        self.assertEqual(bq["items"]["saved_queries"], [{"name": "repo q1", "query": "SELECT 'folder'"}])
+        self.assertNotIn("not_scanned", bq["summary"])
+        self.assertEqual([bq["summary"][k] for k in ("notebooks", "saved_queries", "pipelines")], [1, 1, 1])
+
+    def test_a_dataform_timeout_costs_those_assets_not_the_bigquery_scan(self):
+        try:
+            import requests
+        except ImportError:
+            self.skipTest("needs requests (pip install -e '.[gcp]')")
+        from gcp_aidp.inventory.manifest import _studio_notebooks
+
+        class TimingOut(self.Fake):
+            def get(self, url, params=None):
+                raise requests.ReadTimeout("read timed out")
+        bq = {"summary": {"tables": 1, "not_scanned": {"pipelines": "y"}},
+              "items": {"tables": [{"name": "t"}], "notebooks": [], "saved_queries": [], "pipelines": []}}
+        _studio_notebooks(bq, TimingOut())
+        self.assertEqual(bq["items"]["tables"], [{"name": "t"}])
+        self.assertEqual(sorted(bq["summary"]["not_scanned"]), ["notebooks", "pipelines", "saved_queries"])
+        self.assertIn("ReadTimeout", bq["summary"]["not_scanned"]["notebooks"])
 
     def test_the_dataform_source_does_not_count_them(self):
         from gcp_aidp.inventory import dataform
@@ -139,7 +171,7 @@ class StudioNotebooks(unittest.TestCase):
         fake.responses = {"https://dataform.googleapis.com/v1beta1/projects/my-project-123456/locations/us-east1"
                           "/repositories": fake.responses[f"{fake.BASE}/us-east1/repositories"]}
         names = [r["name"] for r in dataform.scan(fake, regions=("us-east1",))["items"]["repositories"]]
-        self.assertEqual(names, ["df1"])
+        self.assertEqual(names, ["df1"])  # not the notebook, saved query, data canvas or pipeline
 
 
 class Migrate(unittest.TestCase):

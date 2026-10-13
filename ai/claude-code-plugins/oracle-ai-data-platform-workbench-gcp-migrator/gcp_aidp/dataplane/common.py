@@ -27,7 +27,7 @@ def resolve_params(params: dict) -> dict:
     for name in params:
         for spelling in dict.fromkeys((name, name.replace("-", "_"))):
             try:
-                value = oidlUtils.parameters.getParameter(spelling, _MISS)  # noqa: F821
+                value = oidlUtils.parameters.getParameter(spelling, _MISS)
             except NameError:  # outside AIDP: no oidlUtils
                 value = _MISS
             if value != _MISS and value is not None and str(value).strip() != "":
@@ -148,7 +148,7 @@ def table_exists(spark, fqn: str) -> bool:
     try:
         spark.sql(f"DESCRIBE TABLE {fqn}").collect()
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if "TABLE_OR_VIEW_NOT_FOUND" in str(exc) or "not found" in str(exc).lower():
             return False
         raise  # "could not look" is never recorded as "absent"

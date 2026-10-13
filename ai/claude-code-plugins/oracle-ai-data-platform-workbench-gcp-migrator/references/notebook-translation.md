@@ -6,8 +6,10 @@ Source: `gcp_aidp/translate/notebook_to_aidp.py`. Every rule has a test in
 `inventory --scan-services` reads BigQuery Studio notebooks through the Dataform API (GET
 calls; the service account needs Dataform Viewer). A notebook is a Dataform repository
 labelled `single-file-asset-type: notebook` holding `content.ipynb`; it lands in whatever
-region BigQuery Studio chose, so every Dataform location is listed. Any other single-file
-asset is named in a warning. Without `--scan-services`, export notebooks as `.ipynb` and pass
+region BigQuery Studio chose, so every Dataform location is listed. Saved queries are read
+the same way (`single-file-asset-type: sql`, holding `content.sql`), and BigQuery pipelines
+(`bigquery-workflow`) are listed by name for the plan to report. Any other single-file asset
+is named in a warning. Without `--scan-services`, export notebooks as `.ipynb` and pass
 `--notebooks-dir <folder>`. Either way the inventory keeps each cell's source and drops
 its outputs, which can hold query results. A notebook listed without content stays in the
 plan as `SKIP`, with the reason.

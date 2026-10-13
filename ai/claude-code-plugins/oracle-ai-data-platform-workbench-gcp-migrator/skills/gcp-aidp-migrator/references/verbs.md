@@ -11,7 +11,8 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 ```
 - `--project`: default `$GCP_PROJECT`. Auth: `GOOGLE_APPLICATION_CREDENTIALS`.
 - `--sources`: subset of `bigquery,gcs,dataproc,composer,dataform,dataflow,vertex`.
-- `--saved-queries-dir`: saved queries exported as `.sql` files; there is no API for them.
+- `--saved-queries-dir`: saved queries exported as `.sql` files, when `--scan-services` cannot read them
+  through Dataform.
 - BigQuery Studio notebooks: read through the Dataform API with `--scan-services` (the service
   account needs Dataform Viewer), in every Dataform location. `--notebooks-dir` reads an
   export of `.ipynb` instead. Cell sources are kept, outputs dropped.
@@ -41,7 +42,7 @@ gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
   export route: `gcp-aidp export` (below) puts them on OCI as Parquet, and the copy
   notebook loads them. Steps, permissions and per-type rules:
   `references/export-route.md` at the plugin root.
-- `--bucket-mapping`: which OCI bucket each GCS bucket lands in, for the transfer jobs,
+- `--bucket-mapping`: which OCI bucket each GCS bucket lands in, for `transfer`,
   the export route and every `gs://` → `oci://` rewrite. An unmapped bucket keeps its
   name. One namespace per plan (`--namespace`, else `default_namespace`):
   ```json
@@ -81,6 +82,21 @@ gcp-aidp export <migrated/> [--apply]
   reads with the read-only key and writes with `~/.oci/config` (`OCI_CLI_PROFILE`,
   `OCI_REGION`). Skips exported folders and files already in OCI with the same MD5; OCI
   checks each MD5. Writes `exports/export_report.json`; exits 1 if a table failed.
+- Needs `pip install -e '.[gcp,oci]'`.
+
+## transfer: Cloud Storage buckets → OCI
+```
+gcp-aidp transfer <migrated/> [--apply] [--bucket GCS_BUCKET ...]
+```
+- One `transfers/<bucket>.transfer.json` per bucket in the plan, written by `migrate`
+  (`GS03_TRANSFER`): which OCI bucket it lands in (`--bucket-mapping`).
+- Dry run by default: per bucket, files and MB still to copy, and how many are already in
+  OCI. It reads both sides and sends nothing.
+- `--apply`: reads with the read-only key, writes with `~/.oci/config` (`OCI_CLI_PROFILE`,
+  `OCI_REGION`); the same copy as `export` (MD5 checked by OCI, files already there
+  skipped, never deletes; a composite object compared by size). The OCI bucket must
+  exist. `--bucket` limits it to the named buckets. Writes
+  `transfers/transfer_report.json`; exits 1 if a bucket failed.
 - Needs `pip install -e '.[gcp,oci]'`.
 
 ## publish: upload to AIDP (dry run by default)

@@ -31,9 +31,9 @@ optional layers that guide the workflow and help with setup and review.
 | View | → | Spark SQL view |
 | Materialized view | → | a table built on AIDP from the migrated tables, plus an unscheduled refresh job |
 | Scheduled query without a destination table | → | an AIDP job with its schedule translated to Quartz and PAUSED, or unscheduled and flagged when it does not translate exactly |
-| Saved query | → | a Spark SQL file |
+| Saved query | → | a Spark SQL file, and a notebook in the workspace that runs it and shows the result (no job) |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
-| Cloud Storage bucket | → | an rclone transfer job to OCI Object Storage |
+| Cloud Storage bucket | → | copied to OCI Object Storage by `transfer` (read-only on Google Cloud, never deletes) |
 | Procedures, JavaScript and table functions, BigQuery ML, access policies | → | reported with an effort band, not translated |
 | BigQuery Studio notebook | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
 | Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | AIDP jobs: a Python task, a SQL notebook, or one job per template; a Cloud Scheduler schedule that starts one is carried, PAUSED |
@@ -49,6 +49,7 @@ plan        your approval document  ──→ plan.json + plan.md   (MIGRATE / R
 migrate     local, contacts nothing ──→ migrated/             (DDL, Spark SQL, jobs, copy notebooks, report)
 verify      PASS / REVIEW / SKIP / FAIL per asset
 export      large tables only: BigQuery → Parquet in GCS → OCI     (dry run until --apply)
+transfer    Cloud Storage buckets → OCI Object Storage             (dry run until --apply)
 publish     notebooks + jobs ─────────────────────────────────→  /Workspace/<prefix>/  (dry run until --apply)
 run         the migration job ────────────────────────────────→  structure → copy → reconcile
                                                                   MIGRATION_REPORT.md
@@ -60,7 +61,7 @@ run         the migration job ────────────────�
   no LLM in the translation path.
 - **Read-only against Google Cloud** except `export --apply`, which writes only to your
   staging bucket through a separate export service account.
-- **A person decides at each step.** The plan is an approval document; `export` and
+- **A person decides at each step.** The plan is an approval document; `export`, `transfer` and
   `publish` are dry runs until `--apply`; jobs are created unscheduled or PAUSED.
 - **Verified copies.** Each table's row count is checked against BigQuery, and
   `03_reconcile` writes one verdict per object.
@@ -154,13 +155,14 @@ checks every item without printing a secret.
 | `…:migrate` | Translated artifacts and copy notebooks, locally. |
 | `…:verify` | PASS / REVIEW / SKIP / FAIL per asset. |
 | `…:export` | Large tables to Parquet in GCS and on to OCI (dry run first). |
+| `…:transfer` | Cloud Storage buckets to OCI Object Storage (dry run first). |
 | `…:publish` | Notebooks and jobs into the AIDP workspace (dry run first). |
 | `…:run` | Starts the migration job and follows it. |
 
 ### MCP server
 `inventory`, `plan`, `migrate` and `verify` are also exposed as an MCP server
 (`gcp-aidp-mcp`, in `.mcp.json`) for Codex, Cursor or any MCP client; run
-`pip install -e '.[mcp]'` (Python 3.10+) first. `export`, `publish` and `run` write, so
+`pip install -e '.[mcp]'` (Python 3.10+) first. `export`, `transfer`, `publish` and `run` write, so
 they are CLI-only.
 
 ### References (loaded on demand)
@@ -188,6 +190,7 @@ gcp-aidp plan      inv.json --catalog <catalog> [--datasets a,b] -o plan.json
 gcp-aidp migrate   plan.json -o migrated                                   # local only
 gcp-aidp verify    migrated
 gcp-aidp export    migrated [--apply]       # only with plan --export-over-gb
+gcp-aidp transfer  migrated [--apply]       # Cloud Storage buckets → OCI
 gcp-aidp publish   migrated [--apply]
 gcp-aidp run       migrated
 ```

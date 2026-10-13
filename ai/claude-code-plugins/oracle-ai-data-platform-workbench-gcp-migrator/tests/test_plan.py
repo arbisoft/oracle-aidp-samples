@@ -220,7 +220,7 @@ class FailClosed(unittest.TestCase):
         self.assertEqual(build_plan(m)["scan_errors"], {"gcs": "403 storage.buckets.list"})
 
     def test_bucket_name_that_is_not_a_gcs_name_fails_closed(self):
-        # The name goes into a shell script (the rclone transfer job).
+        # The name goes into API calls and file paths.
         manifest = {"project_id": "p", "sources": {"gcs": {"items": {"buckets": [{"name": "b$(touch x)"}]}}}}
         with self.assertRaisesRegex(ValueError, "bucket"):
             build_plan(manifest)
@@ -235,6 +235,7 @@ class FailClosed(unittest.TestCase):
 class Cli(unittest.TestCase):
     def test_live_inventory_fails_fast_without_credentials(self):
         from unittest import mock
+
         from gcp_aidp.gcp_client import GcpClient
 
         with tempfile.TemporaryDirectory() as tmp, redirect_stderr(io.StringIO()) as err, \
@@ -302,7 +303,7 @@ class ExportRoute(unittest.TestCase):
         self.assertEqual((extract["sourceTable"]["tableId"], extract["destinationFormat"]), ("orders", "PARQUET"))
 
     def test_text_types_and_nesting(self):
-        C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}  # noqa: E731
+        C = lambda name, type_, mode="NULLABLE", **kw: {"name": name, "type": type_, "mode": mode, **kw}
         t = {"dataset": "d", "name": "t", "num_bytes": 10**10,
              "columns": [C("id", "INTEGER"), C("j", "JSON"), C("tm", "TIME"), C("g", "GEOGRAPHY")]}
         nested = dict(t, name="n", columns=[
@@ -348,33 +349,23 @@ class ExportRoute(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 bucket_mapping(bad, None)
 
-    def test_transfer_scripts_take_oci_settings_from_env(self):
-        from unittest import mock
-
+    def test_GS03_TRANSFER_writes_a_spec_for_the_transfer_verb(self):
         from gcp_aidp.migrate import migrate
 
-        plan = build_plan(DEMO, oci_namespace="ns")
-        env = {"OCI_REGION": "us-phoenix-1", "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..aaaexample",
-               "OCI_CLI_PROFILE": "gcp_migration"}
-        with tempfile.TemporaryDirectory() as d, mock.patch.dict("os.environ", env):
-            report = migrate(plan, out_dir=Path(d))
+        with tempfile.TemporaryDirectory() as d:
+            report = migrate(build_plan(DEMO, oci_namespace="ns"), out_dir=Path(d))
             bucket = next(r for r in report["results"] if r["kind"] == "gcs_bucket")
-            transfer = (Path(d) / bucket["output_path"]).read_text()
-        self.assertIn("region = us-phoenix-1\ncompartment = ocid1.compartment.oc1..aaaexample", transfer)
-        self.assertIn("config_profile = gcp_migration", transfer)
-        self.assertNotIn("set OCI_REGION", " ".join(f["detail"] for f in bucket["findings"]))
+            spec = json.loads((Path(d) / bucket["output_path"]).read_text())
+        self.assertTrue(bucket["output_path"].endswith(".transfer.json"))
+        self.assertEqual(spec["gcs"], f"gs://{spec['gcs_bucket']}/")
+        self.assertEqual(spec["oci"], f"oci://{spec['oci_bucket']}@ns/")
+        self.assertEqual(bucket["status"], "ok")
+        self.assertIn("gcp-aidp transfer --apply", bucket["findings"][0]["detail"])
 
-        with tempfile.TemporaryDirectory() as d, mock.patch.dict("os.environ", {k: "" for k in env}):
-            report = migrate(plan, out_dir=Path(d))
+        with tempfile.TemporaryDirectory() as d:  # no namespace: the copy cannot be addressed
+            report = migrate(build_plan(DEMO), out_dir=Path(d))
             bucket = next(r for r in report["results"] if r["kind"] == "gcs_bucket")
-            transfer = (Path(d) / bucket["output_path"]).read_text()
-        self.assertIn("region = <oci-region>", transfer)
-        self.assertIn("set OCI_REGION and OCI_COMPARTMENT_ID in .env", " ".join(f["detail"] for f in bucket["findings"]))
-
-        from gcp_aidp.translate.gcs_to_oci import build_transfer
-        for bad in ({"oci_region": "us-ashburn-1\n[x]"}, {"compartment_ocid": "nope"}, {"oci_profile": "a b"}):
-            with self.assertRaises(ValueError, msg=bad):
-                build_transfer("b", "b", "ns", **bad)
+        self.assertEqual(bucket["status"], "needs_manual_review")
 
     def test_flags_go_together_and_are_checked(self):
         for kw in ({"export_over_gb": 1}, {"export_bucket": "b-1"},

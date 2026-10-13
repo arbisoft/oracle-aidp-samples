@@ -25,7 +25,12 @@ import ast
 import re
 
 from gcp_aidp.translate.gcs_to_oci import rewrite_text
-from gcp_aidp.translate.googlesql_to_spark import Context, Finding, Result, names_and_paths
+from gcp_aidp.translate.googlesql_to_spark import (
+    Context,
+    Finding,
+    Result,
+    names_and_paths,
+)
 from gcp_aidp.translate.types import quote_ident
 
 # Options a plain table read may carry and still be exactly a table read on AIDP.

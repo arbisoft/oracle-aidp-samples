@@ -18,18 +18,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 from typing import Callable
 
 from gcp_aidp._atomic import write_text_atomic
-from gcp_aidp.dataplane import data_plan, write_jobs, write_notebooks
+from gcp_aidp.dataplane import data_plan, sql_notebook, write_jobs, write_notebooks
 from gcp_aidp.translate import ddl
-from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_uri
+from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_uri
 from gcp_aidp.translate.googlesql_to_spark import Context, Result, statements, translate
 from gcp_aidp.translate.notebook_to_aidp import translate_notebook
-from gcp_aidp.translate.pyspark_to_aidp import spark_properties, translate_pyspark, translate_spark_sql
+from gcp_aidp.translate.pyspark_to_aidp import (
+    spark_properties,
+    translate_pyspark,
+    translate_spark_sql,
+)
 from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
@@ -69,8 +72,8 @@ def _sql_findings(result) -> list[dict]:
 
 
 class _Writer:
-    def __init__(self, out_dir: Path):
-        self.out_dir = out_dir
+    def __init__(self, out_dir: Path, plan_id: str = ""):
+        self.out_dir, self.plan_id = out_dir, plan_id
         self.used: set[str] = set()
 
     def path(self, category: str, name: str, suffix: str, asset_id: str) -> Path:
@@ -100,20 +103,6 @@ _DATAPROC = ("dataproc_job", "dataproc_batch", "dataproc_workflow_template")
 _TRANSLATED = ("pyspark", "spark_sql")
 _SETTINGS = ("step_id", "prerequisites", "job_type", "cluster", "main_file", "main_class", "args", "python_files",
              "jars", "files", "archives", "properties", "variables", "runtime_version", "code_not_read")
-
-
-def _oci_settings() -> dict:
-    """The rclone transfer scripts' OCI side from .env (OCI_REGION, OCI_COMPARTMENT_ID, OCI_CLI_PROFILE);
-    an unset one stays a placeholder that the script's reader fills in."""
-    env = {"oci_region": "OCI_REGION", "compartment_ocid": "OCI_COMPARTMENT_ID", "oci_profile": "OCI_CLI_PROFILE"}
-    return {arg: os.environ[name] for arg, name in env.items() if os.environ.get(name)}
-
-
-def _transfer_flag(what: str) -> dict:
-    missing = [name for name in ("OCI_REGION", "OCI_COMPARTMENT_ID") if not os.environ.get(name)]
-    fill = f"set {' and '.join(missing)} in .env and re-run migrate, or fill them in the script; " if missing else ""
-    return _f("GS03_TRANSFER", "flag", f"before running {what}: {fill}install rclone, and authenticate to "
-                                       "Google Cloud (read-only) and OCI (~/.oci/config)")
 
 
 def _job_title(src: dict) -> str:
@@ -296,8 +285,8 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
     elif t == "aidp_notebook":
         cells, notebook_findings = translate_notebook(src["cells"], ctx)
         findings = _sql_findings(Result("", "", notebook_findings))
-        header = [f"*Migrated from BigQuery Studio notebook `{src['name']}` by gcp-aidp. Status: "
-                  f"{_status(findings)}.*"] + [f"- **{f['severity']}** `{f['rule']}` {_one_line(f['detail'])}"
+        header = [(f"*Migrated from BigQuery Studio notebook `{src['name']}` by gcp-aidp. Status: "
+                   f"{_status(findings)}.*")] + [f"- **{f['severity']}** `{f['rule']}` {_one_line(f['detail'])}"
                                                for f in findings if f["severity"] != "rewrite"]
         nb = {"cells": [{"cell_type": "markdown", "metadata": {}, "source": "\n".join(header)}]
               + [{"cell_type": c["cell_type"], "metadata": {}, "source": c["source"],
@@ -351,8 +340,7 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             findings.append(_f("J02_DESTINATION_TABLE", "flag",
                                f"writes its result into dataset {src['destination_dataset']!r}; the inventory does "
                                "not record the table or write mode, so no job is created: add the INSERT by hand"))
-        elif t == "aidp_job":
-            if r.status != "blocked":  # no job, no schedule to carry
+        elif t == "aidp_job" and r.status != "blocked":  # no job, no schedule to carry
                 schedule, more = _carry(f"schedule {src.get('schedule')!r} (UTC"
                                         + (", disabled at the source)" if src.get("disabled") else ")"),
                                         *from_bigquery(src.get("schedule"), src.get("next_run_time")), "UTC")
@@ -365,13 +353,26 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         else:
             translated = r.sql
             path = w.sql(category, name, aid, findings, translated)
+            if t == "spark_sql_file":  # opened and run in the workspace, as in BigQuery; no job runs it
+                p = w.path("saved_queries", name, ".ipynb", aid)
+                write_text_atomic(p, json.dumps(sql_notebook(f"Saved query {src['name']!r}", statements(r.sql),
+                                                             w.plan_id, show_last=True), indent=1) + "\n")
+                row["notebook"] = p.relative_to(w.out_dir).as_posix()
     elif t == "oci_bucket":
-        translated = build_transfer(src["name"], tgt["name"], tgt["namespace"], **_oci_settings())
+        ns = tgt.get("namespace") or ""
+        ns = "" if ns.startswith("<") else ns  # the plan's <your-oci-namespace> placeholder
+        spec = {"gcs_bucket": src["name"], "oci_bucket": tgt["name"], "namespace": ns,
+                "gcs": f"gs://{src['name']}/", "oci": f"oci://{tgt['name']}@{ns}/"}
+        translated = json.dumps(spec, indent=2)
         source_sql = f"gs://{src['name']}/  ({src.get('location')}, {src.get('storage_class')})"
-        findings = [_f("GS03_TRANSFER", "rewrite", f"rclone copy gs://{src['name']} → oci://{tgt['name']}@{tgt['namespace']}"),
-                    _transfer_flag("it")]
-        p = w.path("transfers", src["name"], ".transfer.sh", aid)
-        write_text_atomic(p, translated)
+        findings = [_f("GS03_TRANSFER", "rewrite", f"gs://{src['name']} → oci://{tgt['name']}@{ns or '?'}: copied by "
+                                                   "`gcp-aidp transfer --apply` (read-only on Cloud Storage; never "
+                                                   "deletes). The OCI bucket must exist")]
+        if not ns:
+            findings.append(_f("GS03_TRANSFER", "flag", "no OCI namespace: set OCI_NAMESPACE (or plan --namespace), "
+                                                        "then plan and migrate again"))
+        p = w.path("transfers", src["name"], ".transfer.json", aid)
+        write_text_atomic(p, translated + "\n")
         path = p.relative_to(w.out_dir).as_posix()
     else:
         raise ValueError(f"no migration for {src['type']} → {t}")
@@ -389,12 +390,12 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     marker = out_dir / IN_PROGRESS_MARKER
     marker.write_text(plan.get("plan_id", ""), encoding="utf-8")
     ctx = context_from_plan(plan)
-    w = _Writer(out_dir)
+    w = _Writer(out_dir, plan.get("plan_id", ""))
     results = []
     for a in plan["assets"]:
         try:
             r = _migrate_one(a, ctx, w)
-        except Exception as exc:  # one asset's failure is recorded; the run continues
+        except Exception as exc:  # noqa: BLE001 - one asset's failure is recorded; the run continues
             r = {"asset_id": a.get("id", "?"), "kind": a.get("source", {}).get("type"),
                  "status": "error", "note": f"{type(exc).__name__}: {exc}"}
         results.append(r)
@@ -407,7 +408,7 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     notebooks = write_notebooks(dp, out_dir)
     jobs = write_jobs(dp, results, out_dir)
     notebooks += sorted({t["notebook"] for j in jobs for t in j["tasks"] if "notebook" in t} - set(notebooks))
-    notebooks += [r["notebook"] for r in results if r.get("notebook")]  # BigQuery Studio notebooks, no job
+    notebooks += [r["notebook"] for r in results if r.get("notebook")]  # Studio notebooks, saved queries: no job
     files = sorted({t["python_file"] for j in jobs for t in j["tasks"] if "python_file" in t})
     if log:
         log(f"  notebooks: {len(notebooks)} ({len(dp['tables'])} tables to copy, "
@@ -438,8 +439,8 @@ def _markdown(report: dict) -> str:
     md = [f"# Migration report — plan `{report['plan_id']}`", "",
           "| ok | needs review | blocked | reported | skipped | error |", "|---|---|---|---|---|---|",
           f"| {c['ok']} | {c['needs_manual_review']} | {c['blocked']} | {c['reported']} | {c['skipped']} | {c['error']} |",
-          "", "`ok` means translated with no known issue. It is **not execution-verified**: nothing here "
-          "runs the artifacts. Review before running them.", ""]
+          "", ("`ok` means translated with no known issue. It is **not execution-verified**: nothing here "
+               "runs the artifacts. Review before running them."), ""]
     for status, title in (("blocked", "Blocked — not translated"), ("needs_manual_review", "Needs review"),
                           ("error", "Errors"), ("ok", "Translated"), ("reported", "Reported only"),
                           ("skipped", "Skipped (later version)")):

@@ -74,12 +74,10 @@ class AidpClient:
         scratch = None
         try:
             if body is not None:
-                scratch = tempfile.NamedTemporaryFile(
-                    "w", suffix=".json", delete=False, encoding="utf-8")
-                json.dump(body, scratch)
-                scratch.close()
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as scratch:
+                    json.dump(body, scratch)
                 command += ["--body", f"@{scratch.name}"]
-            done = subprocess.run(command, capture_output=True, text=True,
+            done = subprocess.run(command, capture_output=True, text=True, check=False,
                                   timeout=self.timeout + 30)
         except subprocess.TimeoutExpired as exc:
             raise AidpError(f"aidp timed out after {self.timeout}s") from exc

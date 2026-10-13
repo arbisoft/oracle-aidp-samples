@@ -18,8 +18,9 @@ all; both need a human. Never rewrite one by hand into a silent rewrite.
 
 If the plan used `--export-over-gb`, the large tables (`X01_EXPORT_ROUTE`) load from
 files: suggest `/oracle-ai-data-platform-workbench-gcp-migrator:export` after `verify` and
-before `publish`. Surface any `GS03_TRANSFER` flag naming `OCI_REGION` or
-`OCI_COMPARTMENT_ID` still unset (rclone scripts for inventoried buckets).
+before `publish`. If the migration has Cloud Storage buckets (`GS03_TRANSFER`), suggest
+`/oracle-ai-data-platform-workbench-gcp-migrator:transfer` before the external tables are
+created; surface a `GS03_TRANSFER` flag about a missing OCI namespace.
 
 Mention the copy notebooks in `migrated/notebooks/` (`00_diagnose` … `03_reconcile`)
 and their prerequisites: the Spark BigQuery connector JAR as a cluster library and the

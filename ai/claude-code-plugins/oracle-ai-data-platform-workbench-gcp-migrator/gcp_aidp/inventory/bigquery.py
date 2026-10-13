@@ -4,11 +4,11 @@ Metadata calls only (`datasets.get`, `tables.get`, `routines.get`, ...): no
 query runs and no bytes are billed. Row counts are the table metadata's
 `numRows`.
 
-Saved queries and BigQuery pipelines have no read API this tool relies on.
-They are recorded as not scanned, so the plan says so. Saved queries exported
-as .sql files can be read with `--saved-queries-dir`. BigQuery Studio notebooks
-are read through Dataform with `--scan-services` (`manifest._studio_notebooks`),
-or from exported .ipynb files with `--notebooks-dir`.
+BigQuery Studio notebooks, saved queries and pipelines are read through Dataform
+with `--scan-services` (`manifest._studio_notebooks`); notebooks and saved queries
+also from exported .ipynb and .sql files with `--notebooks-dir` and
+`--saved-queries-dir`. Without them, each is recorded as not scanned, so the plan
+says so.
 """
 from __future__ import annotations
 
@@ -183,7 +183,8 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
     not_scanned: dict[str, str] = {
         "notebooks": "BigQuery Studio notebooks are read through the Dataform API with --scan-services "
                      "(Dataform Viewer); or export them as .ipynb and pass --notebooks-dir",
-        "pipelines": "BigQuery pipelines have no read API this tool uses; list them by hand",
+        "pipelines": "BigQuery pipelines are listed through the Dataform API with --scan-services "
+                     "(Dataform Viewer)",
     }
     warnings: list[str] = []
     if notebooks_dir:
@@ -192,8 +193,9 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_d
     if saved_queries_dir:
         items["saved_queries"] = _saved_queries(saved_queries_dir)
     else:
-        not_scanned["saved_queries"] = ("saved queries have no read API this tool uses; "
-                                        "export them as .sql files and pass --saved-queries-dir")
+        not_scanned["saved_queries"] = ("saved queries are read through the Dataform API with --scan-services "
+                                        "(Dataform Viewer); or export them as .sql files and pass "
+                                        "--saved-queries-dir")
     row_policies = {"ok": True}
 
     for ref in client.pages(f"{BQ}/projects/{p}/datasets", "datasets"):

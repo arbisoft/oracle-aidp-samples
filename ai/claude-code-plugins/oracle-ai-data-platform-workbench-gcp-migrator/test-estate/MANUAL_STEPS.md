@@ -59,8 +59,8 @@ bq query --use_legacy_sql=false \
 
 In BigQuery Studio, open a new query, paste
 `saved_queries/Returned_orders_by_status.sql`, and **Save** it as
-*Returned orders by status*. The inventory cannot read saved queries through an API, so
-pass the exported copy instead:
+*Returned orders by status*. `inventory --scan-services` reads it through Dataform
+(Dataform Viewer); without that, pass the exported copy:
 `--saved-queries-dir test-estate/saved_queries`.
 
 ## 5. Notebook
