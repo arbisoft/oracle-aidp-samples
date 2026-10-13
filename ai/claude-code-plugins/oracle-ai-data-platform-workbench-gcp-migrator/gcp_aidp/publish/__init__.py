@@ -225,6 +225,27 @@ def readable_failure(output_text: str) -> str:
     return "\n".join(found)
 
 
+def export_warning(out_dir: Path, spec: dict) -> str:
+    """Why the export-route tables may not be on OCI yet, "" if `export --apply` put them all there.
+    A warning, not a refusal: files copied another way are fine, and 00_diagnose checks them."""
+    tables = [f"{t['dataset']}.{t['name']}" for t in spec["tables"]]
+    done = _read_json(out_dir / "exports" / "export_report.json") or {}
+    if not done:
+        return (f"{len(tables)} table(s) load from export files, and `gcp-aidp export --apply` has not run here "
+                f"(no exports/export_report.json): {', '.join(tables)}")
+    missing = [k for k in tables if done.get(k, {}).get("export") not in ("exported", "already_exported")
+               or done[k].get("copy_failures")]
+    return (f"the last `gcp-aidp export --apply` did not put these on OCI: {', '.join(missing)}; their copy "
+            "fails until it does") if missing else ""
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_id=None, profile=None, auth=None,
         wait=6 * 3600, poll=15, log=print, client=None, sleep=time.sleep) -> dict:
     """Start one run of a published job and follow it to the end.
@@ -236,6 +257,10 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
     local = next((j for j in report["jobs"] if j["name"] == job), None)
     if local is None:
         raise PublishError(f"this migration has no job {job!r}; its jobs: {[j['name'] for j in report['jobs']]}")
+    if job == MIGRATION_JOB and report.get("export"):
+        warning = export_warning(Path(out_dir), report["export"])
+        if warning:
+            log(f"warning: {warning}")
     name = f"{prefix}_{job}" if prefix else job
     client = client or _client(workspace_key, instance_id, profile, auth)
     try:

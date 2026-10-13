@@ -1,4 +1,4 @@
-"""Tiny .env loader + required-var check. Stdlib only."""
+"""Tiny .env loader. Stdlib only."""
 from __future__ import annotations
 
 import os
@@ -39,14 +39,3 @@ def load_dotenv(path: str | Path | None = None) -> None:
         # look for a profile named ''.
         if k.startswith(ALLOWED_PREFIXES) and v and k not in os.environ:
             os.environ[k] = v
-
-
-def require(*names: str) -> dict[str, str]:
-    """Return dict of required env vars, raising with a clean message if any missing."""
-    missing = [n for n in names if not os.environ.get(n)]
-    if missing:
-        raise RuntimeError(
-            "missing required env var(s): " + ", ".join(missing)
-            + "  (set in .env or shell; see .env.example)"
-        )
-    return {n: os.environ[n] for n in names}

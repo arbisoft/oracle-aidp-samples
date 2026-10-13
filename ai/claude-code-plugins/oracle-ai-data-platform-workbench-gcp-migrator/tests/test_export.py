@@ -149,6 +149,7 @@ class Export(unittest.TestCase):
         result = self.run_export(google, oci)
         self.assertEqual(result["tables"]["shop.events"]["export"], "failed")
         self.assertIn("Access Denied", result["tables"]["shop.events"]["reason"])
+        self.assertIn("delete gs://", result["tables"]["shop.events"]["reason"])  # a re-run would skip it
         self.assertNotIn("copied", result["tables"]["shop.events"])
         self.assertFalse(any("/events/" in n for n in oci.objects))
         self.assertEqual(result["tables"]["shop.orders"]["copied"], 2)

@@ -104,6 +104,7 @@ class Gcs(unittest.TestCase):
     def test_GS03_TRANSFER(self):
         script = build_transfer("src", "dst", "ns")
         self.assertIn('rclone --config "$CONF" copy "gcssrc:src" "ocidest:dst"', script)
+        self.assertIn("bash src.transfer.sh", script)  # the file migrate writes, named after the GCS bucket
         commands = [l for l in script.splitlines() if l.startswith("rclone")]
         self.assertEqual([c.split()[3] for c in commands], ["mkdir", "copy"])  # never sync/delete/purge
 

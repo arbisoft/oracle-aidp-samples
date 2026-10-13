@@ -36,8 +36,9 @@ gcp-aidp run migrated
 In Claude Code the `gcp-aidp-migrator` skill runs these steps, and shows the dry run of
 `export` before it applies it.
 
-`export` must finish before `run`: a table whose files are not on OCI fails its copy with a
-missing-path error and nothing is written. The folder carries the plan id, so a new plan
+`export` must finish before `run`. `run` warns when `export --apply` has not put every
+table on OCI, and the job's first task, `00_diagnose`, stops the run before anything is
+written if a table's files cannot be read. The folder carries the plan id, so a new plan
 never mixes with an earlier export, and a new plan needs a new export.
 
 ## What you choose

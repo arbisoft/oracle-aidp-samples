@@ -63,12 +63,25 @@ All notable changes to this project are documented here. Format loosely follows
   `references/schedule-translation.md`, where it was missing). New `PRIVACY.md`.
 - `J01_UNSCHEDULED` is now a flag, used only when a source schedule is not carried; a
   scheduled query whose job is blocked gets no schedule finding.
+- `00_diagnose` checks that each export-route table's Parquet files can be read on OCI, so
+  a missing export stops the run before anything is written; `run` warns when
+  `exports/export_report.json` does not show every routed table on OCI.
+- The MCP `plan` tool takes the export route's options (`export_over_gb`,
+  `export_bucket`) and `bucket_mapping`, as the CLI does.
+- `scripts/generate_spark_builtins.py` now ships with this plugin: the Spark vocabulary
+  behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
 - A `TIME` inside a `STRUCT` or `ARRAY` copied through the connector landed as its
   microsecond count (`"37800123456"`), and the table still passed as verified: the
   conversion to `HH:MM:SS.ffffff` text applied to top-level columns only. `02_copy_dataset`
   now converts it at any depth, keeping a `NULL` struct `NULL`.
+- The rclone transfer script told you to run `<oci-bucket>.transfer.sh`; the file is
+  `<gcs-bucket>.transfer.sh`, which differs under `--bucket-mapping`.
+- `export`: after a failed BigQuery job, or one still running at the time limit, the
+  message said to run `export` again, which would have copied a partial folder (the
+  row-count check would have caught it). It now says to delete the folder, or to wait
+  for the named job to finish.
 
 ## [0.2.0] - unreleased
 

@@ -124,6 +124,25 @@ class Publish(unittest.TestCase):
             run(self.out, prefix="ana", client=FakeAidp(), sleep=lambda s: None, log=lambda m: None)
 
 
+class ExportWarning(unittest.TestCase):
+    def test_run_warns_until_export_put_every_routed_table_on_oci(self):
+        from gcp_aidp.publish import export_warning
+
+        spec = {"tables": [{"dataset": "shop", "name": "orders"}, {"dataset": "shop", "name": "events"}]}
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            self.assertIn("has not run here", export_warning(out, spec))
+            (out / "exports").mkdir()
+            report = {"shop.orders": {"export": "exported", "copy_failures": 0},
+                      "shop.events": {"export": "already_exported", "copy_failures": 3}}
+            (out / "exports/export_report.json").write_text(json.dumps(report))
+            self.assertIn("shop.events", export_warning(out, spec))
+            self.assertNotIn("shop.orders", export_warning(out, spec))
+            report["shop.events"]["copy_failures"] = 0
+            (out / "exports/export_report.json").write_text(json.dumps(report))
+            self.assertEqual(export_warning(out, spec), "")
+
+
 class DataprocJobs(unittest.TestCase):
     """Dataproc definitions publish as Python tasks (shapes proven live on AIDP) and SQL notebooks."""
 

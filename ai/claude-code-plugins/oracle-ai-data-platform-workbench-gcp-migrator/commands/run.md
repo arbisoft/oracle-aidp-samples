@@ -10,8 +10,8 @@ Start a job that `publish --apply` created and follow it:
 
 This copies data: confirm with the user before starting it. If `report.json` has an
 `export` section, check that `gcp-aidp export --apply` finished with every table on OCI
-(`migrated/exports/export_report.json`): those tables load from the files and fail
-without them. By default it runs
+(`migrated/exports/export_report.json`); `run` prints a warning when it has not, and
+`00_diagnose` then stops the run before anything is written. By default it runs
 `<prefix>_gcp_aidp_migration` (diagnose → structure → one copy per dataset →
 materialized view snapshots → reconcile) and polls each task until it ends.
 Stopping the command stops the polling, not the run on AIDP.

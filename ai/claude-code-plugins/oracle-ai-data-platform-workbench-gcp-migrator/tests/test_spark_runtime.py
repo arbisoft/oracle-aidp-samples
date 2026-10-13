@@ -87,7 +87,7 @@ class SparkRuntime(unittest.TestCase):
         # The flagged SQL function really does not parse: the flag is not a false alarm.
         self.assertTrue(outcomes["bigquery.routine.sales.net_price"][1])
         print(f"\n{len(must_run)} artifacts ran on Spark; flagged ones that failed:")
-        for aid, (r, err) in sorted(outcomes.items()):
+        for aid, (_, err) in sorted(outcomes.items()):
             if err and aid not in must_run:
                 print(f"  {aid}: {err}")
 

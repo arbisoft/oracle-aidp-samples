@@ -187,19 +187,19 @@ gcp-aidp inventory --project <project> [--regions us-central1] [--saved-queries-
 ```
 
 Every call is a metadata `GET` made with a `cloud-platform.read-only` token, so
-Google refuses any write. Dataproc, Composer, Dataform, Dataflow and Vertex AI
-refuse a read-only token, so they are listed only with `--scan-services`. That
-flag asks for a `cloud-platform` token for those five services only, and read-only
-then rests on the client sending GETs only and on the service account's
-viewer roles. Without it, they are recorded as *not scanned*. For Dataproc, the scan
+Google refuses any write. Dataproc, Composer, Dataform, Dataflow and Vertex AI refuse a
+read-only token, so they are listed only with `--scan-services`. That flag asks for a
+`cloud-platform` token for those services only, which also covers the Cloud Scheduler
+jobs read with Dataproc and the BigQuery Studio notebooks read through Dataform; read-only
+then rests on the client sending GETs only and on the service account's viewer roles. Without it, they are recorded as *not scanned*. For Dataproc, the scan
 also reads the `.py` or `.sql` file each PySpark and Spark SQL job runs from Cloud
 Storage (an object read, at most 1 MB), so it can be translated; JARs are recorded, not
 read. Dataproc's run history is grouped into job definitions: one per main file and
 cluster, with its newest arguments and a run count. No query runs, and no bytes are billed. Row counts
 come from table metadata. Anything the scan could not read is recorded as *not
 scanned* and shown at the top of the plan: saved queries (pass
-`--saved-queries-dir` instead), BigQuery Studio notebooks (export them as `.ipynb` and pass
-`--notebooks-dir`), BigQuery pipelines,
+`--saved-queries-dir` instead), BigQuery Studio notebooks without `--scan-services` (or
+export them as `.ipynb` and pass `--notebooks-dir`), BigQuery pipelines,
 and any API call that was refused. A service whose API is disabled is recorded
 as having nothing to migrate.
 
@@ -250,9 +250,9 @@ which run on an AIDP cluster:
 
 | Notebook | Reads | Writes |
 |---|---|---|
-| `00_diagnose` | connector, credential, catalog | nothing; prints the connector's type for every column |
+| `00_diagnose` | connector, credential, catalog, export-route files | nothing; prints the connector's type for every column |
 | `01_structure` | the plan | schemas, empty Delta tables (each read back against the plan), views |
-| `02_copy_dataset` | one BigQuery dataset, table by table | rows; verifies counts, and with `counts+sums` exact decimal sums |
+| `02_copy_dataset` | one BigQuery dataset, table by table (export-route tables from their Parquet files) | rows; verifies counts, and with `counts+sums` exact decimal sums |
 | `03_reconcile` | plan, reports, catalog | `MIGRATION_REPORT.md` |
 
 Prerequisites: AIDP has no built-in BigQuery connector, so the cluster needs the
@@ -333,8 +333,8 @@ What each verb reads, writes and sends is in [`PRIVACY.md`](../PRIVACY.md).
 `publish` and `run` sign every call with the `~/.oci/config` profile you give them,
 and that profile carries all of its OCI permissions. The plugin uses it narrowly: it
 uploads notebooks, creates jobs (any schedule PAUSED), starts a job and reads its
-status. It never deletes, overwrites, or turns a schedule on. The slash commands allow only
-`gcp-aidp publish` and `gcp-aidp run`, and the MCP server leaves both out. But
+status. It never deletes, overwrites, or turns a schedule on. Of the slash commands, only
+`/publish` and `/run` reach AIDP, and the MCP server leaves both out (and `export`). But
 anything that can run shell commands as you, an agent included, can use the same
 profile for any `aidp` or OCI command. To limit that:
 

@@ -1,6 +1,7 @@
 """00 diagnose: run first. Reads, writes nothing.
 
-Checks the session, the credential, the target catalog and the connector, and
+Checks the session, the credential, the target catalog, the connector and, for
+tables on the export route, that their Parquet files on OCI can be read; and
 prints how the connector types every planned column next to the target type.
 Reading each table's column list (no rows) is the connector check.
 The type table is the check the plan asks for: confirm each type mapping
@@ -25,6 +26,15 @@ def main(spark, params: dict, plan: dict) -> list[str]:
         print(f"target catalog {plan['catalog']}: reachable")
     except Exception as exc:  # noqa: BLE001
         problems.append(f"target catalog {plan['catalog']}: {error_text(exc, 160)}")
+
+    for t in plan["tables"]:  # export route: the files must be on OCI before the copy
+        if t.get("files"):
+            try:
+                spark.read.parquet(t["files"]).schema
+                print(f"export files {t['dataset']}.{t['name']}: readable at {t['files']}")
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"{t['dataset']}.{t['name']}: export files not readable at {t['files']} "
+                                f"(run `gcp-aidp export --apply` first): {error_text(exc, 160)}")
 
     if read is not None:
         print(f"\n{'table.column':<45} {'BigQuery':<18} {'connector (Spark)':<28} target")

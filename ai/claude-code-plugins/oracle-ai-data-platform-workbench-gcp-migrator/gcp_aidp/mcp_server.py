@@ -3,8 +3,8 @@
 Exposes the four offline migration verbs as MCP tools so any MCP-compatible
 client (OpenAI Codex, Cursor, Claude Desktop, etc.) gets the same workflow the
 Claude Code plugin does. Each tool shells out to the already-tested
-`gcp_aidp.cli` pipeline rather than reimplementing logic. `publish` and `run`
-change an AIDP workspace, so they stay CLI-only.
+`gcp_aidp.cli` pipeline rather than reimplementing logic. `export`, `publish`
+and `run` write to Google Cloud, OCI or an AIDP workspace, so they stay CLI-only.
 
 Run:   gcp-aidp-mcp                 (after `pip install -e '.[mcp]'`)
    or:  python3 -m gcp_aidp.mcp_server
@@ -98,6 +98,9 @@ def plan(
     datasets: Optional[str] = None,
     bignumeric: str = "block",
     geography: str = "block",
+    export_over_gb: Optional[float] = None,
+    export_bucket: Optional[str] = None,
+    bucket_mapping: Optional[str] = None,
 ) -> str:
     """Turn an inventory manifest into an AIDP migration plan and approval document.
 
@@ -110,6 +113,10 @@ def plan(
             others stay in the plan as SKIP.
         bignumeric: BIGNUMERIC columns: "block" the table or carry exact decimal "string".
         geography: GEOGRAPHY columns: "block" the table or carry "wkt" text.
+        export_over_gb: tables of at least this many GB go the export route (Parquet
+            through GCS and OCI); needs export_bucket. Default: all through the connector.
+        export_bucket: the GCS bucket the export route stages Parquet files in.
+        bucket_mapping: path to a JSON file naming the OCI bucket for each GCS bucket.
     """
     args = ["plan", manifest, "-o", output, "--bignumeric", bignumeric, "--geography", geography]
     if namespace:
@@ -118,6 +125,12 @@ def plan(
         args += ["--catalog", catalog]
     if datasets:
         args += ["--datasets", datasets]
+    if export_over_gb is not None:
+        args += ["--export-over-gb", str(export_over_gb)]
+    if export_bucket:
+        args += ["--export-bucket", export_bucket]
+    if bucket_mapping:
+        args += ["--bucket-mapping", bucket_mapping]
     return _run(args)
 
 

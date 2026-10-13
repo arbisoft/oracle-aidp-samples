@@ -98,12 +98,12 @@ gcp-aidp run       migrated                               # runs the published m
 | Dataproc PySpark job or batch | → | a job with a Python task running the translated script, its arguments as on Dataproc; a Cloud Scheduler schedule carried PAUSED |
 | Dataproc Spark SQL job | → | a job running its statements in a notebook |
 | Dataproc workflow template | → | one job: steps as tasks, prerequisites as `dependsOn` |
-| BigQuery Studio notebook (exported `.ipynb`, `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
+| BigQuery Studio notebook (through Dataform with `--scan-services`, or exported `.ipynb` with `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
 
 Reported, not translated: procedures, JavaScript and table functions, BigQuery ML
 models, row access policies and policy tags, Dataproc clusters (with their sizing), and
-Dataproc JAR, Hive, Pig and other engines' jobs. Skipped: BigQuery Studio notebooks not
-exported, Composer and Dataform (0.3), Dataflow and Vertex AI (later).
+Dataproc JAR, Hive, Pig and other engines' jobs. Skipped: BigQuery Studio notebooks whose
+content was not read, Composer and Dataform (0.3), Dataflow and Vertex AI (later).
 
 Dataproc and notebook code is changed only where it reaches outside Spark: `gs://`
 paths, BigQuery connector reads (to `spark.table`), connector settings, Hive table names

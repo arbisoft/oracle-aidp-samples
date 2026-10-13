@@ -349,5 +349,22 @@ class DataPlaneNotebooks(unittest.TestCase):
                          [("x", ["01:02:03.000000", "23:59:59.999999"]), ("y", [])])
         self.assertIsNone(rows[2]["s"])
 
+    def test_9_diagnose_checks_the_export_files_are_on_oci(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"][0]["num_bytes"] = 2_000_000_000  # orders
+        plan = build_plan(manifest, catalog="spark_catalog", oci_namespace="ns", export_over_gb=1,
+                          export_bucket="stage-bkt")
+        out = Path(self.tmp.name) / "migrated-diagnose"
+        migrate(plan, out_dir=out)
+        oci = next(a["target"]["load_from"]["oci"] for a in plan["assets"] if a["source"]["name"] == "orders")
+        files = Path(self.tmp.name) / "exported-diagnose" / "orders"  # not written yet: export has not run
+        text = (out / "notebooks/00_diagnose.ipynb").read_text().replace(oci, files.as_uri())
+        self.notebooks["00_diagnose"] = json.loads(text)
+        self.source = dict(SOURCE)
+        self.assertEqual(self.run_notebook("00_diagnose"), 1)
+        schema, rows = SOURCE["proj.shop.orders"]
+        self.spark.createDataFrame(rows, schema).write.parquet(str(files))
+        self.assertEqual(self.run_notebook("00_diagnose"), 0)
+
 if __name__ == "__main__":
     unittest.main()

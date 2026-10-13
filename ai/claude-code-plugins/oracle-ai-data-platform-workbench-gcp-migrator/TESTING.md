@@ -80,7 +80,8 @@ and caveats on Spark, and checks the `QUALIFY` rewrite keeps the same rows.
 with the BigQuery connector replaced by a local reader typed the way the connector
 delivered on AIDP; tests 5 to 7 load export-route tables from Parquet files written the
 way BigQuery's export wrote them, test 7 with text fields inside structs and arrays; test 8
-checks a `TIME` inside structs and arrays from the connector.
+checks a `TIME` inside structs and arrays from the connector; test 9 checks that
+`00_diagnose` stops when an export-route table's files are missing.
 `test_export` (no extra dependencies) runs the `export` verb against fake BigQuery, Cloud
 Storage and OCI endpoints.
 

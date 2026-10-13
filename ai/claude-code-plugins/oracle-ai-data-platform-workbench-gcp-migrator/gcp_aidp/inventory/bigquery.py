@@ -4,10 +4,11 @@ Metadata calls only (`datasets.get`, `tables.get`, `routines.get`, ...): no
 query runs and no bytes are billed. Row counts are the table metadata's
 `numRows`.
 
-Saved queries, BigQuery Studio notebooks and BigQuery pipelines have no read
-API this tool relies on. They are recorded as not scanned, so the plan
-says so. Saved queries exported as .sql files can be read with
-`--saved-queries-dir`.
+Saved queries and BigQuery pipelines have no read API this tool relies on.
+They are recorded as not scanned, so the plan says so. Saved queries exported
+as .sql files can be read with `--saved-queries-dir`. BigQuery Studio notebooks
+are read through Dataform with `--scan-services` (`manifest._studio_notebooks`),
+or from exported .ipynb files with `--notebooks-dir`.
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, publish, run."""
+"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, export, publish, run."""
 from __future__ import annotations
 
 import argparse
@@ -65,8 +65,8 @@ def cmd_inventory(args: argparse.Namespace) -> int:
         print(f"# project={client.project}  regions={','.join(regions)}  (read-only metadata calls)")
         log = lambda line: print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
         if args.scan_services:
-            print("# --scan-services: Dataproc, Composer, Dataform, Dataflow and Vertex AI are listed with a "
-                  "cloud-platform token (GET calls only)")
+            print("# --scan-services: Dataproc (with its Cloud Scheduler jobs), Composer, Dataform (with BigQuery "
+                  "Studio notebooks), Dataflow and Vertex AI are listed with a cloud-platform token (GET calls only)")
         manifest = build_manifest(client, sources, regions=regions, saved_queries_dir=args.saved_queries_dir,
                                   notebooks_dir=args.notebooks_dir,
                                   scan_services=args.scan_services, log=log)
@@ -253,8 +253,9 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--saved-queries-dir", help="a folder of saved queries exported as .sql files")
     inv.add_argument("--notebooks-dir", help="a folder of BigQuery Studio notebooks exported as .ipynb files")
     inv.add_argument("--scan-services", action="store_true",
-                     help="also list Dataproc, Composer, Dataform, Dataflow and Vertex AI; their APIs refuse a "
-                          "read-only token, so this asks for a cloud-platform token (still GET calls only)")
+                     help="also list Dataproc (with its Cloud Scheduler jobs), Composer, Dataform (with BigQuery "
+                          "Studio notebooks), Dataflow and Vertex AI; their APIs refuse a read-only token, so this "
+                          "asks for a cloud-platform token (still GET calls only)")
     inv.add_argument("--fixture", help="load a bundled fixture manifest instead of scanning (e.g. 'demo')")
     inv.add_argument("-o", "--output", help="manifest output path (default: ./inventory-<project>-<ts>.json)")
     inv.set_defaults(func=cmd_inventory)
@@ -307,8 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     rn = sub.add_parser("run", help="start a published job on AIDP and follow it to the end")
     _aidp_args(rn)
-    rn.add_argument("--job", default="gcp_aidp_migration",
-                    help="which of the migration's jobs (default: gcp_aidp_migration, the full copy)")
+    rn.add_argument("--job", default=MIGRATION_JOB,
+                    help=f"which of the migration's jobs (default: {MIGRATION_JOB}, the full copy)")
     rn.add_argument("--wait", type=int, default=6 * 3600, help="seconds to follow the run (default: 6 hours)")
     rn.set_defaults(func=cmd_run)
     return p

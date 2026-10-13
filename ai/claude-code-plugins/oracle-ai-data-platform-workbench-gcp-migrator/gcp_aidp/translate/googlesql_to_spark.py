@@ -69,14 +69,6 @@ class Result:
             return "needs_manual_review"
         return "ok"
 
-    @property
-    def changes(self) -> int:
-        return sum(f.severity in ("rewrite", "caveat") for f in self.findings)
-
-    @property
-    def flags(self) -> int:
-        return sum(f.severity in ("caveat", "flag", "block") for f in self.findings)
-
 
 @dataclass
 class Context:

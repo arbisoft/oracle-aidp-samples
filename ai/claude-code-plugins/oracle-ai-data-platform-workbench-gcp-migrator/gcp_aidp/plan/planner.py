@@ -57,7 +57,6 @@ _REQUIRED = {
 assert set(_REQUIRED) == set(ALL_SOURCES)
 
 _SKIP_REASONS = {
-    "0.2": "planned for 0.2; inventoried only so far",
     "0.3": "planned for 0.3; inventoried only so far",
     "later": "not on the 0.x roadmap; inventoried only",
 }
@@ -494,7 +493,7 @@ _SINGULAR = {"batches": "batch", "repositories": "repository", "workflow_templat
 
 
 def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
-    """Sources migrated after 0.1: one SKIP row per asset."""
+    """Sources not migrated in this version: one SKIP row per asset."""
     spec = {  # collection: (source type, target type, version, kind, id field, name field)
         "composer": {"environments": ("composer_environment", "aidp_workflow", "0.3", "setup", "name", "name"),
                      "dags": ("composer_dag", "aidp_workflow", "0.3", "code+setup", "dag_id", "dag_id")},

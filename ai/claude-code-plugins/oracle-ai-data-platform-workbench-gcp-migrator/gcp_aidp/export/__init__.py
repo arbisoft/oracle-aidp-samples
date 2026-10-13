@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
+from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.gcp_client import CLOUD_PLATFORM_SCOPE, READ_ONLY_SCOPE, _error
 from gcp_aidp.migrate.runner import IN_PROGRESS_MARKER
 
@@ -126,6 +127,7 @@ def _oci_md5s(oci_client, namespace: str, oci_url: str) -> dict[str, str]:
 def _export_tables(writer, reader, spec: dict, log) -> dict[str, dict]:
     """Start one BigQuery job per table not yet exported, then wait for all of them."""
     records, running = {}, {}
+    spec_gcs = {f"{t['dataset']}.{t['name']}": t["gcs"] for t in spec["tables"]}
     for t in spec["tables"]:
         key = f"{t['dataset']}.{t['name']}"
         if _gcs_objects(reader, t["gcs"]):
@@ -148,13 +150,16 @@ def _export_tables(writer, reader, spec: dict, log) -> dict[str, dict]:
                 continue
             del running[key]
             if status.get("errorResult"):
-                records[key].update(export="failed", reason=status["errorResult"].get("message", ""))
+                records[key].update(export="failed", reason=status["errorResult"].get("message", "")
+                                    + f"; delete {spec_gcs[key]} before running export again: it may hold "
+                                      "part of the files")
                 log(f"  export FAILED     {key}  {records[key]['reason']}")
             else:
                 records[key]["export"] = "exported"
                 log(f"  exported          {key}")
-    for key in running:
-        records[key].update(export="failed", reason="still running at the time limit; run export again later")
+    for key, ref in running.items():  # a re-run now would copy a folder BigQuery is still writing
+        records[key].update(export="failed", reason=f"BigQuery job {ref['jobId']} still running at the time "
+                                                    "limit; run export again once it has finished")
     return records
 
 
@@ -223,8 +228,6 @@ def export(out_dir: str | Path, *, apply: bool = False, writer=None, reader=None
                 f"{rec['bytes'] / 1e6:.1f} MB; {rec['copied']} copied, {rec['already_in_oci']} already in OCI"
                 + (f", {rec['copy_failures']} failed: {rec['copy_failed'][0]}" if rec["copy_failures"] else ""))
         result["tables"][key] = rec
-    path = Path(out_dir) / "exports" / "export_report.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result["tables"], indent=2))
+    path = write_text_atomic(Path(out_dir) / "exports" / "export_report.json", json.dumps(result["tables"], indent=2))
     result["report"] = str(path)
     return result

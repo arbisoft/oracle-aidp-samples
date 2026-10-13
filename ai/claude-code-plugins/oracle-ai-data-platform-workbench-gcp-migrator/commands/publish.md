@@ -9,7 +9,7 @@ gcp-aidp publish ./migrated --prefix <name>
 ```
 
 `publish` and `run` are the only verbs that reach AIDP. Everything before them is
-local.
+local, except `export --apply`, which writes only to the staging and OCI buckets.
 
 Before the first `--apply`, run the `gcp-aidp-migrator-bootstrap` skill's checks.
 
