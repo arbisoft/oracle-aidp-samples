@@ -79,9 +79,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 - An ingestion-time partitioned table failed its copy as `type_drift`: the connector adds
-  BigQuery's `_PARTITIONTIME` and `_PARTITIONDATE` pseudo-columns, which the plan does not
-  carry (`D03_INGESTION_TIME`). `02_copy_dataset` now drops them. A `type_drift` also names
-  the columns that differ, where it printed `source=None target=None`.
+  BigQuery's `_PARTITIONTIME` and `_PARTITIONDATE` pseudo-columns, which the plan did not have
+  (seen on AIDP). They are now carried as columns of the same names (`D03_INGESTION_TIME`):
+  the load time is kept, the target is clustered on `_PARTITIONTIME`, the export route selects
+  them with `EXPORT DATA`, and queries filtering on them translate as written (`G16`, now a
+  flag; `_TABLE_SUFFIX` stays blocked). A `type_drift` also names the columns that differ,
+  where it printed `source=None target=None`.
 - A `TIME` inside a `STRUCT` or `ARRAY` copied through the connector landed as its
   microsecond count (`"37800123456"`), and the table still passed as verified: the
   conversion to `HH:MM:SS.ffffff` text applied to top-level columns only. `02_copy_dataset`

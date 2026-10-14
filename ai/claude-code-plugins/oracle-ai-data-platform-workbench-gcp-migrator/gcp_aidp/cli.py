@@ -206,8 +206,9 @@ def cmd_export(args: argparse.Namespace) -> int:
               f"gs://{spec['bucket']}/{spec['prefix']}/, then copy them to "
               f"oci://{spec['oci_bucket']}@{spec['namespace']}/{spec['prefix']}/:")
         for t in spec["tables"]:
-            how = (f"EXPORT DATA, a billed query; as text: {', '.join(t['as_text'])}" if t.get("as_text")
-                   else "bq extract, free")
+            how = ("EXPORT DATA, a billed query" + (f"; as text: {', '.join(t['as_text'])}" if t.get("as_text") else "")
+                   + (f"; with {', '.join(t['pseudo_columns'])}" if t.get("pseudo_columns") else "")
+                   if t.get("as_text") or t.get("pseudo_columns") else "bq extract, free")
             print(f"    {t['dataset']}.{t['name']}  ({how})")
         print("the export runs as GCP_EXPORT_CREDENTIALS; the copy reads with the read-only key and writes with "
               "~/.oci/config. Re-run with --apply.")

@@ -158,9 +158,24 @@ def _skip(id_, kind, version, source, target_type, name):
                 reason=_SKIP_REASONS[version])
 
 
+def ingestion_columns(t: dict) -> list[dict]:
+    """An ingestion-time partitioned table's pseudo-columns, carried as columns of the same names:
+    _PARTITIONTIME (load time) always, _PARTITIONDATE for DAY partitions. BigQuery reserves the
+    names, so no real column can clash; the connector and EXPORT DATA both deliver them."""
+    part = t.get("partitioning") or {}
+    if not part or part.get("field"):
+        return []
+    cols = [{"name": "_PARTITIONTIME", "type": "TIMESTAMP", "mode": "NULLABLE",
+             "description": "BigQuery ingestion time (pseudo-column)"}]
+    if part.get("type", "DAY") == "DAY":
+        cols.append({"name": "_PARTITIONDATE", "type": "DATE", "mode": "NULLABLE",
+                     "description": "BigQuery ingestion date (pseudo-column)"})
+    return cols
+
+
 def _table_target(t: dict, base: dict, mapping: dict) -> tuple[dict, list[str]]:
     """The planned table: every column with its type rules, the layout, and plan notes."""
-    columns = [map_column(c, **mapping) for c in t.get("columns", [])]
+    columns = [map_column(c, **mapping) for c in t.get("columns", []) + ingestion_columns(t)]
     layout = table_layout(t, columns)
     target = {"type": "aidp_delta_table", **base, "columns": columns,
               "partitioned_by": layout["partitioned_by"], "cluster_by": layout["cluster_by"],
@@ -203,9 +218,15 @@ def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]
     rel = f"{export['prefix']}/{t['dataset']}/{t['name']}/"
     route = {"gcs": f"gs://{export['bucket']}/{rel}", "oci": f"oci://{export['oci_bucket']}@{export['namespace']}/{rel}"}
     how = "Parquet"
+    pseudo = [c["name"] for c in ingestion_columns(t)]
+    if pseudo:  # an extract job writes the table's columns only
+        route["pseudo_columns"] = pseudo
     if as_text:
         route["as_text"] = as_text
-        how = f"Parquet by EXPORT DATA (a billed query; {', '.join(as_text)} as text)"
+    if as_text or pseudo:
+        how = ("Parquet by EXPORT DATA (a billed query; "
+               + "; ".join(x for x in (f"{', '.join(as_text)} as text" if as_text else "",
+                                       f"with {', '.join(pseudo)}" if pseudo else "") if x) + ")")
     return route, [f"export route ({gb}): {how} to {route['gcs']}, transferred to {route['oci']}, loaded into Delta"]
 
 

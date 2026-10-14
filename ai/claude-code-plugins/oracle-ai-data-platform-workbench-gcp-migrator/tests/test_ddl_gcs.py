@@ -55,6 +55,11 @@ class Layout(unittest.TestCase):
         lay = layout([("a", "STRING")], partitioning={"type": "DAY", "field": None})
         self.assertIn(("D03_INGESTION_TIME", "flag"), rule_set(lay))
         self.assertEqual((lay["partitioned_by"], lay["cluster_by"]), ([], []))
+        # with the pseudo-columns the plan carries: clustered on the load time, in place of the partitions
+        lay = layout([("a", "STRING"), ("_PARTITIONTIME", "TIMESTAMP"), ("_PARTITIONDATE", "DATE")],
+                     partitioning={"type": "DAY", "field": None}, clustering=["a"])
+        self.assertEqual((lay["partitioned_by"], lay["cluster_by"]), ([], ["_PARTITIONTIME", "a"]))
+        self.assertIn("_PARTITIONTIME and _PARTITIONDATE carried", " ".join(d for _, _, d in lay["findings"]))
 
     def test_D04_METADATA(self):
         lay = layout([("a", "STRING")], expiration_ms=1, labels={"x": "y"})

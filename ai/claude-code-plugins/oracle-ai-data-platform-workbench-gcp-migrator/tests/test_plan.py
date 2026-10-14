@@ -349,6 +349,25 @@ class ExportRoute(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 bucket_mapping(bad, None)
 
+    def test_D03_ingestion_time_tables_carry_their_pseudo_columns(self):
+        from gcp_aidp.export import job_config
+
+        def table(name, kind, size=1):
+            return {"dataset": "d", "name": name, "num_bytes": size, "partitioning": {"type": kind, "field": None},
+                    "columns": [{"name": "n", "type": "INTEGER", "mode": "NULLABLE"}]}
+        manifest = {"project_id": "p", "sources": {"bigquery": {"items": {
+            "datasets": [{"name": "d"}], "tables": [table("daily", "DAY", 10**10), table("hourly", "HOUR")]}}}}
+        plan = build_plan(manifest, oci_namespace="ns", export_over_gb=1, export_bucket="stage-1")
+        target = {a["source"]["name"]: a["target"] for a in plan["assets"] if a["source"]["type"] == "bq_table"}
+        self.assertEqual([c["name"] for c in target["daily"]["columns"]], ["n", "_PARTITIONTIME", "_PARTITIONDATE"])
+        self.assertEqual([c["name"] for c in target["hourly"]["columns"]], ["n", "_PARTITIONTIME"])  # no date
+        self.assertEqual(target["daily"]["cluster_by"], ["_PARTITIONTIME"])
+        # the export route: an extract writes real columns only, so EXPORT DATA selects them
+        route = target["daily"]["load_from"]
+        self.assertEqual(route["pseudo_columns"], ["_PARTITIONTIME", "_PARTITIONDATE"])
+        query = job_config("p", {"dataset": "d", "name": "daily", **route})["query"]["query"]
+        self.assertIn("SELECT *, _PARTITIONTIME AS _PARTITIONTIME, _PARTITIONDATE AS _PARTITIONDATE FROM", query)
+
     def test_GS03_TRANSFER_writes_a_spec_for_the_transfer_verb(self):
         from gcp_aidp.migrate import migrate
 

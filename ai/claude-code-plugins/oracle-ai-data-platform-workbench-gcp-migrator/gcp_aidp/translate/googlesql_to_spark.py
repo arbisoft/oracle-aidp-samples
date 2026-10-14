@@ -85,7 +85,9 @@ class Context:
 _SCRIPTING = {"DECLARE", "BEGIN", "EXECUTE", "SET", "IF", "LOOP", "WHILE", "REPEAT", "FOR",
               "CALL", "RAISE", "RETURN", "LEAVE", "CONTINUE", "BREAK", "ITERATE", "ASSERT",
               "EXPORT", "LOAD"}
-_PSEUDO_COLUMNS = {"_PARTITIONTIME", "_PARTITIONDATE", "_TABLE_SUFFIX"}
+# An ingestion-time partitioned table's pseudo-columns are carried as columns of the same
+# names (D03_INGESTION_TIME); _TABLE_SUFFIX belongs to wildcard tables, which are not.
+_CARRIED_PSEUDO_COLUMNS = {"_PARTITIONTIME", "_PARTITIONDATE"}
 _TRUNC_PARTS = {"MICROSECOND", "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY",
                 "MONTH", "QUARTER", "YEAR", "ISOWEEK"}
 # FORMAT_DATE specifiers proven to match Spark's datetime patterns, and the
@@ -213,8 +215,12 @@ def _blockers(s: _Sql) -> list[Finding]:
         out.append(Finding("G17_SCRIPTING", "block", f"scripting statement {s.word(statements[0][0])}"))
     for j in range(len(s.sig)):
         w, t = s.word(j), s.t(j)
-        if w in _PSEUDO_COLUMNS:
-            out.append(Finding("G16_PSEUDO_COLUMN", "block", f"{w} has no Delta equivalent"))
+        if w == "_TABLE_SUFFIX":
+            out.append(Finding("G16_PSEUDO_COLUMN", "block", "_TABLE_SUFFIX: wildcard tables are not carried"))
+        elif w in _CARRIED_PSEUDO_COLUMNS:
+            out.append(Finding("G16_PSEUDO_COLUMN", "flag", f"{w} is carried as a column of the same name on an "
+                               "ingestion-time partitioned table (D03_INGESTION_TIME), so it reads as written; "
+                               "rows written on AIDP must set it"))
         elif t.kind == "ident" and "*" in t.text:
             out.append(Finding("G16_PSEUDO_COLUMN", "block", f"wildcard table {t.text}"))
         elif w in ("ML", "AI") and s.is_punct(j + 1, ".") and s.is_punct(j + 3, "("):

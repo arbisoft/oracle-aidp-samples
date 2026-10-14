@@ -50,16 +50,24 @@ def load(out_dir: str | Path) -> dict:
     return spec
 
 
+def billed(t: dict) -> bool:
+    """An EXPORT DATA query (billed by bytes scanned), not a free extract: some columns go as
+    text, or the table's pseudo-columns are carried (an extract writes real columns only)."""
+    return bool(t.get("as_text") or t.get("pseudo_columns"))
+
+
 def job_config(project: str, t: dict) -> dict:
-    """The BigQuery job for one table: a free extract, or an EXPORT DATA query that
-    turns the columns Parquet cannot carry into text (billed by bytes scanned)."""
+    """The BigQuery job for one table: a free extract, or an EXPORT DATA query that turns
+    the columns Parquet cannot carry into text and selects the carried pseudo-columns."""
     uri = t["gcs"] + "part-*.parquet"
-    if not t.get("as_text"):
+    if not billed(t):
         return {"extract": {"sourceTable": {"projectId": project, "datasetId": t["dataset"], "tableId": t["name"]},
                             "destinationUris": [uri], "destinationFormat": "PARQUET", "compression": "SNAPPY"}}
-    replace = ", ".join(f"{expr} AS `{name}`" for name, expr in t["as_text"].items())
+    replace = ", ".join(f"{expr} AS `{name}`" for name, expr in (t.get("as_text") or {}).items())
+    select = "*" + (f" REPLACE ({replace})" if replace else "") + "".join(
+        f", {c} AS {c}" for c in t.get("pseudo_columns") or [])  # names BigQuery reserves; a dry run accepts them
     sql = (f"EXPORT DATA OPTIONS (uri='{uri}', format='PARQUET', compression='SNAPPY') AS "
-           f"SELECT * REPLACE ({replace}) FROM `{project}.{t['dataset']}.{t['name']}`")
+           f"SELECT {select} FROM `{project}.{t['dataset']}.{t['name']}`")
     return {"query": {"query": sql, "useLegacySql": False}}
 
 
@@ -77,8 +85,8 @@ def _export_tables(writer, reader, spec: dict, log) -> dict[str, dict]:
                                  json={"configuration": job_config(spec["project"], t)}, timeout=60))
         ref = job["jobReference"]
         running[key] = ref
-        records[key] = {"export": "running", "job": ref["jobId"], "billed_query": bool(t.get("as_text"))}
-        log(f"  export started    {key}  job {ref['jobId']}" + ("  (EXPORT DATA)" if t.get("as_text") else ""))
+        records[key] = {"export": "running", "job": ref["jobId"], "billed_query": billed(t)}
+        log(f"  export started    {key}  job {ref['jobId']}" + ("  (EXPORT DATA)" if billed(t) else ""))
     deadline = time.time() + JOB_TIMEOUT_SECONDS
     while running and time.time() < deadline:
         time.sleep(POLL_SECONDS)

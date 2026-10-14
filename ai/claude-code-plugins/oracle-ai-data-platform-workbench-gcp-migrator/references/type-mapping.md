@@ -58,7 +58,7 @@ never read).
 |---|---|---|
 | `D01_PARTITION` | DAY partitioning on a `DATE` column, no clustering | `PARTITIONED BY (col)`: exact |
 | `D02_CLUSTER` | clustering, or any other partitioning (MONTH/YEAR/HOUR, a `TIMESTAMP`/`DATETIME` column, integer RANGE) | liquid `CLUSTER BY`, partition column first, at most 4 keys, only on `BIGINT`/`DOUBLE`/`STRING`/`DATE`/`TIMESTAMP`/`DECIMAL` columns. Delta cannot combine `PARTITIONED BY` with `CLUSTER BY`, and partitions by exact value, not by a granularity |
-| `D03_INGESTION_TIME` | ingestion-time partitioning | not partitioned; flagged: no column carries `_PARTITIONTIME` |
+| `D03_INGESTION_TIME` | ingestion-time partitioning | `_PARTITIONTIME` (and `_PARTITIONDATE` for DAY) carried as columns of the same names, `CLUSTER BY _PARTITIONTIME`; flagged: rows written on AIDP must set them |
 | `D04_METADATA` | table expiration, labels | reported, not carried |
 | `D05_EXTERNAL_FORMAT` | external table format | `USING PARQUET/AVRO/ORC/CSV/JSON`; schema inferred (caveat); CSV options flagged; other formats blocked |
 | `D06_SQL_FUNCTION` | SQL scalar UDF | flagged: Apache Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |

@@ -25,9 +25,6 @@ from decimal import Decimal
 from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 PROBLEMS = ("count_mismatch", "sum_mismatch", "type_drift", "failed")
-# BigQuery's pseudo-columns: the connector adds them to an ingestion-time partitioned table
-# (seen live, 2026-10-14). The plan does not carry them (D03_INGESTION_TIME).
-PSEUDO_COLUMNS = ("_PARTITIONTIME", "_PARTITIONDATE")
 
 
 def _time_text(expr: str) -> str:
@@ -86,8 +83,7 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
     fqn = quote(*t["target"])
     started = time.time()
     source = spark.read.parquet(t["files"]) if t.get("files") else read(t["source"])
-    planned = [c["name"] for c in t["columns"]]
-    source = source.drop(*[c for c in PSEUDO_COLUMNS if c in source.columns and c not in planned])
+    planned = [c["name"] for c in t["columns"]]  # with an ingestion-time table's _PARTITIONTIME (D03)
     source_types = {f.name: f.dataType.simpleString() for f in source.schema.fields}
     if set(source_types) != set(planned):
         missing, extra = sorted(set(planned) - set(source_types)), sorted(set(source_types) - set(planned))

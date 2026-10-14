@@ -232,7 +232,13 @@ class Blocks(unittest.TestCase):
             self.assertIn(why, t(sql).findings[0].detail, sql)
 
     def test_G16_PSEUDO_COLUMN(self):
-        self.blocked("SELECT _PARTITIONTIME FROM t", "G16_PSEUDO_COLUMN")
+        # carried as columns of the same names (D03): the reference stays as written, flagged
+        for sql in ("SELECT n FROM t WHERE _PARTITIONTIME >= TIMESTAMP '2026-01-01'", "SELECT _PARTITIONDATE FROM t"):
+            r = t(sql)
+            self.assertNotEqual(r.status, "blocked", sql)
+            self.assertIn("G16_PSEUDO_COLUMN", rules(r, "flag"), sql)
+        self.assertIn("_PARTITIONTIME >=", t("SELECT n FROM t WHERE _PARTITIONTIME >= TIMESTAMP '2026-01-01'").sql)
+        self.blocked("SELECT _TABLE_SUFFIX FROM `proj.logs.events_*`", "G16_PSEUDO_COLUMN")
         self.blocked("SELECT * FROM `proj.logs.events_*`", "G16_PSEUDO_COLUMN")
 
     def test_G17_SCRIPTING(self):

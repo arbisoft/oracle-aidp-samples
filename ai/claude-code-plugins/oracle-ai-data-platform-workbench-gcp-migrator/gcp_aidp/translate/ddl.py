@@ -5,7 +5,8 @@ Layout decisions are named rules (D0x), recorded as findings:
 
   D01_PARTITION         DAY partitioning on a DATE column → PARTITIONED BY (exact)
   D02_CLUSTER           clustering, and any other partitioning → liquid CLUSTER BY
-  D03_INGESTION_TIME    ingestion-time partitioning: no column to carry (flag)
+  D03_INGESTION_TIME    ingestion-time partitioning: _PARTITIONTIME (and _PARTITIONDATE) carried
+                        as columns, CLUSTER BY _PARTITIONTIME (flag: new rows must set them)
   D04_METADATA          table expiration and labels: reported, not carried
   D05_EXTERNAL_FORMAT   external table format and options
   D06_SQL_FUNCTION      SQL UDFs: Spark 3.5 has no CREATE FUNCTION ... RETURN (flag)
@@ -48,10 +49,15 @@ def table_layout(table: dict, columns: list[dict]) -> dict:
     keys: list[str] = []
 
     if part and not field:
+        carried = [c for c in ("_PARTITIONTIME", "_PARTITIONDATE") if c in types]
+        if "_PARTITIONTIME" in types:
+            keys.append("_PARTITIONTIME")  # the data skipping the partitions gave
         findings.append(("D03_INGESTION_TIME", "flag",
-                         (f"{part.get('type', 'DAY')} ingestion-time partitioning: no column carries "
-                          "_PARTITIONTIME, so the target is not partitioned and queries filtering on it "
-                          "need rewriting")))
+                         (f"{part.get('type', 'DAY')} ingestion-time partitioning: "
+                          + (f"{' and '.join(carried)} carried as columns of the same names, so queries "
+                             "filtering on them keep working; rows written on AIDP must set them, as "
+                             "nothing fills them in" if carried else
+                             "no column carries _PARTITIONTIME, so queries filtering on it need rewriting"))))
     elif field and not clustering and part.get("type") == "DAY" and source_types.get(field) == "DATE":
         partitioned_by = [field]
         findings.append(("D01_PARTITION", "rewrite", f"DAY partitioning on DATE {field} → PARTITIONED BY ({field})"))
