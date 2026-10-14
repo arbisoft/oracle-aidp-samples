@@ -12,6 +12,9 @@ checks and writes `migrated/REVIEW.md`.
 | **block** | Not migrated; the file holds the original, commented out | Rewrite it, drop it, or re-plan with the option the finding names |
 | info, rewrite | What was changed | Nothing |
 
+In a notebook finding, `cell N` counts the cells of the BigQuery Studio notebook. The migrated
+notebook adds a status cell at the top and drops `%load_ext` cells, so find the cell by its code.
+
 Edits go in the file the report names under `migrated/`, before `publish`. A re-run of
 `migrate` overwrites them, so keep a copy of anything you change. Jobs are created with
 their schedules PAUSED: an asset can be published while its review is open, and turned on
@@ -22,13 +25,13 @@ once it is done.
 | Rule | Check | Done when |
 |---|---|---|
 | `TY09_BIGNUMERIC` (caveat) | Carried as exact decimal text. Do queries do arithmetic, `SUM`, or sort on the column? | No: accept. Yes: `CAST(col AS DECIMAL(38, s))` where it is used, if the values fit 38 digits |
-| `TY10_DATETIME` | Carried as TIMESTAMP, read through the session time zone | The AIDP cluster's `spark.sql.session.timeZone` is `UTC` (the copy job sets it for itself) |
+| `TY10_DATETIME` | Carried as TIMESTAMP, read through the session time zone: anyone querying the table sees it shifted unless the session is UTC | The AIDP cluster's `spark.sql.session.timeZone` is `UTC`. The copy job sets UTC for itself only, so this is never settled by the files |
 | `TY11_TIME` (flag) | Carried as `'HH:MM:SS[.ffffff]'` text | Comparing two such strings orders correctly; time arithmetic on it needs a rewrite. Accept if the column is only read or compared |
 | `TY14_JSON` | Carried as JSON text | Queries that read fields use `get_json_object` / `from_json`; views doing it are flagged by the SQL rules |
 | `TY15_GEOGRAPHY` | Carried as WKT text | Nothing spatial runs on AIDP: accept if the column is only displayed or passed on |
 | `TY16_INTERVAL` | Carried as BigQuery's interval text | Date arithmetic with it needs a rewrite; accept if it is only read |
 | `TY17_RANGE` | Carried as `STRUCT<start, end>`; `end` NULL for unbounded | Range functions (`RANGE_CONTAINS`, ...) become comparisons on the two fields |
-| `X01_EXPORT_ROUTE` (flag) | The table goes through Parquet files | `gcp-aidp export --apply` ran before the copy job, and the reconcile report shows the table `MIGRATED_VERIFIED` |
+| `X01_EXPORT_ROUTE` (flag) | The table goes through Parquet files | `gcp-aidp export --apply` ran before the copy job, and `MIGRATION_REPORT.md` shows the table `MIGRATED_VERIFIED`. Before the run, it is a check on that report |
 | `D03_INGESTION_TIME` (flag) | `_PARTITIONTIME` / `_PARTITIONDATE` are ordinary columns now | Nothing writes new rows on AIDP, or what does sets them |
 
 ## SQL (views, scheduled queries, routines)

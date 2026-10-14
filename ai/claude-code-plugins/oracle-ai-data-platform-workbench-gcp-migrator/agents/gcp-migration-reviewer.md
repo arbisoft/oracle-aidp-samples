@@ -28,17 +28,22 @@ could not prove. Your job is to turn each mark into a decision the user can act 
    - **ACCEPT**: the case the caveat describes cannot happen here, and you can show why
      from the files. Examples: `G03_SAFE_DIVIDE` whose operands are INT64 or FLOAT64 in
      `plan.json`; `TY15_GEOGRAPHY` on a column no migrated view or job applies a spatial
-     function to; `X01_EXPORT_ROUTE`, which `export --apply` and the reconcile count settle.
+     function to.
    - **CHECK**: the answer is outside the files, in BigQuery, Cloud Storage, the
      Dataproc cluster or AIDP. Give the one command or query that settles it, and what
      each result means. Example: `P06_HIVE_NAME` → `DESCRIBE FORMATTED <name>` on the
-     Dataproc cluster.
+     Dataproc cluster. Always CHECK, whatever the files say: `TY10_DATETIME` and
+     `G06_TIMESTAMP_TRUNC` (the cluster's session time zone), and `X01_EXPORT_ROUTE`
+     (`MIGRATION_REPORT.md` after the run). Group findings one check settles.
    - **CHANGE**: the artifact is wrong or incomplete as written. Give the file and the
      edit: the lines to replace and the replacement. For a block, the rewrite, or the
      re-plan option the finding names.
-3. Never ACCEPT on a guess. If the evidence is not in the files, it is CHECK. A block is
+3. Follow the guide's "Done when" column; where it names a state outside the files, the
+   verdict is CHECK. Never ACCEPT on a guess. If the evidence is not in the files, it is CHECK. A block is
    never ACCEPT.
-4. Look across assets: a type caveat on a table matters only where that column is used,
+4. Name notebook cells by their code, not their number: the report's `cell N` counts the
+   source notebook's cells, not the migrated one's.
+5. Look across assets: a type caveat on a table matters only where that column is used,
    so search the migrated views, jobs and notebooks for the column (Grep) before you
    decide.
 
