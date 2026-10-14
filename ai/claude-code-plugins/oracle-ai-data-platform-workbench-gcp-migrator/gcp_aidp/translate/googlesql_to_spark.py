@@ -79,6 +79,7 @@ class Context:
     columns: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)  # a target's column names
     buckets: dict[str, str] = field(default_factory=dict)
     namespace: str = "<your-oci-namespace>"
+    geography: str = "block"  # the plan's --geography: "wkt" carries GEOGRAPHY as WKT text
 
 
 # ── rule tables ───────────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ class _Sql:
         return "".join(t.text for t in self.toks)
 
 
-def _blockers(s: _Sql) -> list[Finding]:
+def _blockers(s: _Sql, wkt: bool = False) -> list[Finding]:
     out = []
     for t in s.toks:
         if t.kind == "punct" and t.text in "'\"`":
@@ -226,7 +227,7 @@ def _blockers(s: _Sql) -> list[Finding]:
             out.append(Finding("G16_PSEUDO_COLUMN", "block", f"wildcard table {t.text}"))
         elif w in ("ML", "AI") and s.is_punct(j + 1, ".") and s.is_punct(j + 3, "("):
             out.append(Finding("G18_ML_AI_GEO", "block", f"{w}.{s.word(j + 2)}: BigQuery ML / AI function"))
-        elif w.startswith("ST_") and s.is_punct(j + 1, "("):
+        elif w.startswith("ST_") and s.is_punct(j + 1, "(") and not (wkt and w == "ST_GEOGPOINT"):
             out.append(Finding("G18_ML_AI_GEO", "block", f"{w}: geography function"))
     return list(dict.fromkeys(out))
 
@@ -421,6 +422,19 @@ def _cast_types(s: _Sql, out: list[Finding]) -> None:
                 out.append(Finding("G19_CAST_TYPE", sev, f"CAST AS {w} → {target}" + (f": {detail}" if detail else "")))
 
 
+_COORDINATE = re.compile(r"-?\s*(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _coordinate(text: str) -> float | None:
+    """A numeric literal, perhaps negative, else None."""
+    return float(text.replace(" ", "")) if _COORDINATE.fullmatch(text.strip()) else None
+
+
+def _wkt_number(v: float) -> str:
+    """As ST_ASTEXT writes it: shortest round-trip digits, no trailing `.0`."""
+    return repr(v).removesuffix(".0")
+
+
 def _functions(s: _Sql, out: list[Finding]) -> set[int]:
     """Function rewrites and flags. Returns indices already reported (exempt from the gate)."""
     seen: set[int] = set()
@@ -431,7 +445,17 @@ def _functions(s: _Sql, out: list[Finding]) -> set[int]:
         if close is None:
             continue
         args = s.args(j + 1, close)
-        if name == "COUNTIF":
+        if name == "ST_GEOGPOINT":  # reached only with --geography wkt
+            point = [_coordinate(s.text(*a)) for a in args]
+            if len(point) == 2 and None not in point and -180 < point[0] < 180 and -90 < point[1] < 90:
+                wkt = f"'POINT({_wkt_number(point[0])} {_wkt_number(point[1])})'"
+                s.replace(j, close + 1, wkt)
+                out.append(Finding("G26_GEOGPOINT_WKT", "rewrite", f"ST_GEOGPOINT → {wkt}: a GEOGRAPHY is carried as "
+                                   "its WKT text (--geography wkt), the text ST_ASTEXT gives"))
+            else:
+                out.append(Finding("G18_ML_AI_GEO", "block", "ST_GEOGPOINT: only constant longitude and latitude "
+                                   "become WKT text; from columns, the number formatting differs"))
+        elif name == "COUNTIF":
             s.t(j).text = "count_if"
             out.append(Finding("G04_COUNTIF", "rewrite", "COUNTIF → count_if"))
         elif name == "SAFE_DIVIDE":
@@ -532,7 +556,7 @@ def _gate(s: _Sql, exempt: set[int], out: list[Finding]) -> None:
 
 def translate(sql: str, ctx: Context | None = None) -> Result:
     ctx = ctx or Context()
-    blocks = _blockers(_Sql(sql))
+    blocks = _blockers(_Sql(sql), ctx.geography == "wkt")
     rewritten, out = _qualify(sql) if not blocks else (sql, [])
     blocks += [f for f in out if f.severity == "block"]
     if blocks:

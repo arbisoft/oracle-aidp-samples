@@ -11,8 +11,8 @@ CTX = Context(project="proj",
               buckets={"landing": "landing-oci"}, namespace="ns")
 
 
-def t(sql):
-    return translate(sql, CTX)
+def t(sql, ctx=None):
+    return translate(sql, ctx or CTX)
 
 
 def rules(r, severity=None):
@@ -250,6 +250,15 @@ class Blocks(unittest.TestCase):
     def test_G18_ML_AI_GEO(self):
         self.blocked("SELECT * FROM ML.PREDICT(MODEL m, TABLE t)", "G18_ML_AI_GEO")
         self.blocked("SELECT ST_DISTANCE(a, b)", "G18_ML_AI_GEO")
+        self.blocked("SELECT ST_GEOGPOINT(1, 2)", "G18_ML_AI_GEO")  # without --geography wkt
+
+    def test_G26_GEOGPOINT_WKT(self):
+        wkt = Context(**{**vars(CTX), "geography": "wkt"})
+        r = t("SELECT ST_GEOGPOINT(-122.40, 37.8) AS p, ST_GEOGPOINT(1, -2) AS q", wkt)
+        self.assertEqual(r.sql, "SELECT 'POINT(-122.4 37.8)' AS p, 'POINT(1 -2)' AS q")  # as ST_ASTEXT writes it
+        self.assertEqual({(f.rule, f.severity) for f in r.findings}, {("G26_GEOGPOINT_WKT", "rewrite")})
+        for sql in ("SELECT ST_GEOGPOINT(lon, lat) FROM t", "SELECT ST_GEOGPOINT(200, 0)", "SELECT ST_DISTANCE(a, b)"):
+            self.assertEqual(t(sql, wkt).status, "blocked", sql)
 
     def test_G98_UNBALANCED(self):
         self.blocked("SELECT 'open", "G98_UNBALANCED")

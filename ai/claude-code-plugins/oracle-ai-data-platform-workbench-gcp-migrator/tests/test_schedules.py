@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gcp_aidp.dataplane import write_jobs
 from gcp_aidp.migrate import migrate
 from gcp_aidp.migrate.runner import _carry, _dataproc_schedule
 from gcp_aidp.plan import build_plan
@@ -57,12 +58,25 @@ class Findings(unittest.TestCase):
         self.assertIsNone(schedule)
         self.assertEqual([(x["rule"], x["severity"]) for x in f], [("J01_UNSCHEDULED", "flag")])
 
-    def test_two_scheduler_jobs_on_one_definition_carry_neither(self):
+    def test_J04_ONE_JOB_PER_SCHEDULE(self):
         two = {"schedules": [{"name": "a", "schedule": "0 1 * * *"}, {"name": "b", "schedule": "0 2 * * *"}]}
-        schedule, f = _dataproc_schedule(two)
-        self.assertIsNone(schedule)
-        self.assertEqual(f[0]["rule"], "J01_UNSCHEDULED")
-        self.assertEqual(_dataproc_schedule({}), (None, []))
+        schedules, f = _dataproc_schedule(two)
+        self.assertEqual([s["quartzCronExpression"] for s in schedules], ["0 0 1 * * ?", "0 0 2 * * ?"])
+        self.assertEqual(f[-1]["rule"], "J04_ONE_JOB_PER_SCHEDULE")
+        self.assertEqual(_dataproc_schedule({}), ([], []))
+        # cron runs on the 1st of the month OR on Mondays: one Quartz expression each.
+        either, _ = _dataproc_schedule({"schedules": [{"name": "q", "schedule": "0 9 1 * 1", "time_zone": "UTC"}]})
+        self.assertEqual([s["quartzCronExpression"] for s in either], ["0 0 9 1 * ?", "0 0 9 ? * MON"])
+
+    def test_each_schedule_is_its_own_job(self):
+        jobs = [{"name": "j", "title": "t", "schedules": [{"quartzCronExpression": "0 0 9 1 * ?", "timezoneId": "UTC"},
+                                                         {"quartzCronExpression": "0 0 9 ? * MON", "timezoneId": "UTC"}],
+                 "tasks": [{"key": "main", "python_file": "dataproc/j.py", "arguments": []}]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = write_jobs({"plan_id": "p", "project": "p", "catalog": "c", "tables": []},
+                             [{"status": "ok", "kind": "dataproc_job", "job": jobs[0]}], Path(tmp))
+        self.assertEqual([(j["name"], j["schedule"]["quartzCronExpression"]) for j in out[1:]],
+                         [("j_1", "0 0 9 1 * ?"), ("j_2", "0 0 9 ? * MON")])
 
 
 class EndToEnd(unittest.TestCase):

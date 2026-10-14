@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format loosely follows
 ## [0.2.1] - unreleased
 
 ### Added
+- An arithmetic SQL function becomes a Python UDF (`D06_SQL_FUNCTION`, rewrite): a notebook
+  whose one line registers it, e.g. `spark.udf.register('net_price', lambda price, discount:
+  ..., 'double')`, NULL in, NULL out as in SQL. Only `+ - * /`, number literals, its
+  `INT64`/`FLOAT64` arguments and `IFNULL`/`COALESCE(argument, number)`; anything else stays
+  flagged. Tested on local Spark 3.5.
+- With `--geography wkt`, `ST_GEOGPOINT(<lon>, <lat>)` of constant coordinates becomes the WKT
+  text `'POINT(lon lat)'` that `ST_ASTEXT` gives (`G26_GEOGPOINT_WKT`), matching how GEOGRAPHY
+  columns are carried. From columns it stays blocked: the number formatting would differ.
+- One AIDP job per schedule (`J04_ONE_JOB_PER_SCHEDULE`): an AIDP job holds one schedule, so
+  a definition started by two Cloud Scheduler jobs, or a cron restricting both day of month
+  and day of week (`0 9 1 * 1`, the 1st *or* a Monday), becomes jobs `_1`, `_2`, ... with the
+  same tasks. Before, neither was carried (`J01`).
 - SQL table functions and procedures are migrated, not reported (`D07_TABLE_FUNCTION`,
   `D08_PROCEDURE`, `G25_ROUTINE_PARAMETER`). A table function becomes a notebook defining a
   Python function of the same name that runs the translated query with its arguments as Spark

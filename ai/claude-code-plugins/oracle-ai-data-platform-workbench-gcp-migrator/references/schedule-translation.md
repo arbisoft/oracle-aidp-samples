@@ -31,7 +31,8 @@ Scheduler locations are scanned in the same regions as Dataproc.
 |---|---|---|---|
 | `J03_SCHEDULE` | the schedule translates exactly | Quartz on the job, `pauseStatus: PAUSED` | rewrite |
 | `J03_SCHEDULE` | `every N hours` / `every N minutes` | placed by the query's next run time, on the assumption that the interval counts from each scheduled start | caveat |
-| `J01_UNSCHEDULED` | the schedule does not translate, or two scheduler jobs start one definition | job created unscheduled; the source schedule is in the finding | flag |
+| `J04_ONE_JOB_PER_SCHEDULE` | two Cloud Scheduler jobs start one definition, or a cron restricts both day of month and day of week (`0 9 1 * 1`: the 1st *or* a Monday) | one AIDP job per schedule, named `_1`, `_2`, ...: the cron is split into its day-of-month and day-of-week halves | rewrite |
+| `J01_UNSCHEDULED` | the schedule does not translate | job created unscheduled; the source schedule is in the finding | flag |
 | `J02_DESTINATION_TABLE` | a scheduled query writes its result into a destination table | no job is created: the inventory does not record the table or the write mode, so the `INSERT` is added by hand | flag |
 
 A blocked job is not created, so it carries no schedule finding.

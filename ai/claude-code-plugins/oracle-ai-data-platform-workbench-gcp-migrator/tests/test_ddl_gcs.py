@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_text, rewrite_uri
@@ -92,6 +93,19 @@ class Layout(unittest.TestCase):
         sql, f = ddl.create_function(T, [{"name": "a", "type": "FLOAT64"}], "FLOAT64", "a * 2")
         self.assertIn("(a DOUBLE)\nRETURNS DOUBLE\nRETURN a * 2", sql)
         self.assertEqual(f[0][:2], ("D06_SQL_FUNCTION", "flag"))
+
+    def test_D06_SQL_FUNCTION_arithmetic_is_a_python_udf(self):
+        args = [{"name": "price", "type": "FLOAT64"}, {"name": "discount", "type": "FLOAT64"}]
+        line = ddl.python_udf("net_price", args, "FLOAT64", "price * (1 - IFNULL(discount, 0))")
+        registered = {}
+        spark = SimpleNamespace(udf=SimpleNamespace(register=lambda n, f, ty: registered.update({n: (f, ty)})))
+        exec(line, {"spark": spark})  # noqa: S102 - runs the generated line
+        f, ty = registered["net_price"]
+        self.assertEqual((ty, f(10, 0.25), f(10, None), f(None, 0.5), f(4, 1)), ("double", 7.5, 10.0, None, 0.0))
+        self.assertIsInstance(f(4, 1), float)  # a Python int would read as NULL in a double column
+        for body, ret in (("ROUND(price)", "FLOAT64"), ("price", "STRING"), ("IFNULL(price, discount)", "FLOAT64"),
+                          ("price +", "FLOAT64"), ("price * qty", "FLOAT64")):
+            self.assertIsNone(ddl.python_udf("f", args, ret, body), body)
 
     def test_create_table_quotes_and_escapes(self):
         cols = [{"name": "we`ird", "target_type": "STRING", "nullable": False, "comment": "it's \\ ok"}]

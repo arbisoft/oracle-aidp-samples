@@ -107,8 +107,8 @@ class Demo(unittest.TestCase):
         call = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440003"]  # a blocked CALL: no job
         self.assertFalse({"job", "J03_SCHEDULE"} & ({f["rule"] for f in call["findings"]} | set(call)))
         nightly = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
-        self.assertEqual(nightly["job"]["schedule"], {"quartzCronExpression": "0 0 2 * * ?",
-                                                      "timezoneId": "America/Chicago"})
+        self.assertEqual(nightly["job"]["schedules"], [{"quartzCronExpression": "0 0 2 * * ?",
+                                                        "timezoneId": "America/Chicago"}])
         into = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002"]
         self.assertIn(("J02_DESTINATION_TABLE", "flag"), [(f["rule"], f["severity"]) for f in into["findings"]])
         self.assertNotIn("job", into)  # running only its SELECT would write nothing

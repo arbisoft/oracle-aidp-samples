@@ -21,8 +21,9 @@ def routine(name, kind, body, *arguments):
             "arguments": list(arguments)}
 
 
-def migrated(*routines):
+def migrated(*routines, return_type=None):
     """{routine name: (result, notebook or None, SQL file text)} after plan and migrate."""
+    routines = [{**r, "return_type": return_type} if return_type else r for r in routines]
     plan = build_plan(_manifest(datasets=[{"name": "d"}], tables=[ORDERS], routines=list(routines)), catalog="cat")
     with tempfile.TemporaryDirectory() as tmp:
         report = migrate(plan, out_dir=Path(tmp))
@@ -141,6 +142,13 @@ class RunsOnSpark(unittest.TestCase):
                 for source in cells[1:]:
                     exec(source, ns)  # noqa: S102
                 self.assertEqual(sorted(r.id for r in spark.table("d.orders").collect()), [2, 3, 12, 13])
+                udf = migrated(routine("net_price", "SCALAR_FUNCTION", "price * (1 - IFNULL(discount, 0))",
+                                       {"name": "price", "type": "FLOAT64"}, {"name": "discount", "type": "FLOAT64"}),
+                               return_type="FLOAT64")["net_price"]
+                self.assertEqual(udf[0]["status"], "ok")
+                exec(code(udf[1])[0], ns)  # noqa: S102
+                self.assertEqual(spark.sql("SELECT net_price(10, 0.25), net_price(10, NULL), net_price(NULL, 1)").first()[:],
+                                 (7.5, 10.0, None))
             finally:
                 spark.stop()
 

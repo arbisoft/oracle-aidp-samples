@@ -66,7 +66,8 @@ def _status(findings: list[dict]) -> str:
 
 def context_from_plan(plan: dict) -> Context:
     ctx = Context(project=plan.get("source_project") or "",
-                  namespace=plan.get("target", {}).get("oci_namespace") or "<your-oci-namespace>")
+                  namespace=plan.get("target", {}).get("oci_namespace") or "<your-oci-namespace>",
+                  geography=(plan.get("type_modes") or {}).get("geography", "block"))
     for a in plan["assets"]:
         if a["action"] != "MIGRATE":
             continue
@@ -243,17 +244,29 @@ def _carry(what: str, quartz: str | None, why: str, tz: str) -> tuple[dict | Non
     return None, [_f("J01_UNSCHEDULED", "flag", f"{what} not carried: {why}. The job is created unscheduled")]
 
 
-def _dataproc_schedule(src: dict) -> tuple[dict | None, list[dict]]:
-    found = src.get("schedules") or []
-    if len(found) > 1:
-        return None, [_f("J01_UNSCHEDULED", "flag", f"{len(found)} Cloud Scheduler jobs start it "
-                         f"({', '.join(sc['name'] for sc in found)}); an AIDP job holds one schedule, so none is "
-                         "carried. The job is created unscheduled")]
-    if not found:
-        return None, []
-    sc = found[0]
-    return _carry(f"Cloud Scheduler job {sc['name']} ({sc.get('state') or '?'}) {sc['schedule']!r}",
-                  *from_unix_cron(sc["schedule"]), sc.get("time_zone") or "UTC")
+def _dataproc_schedule(src: dict) -> tuple[list[dict], list[dict]]:
+    """(AIDP schedules, findings). An AIDP job holds one schedule, so each schedule becomes a job of
+    its own: one per Cloud Scheduler job, and two for a cron that runs on a day of the month *or*
+    a day of the week, which one Quartz expression cannot say."""
+    schedules, findings = [], []
+    for sc in src.get("schedules") or []:
+        what = f"Cloud Scheduler job {sc['name']} ({sc.get('state') or '?'}) {sc['schedule']!r}"
+        tz = sc.get("time_zone") or "UTC"
+        parts = sc["schedule"].split()
+        if len(parts) == 5 and "*" not in (parts[2], parts[4]):
+            for half, part in (("day of month", parts[:4] + ["*"]), ("day of week", parts[:2] + ["*"] + parts[3:])):
+                schedule, f = _carry(f"{what}, its {half} half", *from_unix_cron(" ".join(part)), tz)
+                schedules += [schedule] if schedule else []
+                findings += f
+            continue
+        schedule, f = _carry(what, *from_unix_cron(sc["schedule"]), tz)
+        schedules += [schedule] if schedule else []
+        findings += f
+    if len(schedules) > 1:
+        findings.append(_f("J04_ONE_JOB_PER_SCHEDULE", "rewrite",
+                           f"{len(schedules)} schedules → {len(schedules)} AIDP jobs, numbered _1 to _{len(schedules)}, "
+                           "running the same tasks"))
+    return schedules, findings
 
 
 def _one_line(text: str) -> str:
@@ -351,6 +364,16 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             translated = statement
             path = w.sql("external_tables", stem, aid, findings, translated)
             row["location"] = oci  # 01_structure creates the table once files are there
+    elif t == "aidp_function" and (udf := ddl.python_udf(src["name"], src.get("arguments", []),
+                                                         src.get("return_type"), src["body"])):
+        source_sql, translated = src["body"], udf
+        findings = [_f("D06_SQL_FUNCTION", "rewrite", f"arithmetic SQL function → Python UDF `{src['name']}`, "
+                       "registered for the session by running its notebook; SQL that calls it is not rewritten")]
+        path = w.sql("functions", stem, aid, findings, udf, comment="#", suffix=".py")
+        p = w.path("functions", stem, ".ipynb", aid)
+        write_text_atomic(p, json.dumps(routine_notebook(t, stem, src.get("arguments", []), [udf], [], w.plan_id),
+                                        indent=1) + "\n")
+        row["notebook"] = p.relative_to(w.out_dir).as_posix()
     elif t == "aidp_function":
         r = translate(src["body"], ctx)
         source_sql, findings = src["body"], _sql_findings(r)
@@ -395,9 +418,9 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         if steps is None:
             findings, translated, path, source_sql = _dataproc_step(src, ctx, w, "dataproc", tgt["name"], aid)
             if _status(findings) != "blocked":
-                schedule, more = _dataproc_schedule(src)
+                schedules, more = _dataproc_schedule(src)
                 findings += more
-                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedule": schedule,
+                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedules": schedules,
                               "tasks": [_dataproc_task("main", src, path, translated)]}
         else:
             findings, done = [], []
@@ -418,9 +441,9 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             row["steps"] = [{k: v for k, v in d.items() if k != "task"} for d in done]
             source_sql = translated = ""
             if _status(findings) != "blocked":  # a step that cannot run blocks the whole job
-                schedule, more = _dataproc_schedule(src)
+                schedules, more = _dataproc_schedule(src)
                 findings += more
-                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedule": schedule,
+                row["job"] = {"name": tgt["name"], "title": _job_title(src), "schedules": schedules,
                               "tasks": [{**d["task"], "after": d["prerequisites"]} for d in done]}
     elif t in ("spark_sql_file", "aidp_job"):
         category = "saved_queries" if t == "spark_sql_file" else "scheduled_queries"

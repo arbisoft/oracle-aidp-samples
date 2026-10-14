@@ -9,7 +9,8 @@ Layout decisions are named rules (D0x), recorded as findings:
                         as columns, CLUSTER BY _PARTITIONTIME (flag: new rows must set them)
   D04_METADATA          table expiration and labels: reported, not carried
   D05_EXTERNAL_FORMAT   external table format and options
-  D06_SQL_FUNCTION      SQL UDFs: Spark 3.5 has no CREATE FUNCTION ... RETURN (flag)
+  D06_SQL_FUNCTION      SQL UDFs: Spark 3.5 has no CREATE FUNCTION ... RETURN (flag);
+                        arithmetic ones become a Python UDF (python_udf)
 """
 from __future__ import annotations
 
@@ -195,3 +196,96 @@ def create_function(target: dict, arguments: list[dict], return_type: str | None
            + (f"\nRETURNS {ret or return_type}" if return_type else "")
            + f"\nRETURN {body.strip()}")
     return sql, findings
+
+
+_UDF_TYPES = {"INT64": "bigint", "INTEGER": "bigint", "FLOAT64": "double", "FLOAT": "double"}
+_UDF_TOKEN = re.compile(r"\s*(?:(?P<num>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)|(?P<word>[A-Za-z_]\w*)|(?P<op>[-+*/(),]))")
+
+
+def python_udf(name: str, arguments: list[dict], return_type: str | None, body: str) -> str | None:
+    """A SQL function over numbers as one line registering a Python UDF, or None when its body is
+    more than arithmetic (+ - * /, parentheses, number literals, its arguments) and
+    IFNULL/COALESCE(argument, number). NULL in, NULL out, as in SQL: an argument read outside
+    IFNULL returns None when it is None."""
+    import keyword
+    types = [_UDF_TYPES.get(str(a.get("type")).upper()) for a in arguments]
+    ret = _UDF_TYPES.get(str(return_type).upper())
+    names = {str(a.get("name")).lower(): a.get("name") for a in arguments}
+    if None in types or ret is None or any(not str(n).isidentifier() or keyword.iskeyword(n) for n in names.values()):
+        return None
+    toks, pos = [], 0
+    while pos < len(body.rstrip()):
+        m = _UDF_TOKEN.match(body, pos)
+        if not m:
+            return None
+        toks.append((m.lastgroup, m.group(m.lastgroup)))
+        pos = m.end()
+    guarded: list[str] = []
+
+    def peek(*ops):
+        return toks and toks[0][0] == "op" and toks[0][1] in ops
+
+    def take(op):
+        if not peek(op):
+            raise ValueError(op)
+        toks.pop(0)
+
+    def number():
+        sign = "-" if peek("-") and toks.pop(0) else ""
+        if not toks or toks[0][0] != "num":
+            raise ValueError("number")
+        return sign + toks.pop(0)[1]
+
+    def atom():
+        if peek("("):
+            take("(")
+            inner = expr()
+            take(")")
+            return f"({inner})"
+        if not toks:
+            raise ValueError("end")
+        kind, text = toks.pop(0)
+        if kind == "num":
+            return text
+        if kind == "word" and text.lower() in names:
+            guarded.append(names[text.lower()])
+            return names[text.lower()]
+        if kind == "word" and text.upper() in ("IFNULL", "COALESCE"):
+            take("(")
+            kind, arg = toks.pop(0) if toks else ("", "")
+            if kind != "word" or arg.lower() not in names:
+                raise ValueError("argument")
+            take(",")
+            default = number()
+            take(")")
+            return f"({default} if {names[arg.lower()]} is None else {names[arg.lower()]})"
+        raise ValueError(text)
+
+    def unary():
+        if peek("-"):
+            toks.pop(0)
+            return f"-{unary()}"
+        return atom()
+
+    def chain(part, ops):
+        out = part()
+        while peek(*ops):
+            out += f" {toks.pop(0)[1]} {part()}"
+        return out
+
+    def expr():
+        return chain(lambda: chain(unary, "*/"), "+-")
+
+    try:
+        python = expr()
+    except (ValueError, IndexError):
+        return None
+    if toks:
+        return None
+    if ret == "double":  # a Python int is NULL in a double column
+        python = f"float({python})"
+    guards = " or ".join(f"{n} is None" for n in dict.fromkeys(guarded))
+    if guards:
+        python = f"None if {guards} else {python}"
+    params = ", ".join(a["name"] for a in arguments)
+    return f"spark.udf.register({name!r}, lambda {params}: {python}, {ret!r})"

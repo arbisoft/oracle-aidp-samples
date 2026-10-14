@@ -40,6 +40,7 @@ must run.
 | `G20_HASH_COMMENT` | `# note` | `-- note` | rewrite | Spark has no `#` comment (verified) |
 | `G21_GCS_PATH` | `'gs://bucket/path'` in a literal | `'oci://bucket@namespace/path'` | rewrite | Through the bucket map; an unmapped bucket is flagged |
 | `G25_ROUTINE_PARAMETER` | a table function's or procedure's argument `d`, by bare name in its body | `:d`, bound by `spark.sql(sql, args={"d": ...})` | rewrite | Spark 3.5 named parameters (verified on local Spark: queries, `INSERT`, `DELETE`). Blocked, never guessed: a name that is also a column of a table the body reads, an alias, a function name or a Spark keyword; an `ARRAY` or `STRUCT` argument |
+| `G26_GEOGPOINT_WKT` | `ST_GEOGPOINT(-122.4, 37.8)`, constant coordinates, with `plan --geography wkt` | `'POINT(-122.4 37.8)'` | rewrite | The text `ST_ASTEXT` gives, as GEOGRAPHY columns are carried. Longitude strictly within ±180 and latitude within ±90; from columns it stays blocked (`G18`), as Spark formats numbers differently |
 
 ## Flagged — left as written
 
@@ -67,7 +68,7 @@ must run.
 | `G16_PSEUDO_COLUMN` | `_PARTITIONTIME`, `_PARTITIONDATE` | Left as written: carried as columns of the same names on ingestion-time tables (`D03`); flagged |
 | `G16_PSEUDO_COLUMN` | `_TABLE_SUFFIX`, wildcard tables | No Delta equivalent; blocked |
 | `G17_SCRIPTING` | `DECLARE`, `BEGIN…END`, `EXECUTE IMMEDIATE`, `SET`, `IF`, `LOOP`, `CALL`, ... and any multi-statement script | Not translated |
-| `G18_ML_AI_GEO` | `ML.*`, `AI.*`, `ST_*` | No equivalent |
+| `G18_ML_AI_GEO` | `ML.*`, `AI.*`, `ST_*` | No equivalent. With `--geography wkt`, `ST_GEOGPOINT` of constant coordinates is rewritten (`G26_GEOGPOINT_WKT`) |
 | `G97_LEGACY_SQL` | a view written in legacy SQL (checked in `migrate`) | Rewrite it in GoogleSQL first |
 | `G98_UNBALANCED` | unterminated quote, unbalanced parentheses | Cannot be read safely |
 
