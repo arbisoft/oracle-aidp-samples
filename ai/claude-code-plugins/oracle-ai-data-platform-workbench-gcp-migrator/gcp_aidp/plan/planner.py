@@ -23,7 +23,7 @@ from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.inventory.manifest import ALL_SOURCES
 from gcp_aidp.translate.ddl import table_layout
 from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
-from gcp_aidp.translate.types import map_column
+from gcp_aidp.translate.types import MODES, OPTIONS, map_column
 
 OCI_NAMESPACE_DEFAULT = "<your-oci-namespace>"
 MIGRATE, REPORT, SKIP = "MIGRATE", "REPORT", "SKIP"
@@ -205,7 +205,9 @@ def _schedule_note(expr, quartz, why, tz) -> str:
 # TIME gets the connector path's text form, HH:MM:SS.ffffff.
 _AS_TEXT = {"JSON": "TO_JSON_STRING({c})", "TIME": "FORMAT_TIME('%H:%M:%E6S', {c})",
             "BIGNUMERIC": "CAST({c} AS STRING)", "BIGDECIMAL": "CAST({c} AS STRING)",
-            "GEOGRAPHY": "ST_ASTEXT({c})"}
+            "GEOGRAPHY": "ST_ASTEXT({c})", "INTERVAL": "CAST({c} AS STRING)",
+            # not text: a RANGE leaves as its two bounds, the planned STRUCT<start, end>
+            "RANGE": "IF({c} IS NULL, NULL, STRUCT(RANGE_START({c}) AS `start`, RANGE_END({c}) AS `end`))"}
 
 
 def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]:
@@ -588,6 +590,7 @@ def _scope_to_datasets(assets: list[dict], items: dict, datasets: list[str]) -> 
 
 def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
                catalog: str | None = None, bignumeric: str = "block", geography: str = "block",
+               interval: str = "block", range_: str = "block",
                datasets: list[str] | None = None, export_over_gb: float | None = None,
                export_bucket: str | None = None, buckets: dict[str, str] | None = None) -> dict:
     """`datasets`: migrate only these BigQuery datasets (None: every dataset).
@@ -607,9 +610,10 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
         raise ValueError(f"not a Cloud Storage bucket name: {export_bucket!r}")
     if export_over_gb is not None and export_over_gb < 0:
         raise ValueError("--export-over-gb must be 0 or more")
-    if bignumeric not in ("block", "string") or geography not in ("block", "wkt"):
-        raise ValueError("bignumeric must be block|string and geography block|wkt")
-    mapping = {"bignumeric": bignumeric, "geography": geography}
+    mapping = {"bignumeric": bignumeric, "geography": geography, "interval": interval, "range": range_}
+    for mode, value in mapping.items():
+        if value not in MODES[mode]:
+            raise ValueError(f"{mode} must be {'|'.join(MODES[mode])}, not {value!r}")
     oci_namespace = _validated_namespace(oci_namespace)
     items, scan_errors = _validated_items(manifest)
     project = manifest.get("project_id") or ""
@@ -685,6 +689,32 @@ def _scope_line(plan: dict) -> str:
     return f"Datasets: {', '.join(chosen)} ({len(chosen)} of {total}; the rest are SKIP)"
 
 
+def decisions(plan: dict) -> list[str]:
+    """What the plan blocks that a person must decide, one line per choice: the re-plan option
+    and what it gives up, with every column it would carry; or what no option carries."""
+    modes = plan.get("type_modes") or {}
+    by_option: dict[str, list[str]] = {}
+    by_hand = []
+    for a in plan["assets"]:
+        tgt = a["target"]
+        if a["action"] != MIGRATE or "columns" not in tgt:
+            continue
+        table = f"{tgt['schema']}.{tgt['name']}"
+        if not tgt["columns"]:
+            by_hand.append(f"{table}: no columns in the manifest")
+        for c in tgt["columns"]:
+            if c["severity"] != "block":
+                continue
+            fixable = [r for r in c["rules"] if r in OPTIONS and modes.get(OPTIONS[r][0], "block") == "block"]
+            for r in fixable:
+                by_option.setdefault(r, []).append(f"{table}.{c['name']}")
+            if not fixable:
+                by_hand.append(f"{table}.{c['name']} ({', '.join(c['rules'])}): {'; '.join(c['details'])}")
+    lines = [f"--{OPTIONS[r][0]} {OPTIONS[r][1]}: {OPTIONS[r][2]}. Blocked now: {', '.join(cols)}"
+             for r, cols in by_option.items()]
+    return lines + [f"no option, a person rewrites it: {x}" for x in by_hand]
+
+
 def summarize_plan(plan: dict) -> str:
     s = plan["summary"]
     t = plan["target"]
@@ -703,6 +733,10 @@ def summarize_plan(plan: dict) -> str:
     for (action, stype, ttype, version, reason), n in _groups(plan):
         line = f"  {action:<7s} {n:4d}  {stype:<26s} → {ttype:<20s} {version:<5s}"
         lines.append(line + (f"  {reason}" if action != MIGRATE else ""))
+    todo = decisions(plan)
+    if todo:
+        lines += ["", (f"  NEEDS A DECISION ({len(todo)}): these tables are not created until it is made "
+                       "(plan.md, top):")] + [f"  - {d}" for d in todo]
     return "\n".join(lines)
 
 
@@ -723,6 +757,14 @@ def write_plan_markdown(plan: dict, out: str | Path) -> Path:
     for source, err in plan["scan_errors"].items():
         md.append(f"> **{source}**: {err}\n" if "." in source else
                   f"> **{source} scan failed**; its assets are missing from this plan: {err}\n")
+    todo = decisions(plan)
+    if todo:
+        md += [f"## Needs a decision ({len(todo)})", "",
+               ("These tables are not created as planned. Choose for each line, then run `plan` again with "
+                "the options you pick; leaving one out keeps the column blocked."), ""]
+        md += [f"- {d}" for d in todo] + [""]
+    md += [("SQL that cannot be translated (views, queries, routines) is listed by `migrate`, in "
+            "`report.md` under *Blocked*."), ""]
     for action, title in ((MIGRATE, "To migrate"), (REPORT, "Reported, not translated"),
                           (SKIP, "Skipped in this version")):
         rows = [a for a in plan["assets"] if a["action"] == action]

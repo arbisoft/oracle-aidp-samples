@@ -77,9 +77,19 @@ class TypeRules(unittest.TestCase):
 
     def test_TY16_INTERVAL(self):
         self.check(m("INTERVAL"), None, "TY16_INTERVAL", "block")
+        self.assertIn("--interval string", m("INTERVAL")["details"][0])
+        text = map_column({"name": "c", "type": "INTERVAL"}, interval="string")
+        self.check(text, "STRING", "TY16_INTERVAL", "caveat")
 
     def test_TY17_RANGE(self):
-        self.check(m("RANGE"), None, "TY17_RANGE", "block")
+        self.check(m("RANGE", rangeElementType={"type": "DATE"}), None, "TY17_RANGE", "block")
+        self.assertIn("--range struct", m("RANGE", rangeElementType={"type": "DATE"})["details"][0])
+        dates = map_column({"name": "c", "type": "RANGE", "rangeElementType": {"type": "DATE"}}, range="struct")
+        self.check(dates, "STRUCT<`start`: DATE, `end`: DATE>", "TY17_RANGE", "caveat")
+        times = map_column({"name": "c", "type": "RANGE", "rangeElementType": {"type": "DATETIME"}}, range="struct")
+        self.assertEqual(times["target_type"], "STRUCT<`start`: TIMESTAMP, `end`: TIMESTAMP>")
+        self.assertIn("session time zone", times["details"][0])  # DATETIME's own caveat comes along
+        self.check(map_column({"name": "c", "type": "RANGE"}, range="struct"), None, "TY17_RANGE", "block")
 
     def test_TY99_UNKNOWN(self):
         self.check(m("VECTOR"), None, "TY99_UNKNOWN", "block")

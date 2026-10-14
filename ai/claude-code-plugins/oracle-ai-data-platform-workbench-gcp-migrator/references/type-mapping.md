@@ -25,8 +25,8 @@ condition; makes the table REVIEW), **flag** (carried, needs review), **block**
 | `TY13_ARRAY` | `ARRAY` / mode `REPEATED` | `ARRAY<...>` | map | |
 | `TY14_JSON` | `JSON` | `STRING` | caveat | JSON text on every affected column; read with `get_json_object` / `from_json` |
 | `TY15_GEOGRAPHY` | `GEOGRAPHY` | none | **block** | `--geography wkt` carries WKT text (caveat): no spatial type, index or predicate |
-| `TY16_INTERVAL` | `INTERVAL` | none | **block** | |
-| `TY17_RANGE` | `RANGE<T>` | none | **block** | Carry the bounds as two columns by hand |
+| `TY16_INTERVAL` | `INTERVAL` | none | **block** | `--interval string` carries BigQuery's interval text, `Y-M D H:M:S` (caveat): Delta cannot store Spark's interval types, and one BigQuery INTERVAL mixes the two Spark kinds |
+| `TY17_RANGE` | `RANGE<T>` | none | **block** | `--range struct` carries `STRUCT<start: T, end: T>` (caveat), NULL for an unbounded end, `T` by its own rule; range functions become comparisons on the bounds |
 | `TY99_UNKNOWN` | anything else | none | **block** | Never approximated |
 
 `REQUIRED` columns are created `NOT NULL`. Column and table descriptions become
@@ -50,7 +50,12 @@ copy converts each to the target type above:
 Every conversion runs with ANSI casts, so a value that does not fit or parse
 fails the table instead of becoming NULL. Not yet observed: unparameterized
 `BIGNUMERIC`, `GEOGRAPHY`, `INTERVAL` and `RANGE` (blocked by default, so
-never read).
+never read). The export route converts them in BigQuery (`EXPORT DATA`): `INTERVAL` by
+`CAST(.. AS STRING)`, `RANGE` by `RANGE_START` and `RANGE_END`.
+
+Every type left blocked is listed at the top of `plan.md`, under *Needs a decision*, and
+by `plan` in the terminal: the option that carries it, what that gives up, and each
+column it would carry.
 
 ## Table layout (`gcp_aidp/translate/ddl.py`)
 

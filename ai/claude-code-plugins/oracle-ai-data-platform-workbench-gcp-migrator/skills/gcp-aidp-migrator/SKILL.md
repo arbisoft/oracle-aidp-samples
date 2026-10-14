@@ -73,7 +73,8 @@ gcp-aidp run       migrated                               # runs the published m
    ask before planning a large project.
 2. **Run the verbs in order**; each reads the previous one's output.
 3. **Stop at the plan.** Show `plan.md`, the approval document: the actions, the
-   *not scanned* list at the top, and the type decisions. A name collision halts the
+   *not scanned* list at the top, and first its *Needs a decision* section: ask the
+   user to choose for each line, and re-plan with only the options they pick. A name collision halts the
    plan; tell the user to rename one side, never pick a winner.
 4. **Read the reports.** After `migrate`, open `migrated/report.md` and surface every
    flag, caveat and block; they need a human. After `verify`, give the PASS / REVIEW /
@@ -123,9 +124,9 @@ State what PASS means: translated, no known issue detected, **not execution-veri
 clean. Do not call a PASS asset "ready".
 
 Report `blocked` alongside ok and needs-review: a blocked asset was refused, not
-partly translated, so it is work the user still owes. A table blocked for `BIGNUMERIC`
-or `GEOGRAPHY` can be re-planned with `--bignumeric string` or `--geography wkt`;
-say what that gives up.
+partly translated, so it is work the user still owes. A table blocked for `BIGNUMERIC`,
+`GEOGRAPHY`, `INTERVAL` or `RANGE` can be re-planned with `--bignumeric string`,
+`--geography wkt`, `--interval string` or `--range struct`; say what that gives up.
 
 `03_reconcile` verdicts:
 

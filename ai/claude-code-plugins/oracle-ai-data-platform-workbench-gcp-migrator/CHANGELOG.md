@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format loosely follows
 ## [0.2.1] - unreleased
 
 ### Added
+- *Needs a decision* at the top of `plan.md`, and in `plan`'s terminal output: each type the
+  plan blocks, the option that carries it, what that gives up, and every column it would
+  carry. Before, a blocked column was one note in a long table, and the user learned of it
+  in `migrate`'s report, after approving the plan.
+- `plan --interval string` carries `INTERVAL` as BigQuery's interval text, and
+  `plan --range struct` carries `RANGE<T>` as `STRUCT<start, end>` (`TY16`, `TY17`, caveats;
+  blocked stays the default). The export route converts them in `EXPORT DATA`.
 - `P11_SPARK_PROPERTY`: a Dataproc job's or step's Spark properties. Runtime `spark.sql.*`
   keys are set at the start of the AIDP job (`spark.conf.set` in a Python task, `SET` before
   Spark SQL statements); executor and driver sizing is noted for the cluster; Dataproc, YARN

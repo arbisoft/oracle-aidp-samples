@@ -236,8 +236,9 @@ Every asset gets a plan row with one of three actions:
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate
-(`--datasets sales,finance`), and whether `BIGNUMERIC` and `GEOGRAPHY` columns are
-carried as text (`--bignumeric string`, `--geography wkt`), and which tables take
+(`--datasets sales,finance`), how `BIGNUMERIC`, `GEOGRAPHY`, `INTERVAL` and `RANGE`
+columns are carried (`--bignumeric string`, `--geography wkt`, `--interval string`,
+`--range struct`; blocked by default and listed under *Needs a decision*), and which tables take
 the export route (`--export-over-gb`, below). `--bucket-mapping` names the OCI
 bucket each GCS bucket lands in (an unmapped one keeps its name). Without `--datasets`,
 every dataset in the project is planned and copied. With it, the other datasets'

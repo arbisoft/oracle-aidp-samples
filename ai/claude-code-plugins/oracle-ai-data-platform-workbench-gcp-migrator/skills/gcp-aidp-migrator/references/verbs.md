@@ -28,6 +28,7 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 ```
 gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
               [--datasets a,b] [--bignumeric block|string] [--geography block|wkt]
+              [--interval block|string] [--range block|struct]
               [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]
 ```
 - Writes `plan.json` and `plan.md` beside it. Actions: `MIGRATE`, `REPORT`, `SKIP`.
@@ -36,8 +37,9 @@ gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
   does not hold fails the plan.
 - `--catalog`: target INTERNAL catalog (default: the project id, made a valid name).
 - `--namespace`: OCI namespace for target buckets (default `$OCI_NAMESPACE`).
-- `--bignumeric string` / `--geography wkt`: carry those columns as text instead of
-  blocking the table.
+- `--bignumeric string` / `--geography wkt` / `--interval string`: carry those columns as
+  text instead of blocking the table; `--range struct` carries a RANGE as
+  `STRUCT<start, end>`. What stays blocked is listed under *Needs a decision* in `plan.md`.
 - `--export-over-gb` + `--export-bucket`: tables of at least GB gigabytes take the
   export route: `gcp-aidp export` (below) puts them on OCI as Parquet, and the copy
   notebook loads them. Steps, permissions and per-type rules:

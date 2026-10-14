@@ -114,7 +114,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
                                             args.namespace or os.environ.get("OCI_NAMESPACE"))
         ns = mapped_ns or ns
     plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog, buckets=buckets,
-                      bignumeric=args.bignumeric, geography=args.geography, datasets=datasets,
+                      bignumeric=args.bignumeric, geography=args.geography, interval=args.interval,
+                      range_=args.range, datasets=datasets,
                       export_over_gb=args.export_over_gb, export_bucket=args.export_bucket)
     out = Path(args.output) if args.output else Path(args.manifest).with_suffix(".plan.json")
     write_plan(plan, out)
@@ -301,6 +302,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BIGNUMERIC columns: block the table (default) or carry exact decimal text")
     pl.add_argument("--geography", choices=("block", "wkt"), default="block",
                     help="GEOGRAPHY columns: block the table (default) or carry WKT text")
+    pl.add_argument("--interval", choices=("block", "string"), default="block",
+                    help="INTERVAL columns: block the table (default) or carry BigQuery's interval text")
+    pl.add_argument("--range", choices=("block", "struct"), default="block",
+                    help="RANGE columns: block the table (default) or carry the bounds as STRUCT<start, end>")
     pl.add_argument("--export-over-gb", type=float, metavar="GB",
                     help="tables of at least GB gigabytes go the export route: Parquet in GCS, transferred to "
                          "OCI, loaded into Delta (default: every table through the connector)")

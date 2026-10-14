@@ -1,6 +1,6 @@
 ---
 description: Turn a Google Cloud inventory manifest into an AIDP mapping plan and approval document
-argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--bignumeric block|string] [--geography block|wkt] [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]"
+argument-hint: "<inv.json> [-o plan.json] [--catalog <aidp-catalog>] [--namespace <oci-namespace>] [--datasets a,b] [--bignumeric block|string] [--geography block|wkt] [--interval block|string] [--range block|struct] [--export-over-gb GB --export-bucket BUCKET] [--bucket-mapping JSON]"
 allowed-tools: Bash(gcp-aidp plan:*), Bash(python3 -m gcp_aidp.cli plan:*), Read
 ---
 
@@ -14,10 +14,11 @@ named one; the default is the project id. Ask which datasets to migrate: without
 plan as SKIP.
 
 After it runs, Read `plan.md` (the approval document) and report: the MIGRATE /
-REPORT / SKIP counts, the not-scanned list at the top, and every table blocked by a
-type (`BIGNUMERIC`, `GEOGRAPHY`, `INTERVAL`, `RANGE`). For `BIGNUMERIC` and
-`GEOGRAPHY`, say that `--bignumeric string` or `--geography wkt` carries the column as
-text, and what that gives up. Do not re-plan with those flags unless the user asks.
+REPORT / SKIP counts, the not-scanned list at the top, and the *Needs a decision*
+section first: each type the plan blocks (`BIGNUMERIC`, `GEOGRAPHY`, `INTERVAL`,
+`RANGE`), the option that carries it (`--bignumeric string`, `--geography wkt`,
+`--interval string`, `--range struct`), what it gives up, and the columns. Ask the user
+to choose for each line; re-plan only with the options they pick.
 
 For large tables, `--export-over-gb N --export-bucket B` sends tables of at least N GB
 through Parquet files instead of the connector. Only suggest it; it needs an export

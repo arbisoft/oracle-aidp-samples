@@ -24,10 +24,17 @@ _SIMPLE = {  # source name: (Delta type, rule)
     "DATE": ("DATE", "TY06_DATE"),
     "TIMESTAMP": ("TIMESTAMP", "TY07_TIMESTAMP"),
 }
-_BLOCKED = {
-    "INTERVAL": ("TY16_INTERVAL", "no Delta INTERVAL column type"),
-    "RANGE": ("TY17_RANGE", "no Delta RANGE type; carry the bounds as two columns by hand"),
+# A type with no Delta column type is blocked by default; `plan --<mode> <choice>` carries it.
+# rule: (mode, choice, what carrying it gives up), for the plan's "Needs a decision" list.
+OPTIONS = {
+    "TY09_BIGNUMERIC": ("bignumeric", "string", "carried as exact decimal text; arithmetic and ordering need a cast"),
+    "TY15_GEOGRAPHY": ("geography", "wkt", "carried as WKT text; spatial functions need a rewrite"),
+    "TY16_INTERVAL": ("interval", "string",
+                      "carried as BigQuery's interval text; date arithmetic with it needs a rewrite"),
+    "TY17_RANGE": ("range", "struct",
+                   "carried as STRUCT<start, end>; range functions become comparisons on the bounds"),
 }
+MODES = {mode: ("block", choice) for mode, choice, _ in OPTIONS.values()}
 
 
 def worst(severities) -> str:
@@ -45,7 +52,7 @@ def _decimal(col: dict, default: tuple[int, int]) -> tuple[int, int] | None:
         return None
 
 
-def _scalar(col: dict, *, bignumeric: str, geography: str) -> tuple[str | None, str, str, str]:
+def _scalar(col: dict, modes: dict) -> tuple[str | None, str, str, str]:
     """(Delta type, rule, severity, detail) for one non-repeated value."""
     t = str(col.get("type", "")).upper()
     if t in _SIMPLE:
@@ -61,7 +68,7 @@ def _scalar(col: dict, *, bignumeric: str, geography: str) -> tuple[str | None, 
         if ps is not None and ps[0] <= 38:
             # A parameterized BIGNUMERIC(P,S) with P <= 38 fits a Spark DECIMAL exactly.
             return f"DECIMAL({ps[0]},{ps[1]})", "TY09_BIGNUMERIC", "map", ""
-        if bignumeric == "string":
+        if modes.get("bignumeric") == "string":
             return "STRING", "TY09_BIGNUMERIC", "caveat", (
                 "BIGNUMERIC exceeds Spark's 38-digit DECIMAL; carried as exact decimal text, "
                 "so arithmetic and ordering need an explicit cast")
@@ -80,18 +87,32 @@ def _scalar(col: dict, *, bignumeric: str, geography: str) -> tuple[str | None, 
             "carried as JSON text; read fields with get_json_object/from_json, and note a JSON path "
             "query in a view is flagged by the SQL translator")
     if t == "GEOGRAPHY":
-        if geography == "wkt":
+        if modes.get("geography") == "wkt":
             return "STRING", "TY15_GEOGRAPHY", "caveat", (
                 "carried as WKT text: no spatial type, index or predicate on the target")
         return None, "TY15_GEOGRAPHY", "block", (
             "no Delta spatial type; re-plan with --geography wkt to carry it as WKT text")
-    if t in _BLOCKED:
-        rule, detail = _BLOCKED[t]
-        return None, rule, "block", detail
+    if t == "INTERVAL":
+        if modes.get("interval") == "string":
+            return "STRING", "TY16_INTERVAL", "caveat", (
+                "carried as BigQuery's interval text ('Y-M D H:M:S'); date arithmetic with it needs a rewrite")
+        return None, "TY16_INTERVAL", "block", (
+            "no Delta INTERVAL column type; re-plan with --interval string to carry it as text")
+    if t == "RANGE":
+        element = (col.get("rangeElementType") or {}).get("type")
+        bound = _scalar({"type": element}, modes) if element else (None, "", "block", "")
+        if bound[0] is None:
+            return None, "TY17_RANGE", "block", f"RANGE of unreadable element type {element!r}"
+        if modes.get("range") == "struct":
+            return f"STRUCT<`start`: {bound[0]}, `end`: {bound[0]}>", "TY17_RANGE", "caveat", (
+                f"carried as STRUCT<start, end> of {element}, NULL for an unbounded end; "
+                "range functions become comparisons on the bounds" + (f"; {bound[3]}" if bound[3] else ""))
+        return None, "TY17_RANGE", "block", (
+            "no Delta RANGE type; re-plan with --range struct to carry the bounds as STRUCT<start, end>")
     return None, "TY99_UNKNOWN", "block", f"unmapped BigQuery type {t!r} is never approximated"
 
 
-def map_column(col: dict, *, bignumeric: str = "block", geography: str = "block") -> dict:
+def map_column(col: dict, **modes: str) -> dict:
     """One planned column: target type, every rule applied, worst severity, details."""
     rules: list[str] = []
     details: list[str] = []
@@ -99,7 +120,7 @@ def map_column(col: dict, *, bignumeric: str = "block", geography: str = "block"
     t = str(col.get("type", "")).upper()
 
     if t in ("RECORD", "STRUCT"):
-        fields = [map_column(f, bignumeric=bignumeric, geography=geography) for f in col.get("fields", [])]
+        fields = [map_column(f, **modes) for f in col.get("fields", [])]
         rules.append("TY12_STRUCT")
         severities.append("map")
         if not fields:
@@ -113,7 +134,7 @@ def map_column(col: dict, *, bignumeric: str = "block", geography: str = "block"
         target = None if blocked else "STRUCT<" + ", ".join(
             f"{quote_ident(f['name'])}: {f['target_type']}" for f in fields) + ">"
     else:
-        target, rule, severity, detail = _scalar(col, bignumeric=bignumeric, geography=geography)
+        target, rule, severity, detail = _scalar(col, modes)
         rules.append(rule)
         severities.append(severity)
         if detail:
@@ -140,7 +161,7 @@ def map_column(col: dict, *, bignumeric: str = "block", geography: str = "block"
 
 def map_type_name(name: str) -> tuple[str | None, str, str, str]:
     """A GoogleSQL type name in SQL text (CAST, function arguments) → Spark type name."""
-    return _scalar({"type": name}, bignumeric="block", geography="block")
+    return _scalar({"type": name}, {})
 
 
 def quote_ident(name: str) -> str:

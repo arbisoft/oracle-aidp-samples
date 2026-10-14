@@ -326,6 +326,35 @@ class ExportRoute(unittest.TestCase):
                          {"tags": "ARRAY(SELECT TO_JSON_STRING(_gcp_aidp_e0) FROM UNNEST(`tags`) AS _gcp_aidp_e0 "
                                   "WITH OFFSET AS _gcp_aidp_o0 ORDER BY _gcp_aidp_o0)"})
 
+    def test_interval_and_range_carried_by_choice_and_exported_as_planned(self):
+        C = lambda name, type_, **kw: {"name": name, "type": type_, "mode": "NULLABLE", **kw}
+        t = {"dataset": "d", "name": "t", "num_bytes": 10**10,
+             "columns": [C("id", "INTEGER"), C("dwell", "INTERVAL"), C("w", "RANGE", rangeElementType={"type": "DATE"})]}
+        manifest = _manifest(datasets=[{"name": "d"}], tables=[t])
+        with self.assertRaisesRegex(ValueError, "range must be block|struct"):
+            build_plan(manifest, range_="string")
+        plan = build_plan(manifest, export_over_gb=1, export_bucket="b-1", interval="string", range_="struct")
+        target = next(a for a in plan["assets"] if a["source"]["type"] == "bq_table")["target"]
+        self.assertEqual([c["target_type"] for c in target["columns"]],
+                         ["BIGINT", "STRING", "STRUCT<`start`: DATE, `end`: DATE>"])
+        self.assertEqual(target["load_from"]["as_text"], {
+            "dwell": "CAST(`dwell` AS STRING)",
+            "w": "IF(`w` IS NULL, NULL, STRUCT(RANGE_START(`w`) AS `start`, RANGE_END(`w`) AS `end`))"})
+
+    def test_blocked_types_are_a_decision_at_the_top_of_the_plan(self):
+        from gcp_aidp.plan.planner import decisions, summarize_plan
+        plan = build_plan(DEMO)
+        todo = decisions(plan)
+        self.assertTrue(any(d.startswith("--interval string:") and "sales.store_visits." in d for d in todo), todo)
+        self.assertTrue(any(d.startswith("--geography wkt:") for d in todo), todo)
+        self.assertIn("NEEDS A DECISION", summarize_plan(plan))
+        from gcp_aidp.plan import write_plan_markdown
+        with tempfile.TemporaryDirectory() as d:
+            md = write_plan_markdown(plan, Path(d) / "plan.md").read_text()
+        self.assertLess(md.index("## Needs a decision"), md.index("## To migrate"))
+        chosen = build_plan(DEMO, bignumeric="string", geography="wkt", interval="string", range_="struct")
+        self.assertFalse([d for d in decisions(chosen) if d.startswith("--")])  # chosen: no longer asked
+
     def test_bucket_mapping_sends_files_and_paths_to_the_mapped_oci_bucket(self):
         from gcp_aidp.plan.planner import bucket_mapping
 
