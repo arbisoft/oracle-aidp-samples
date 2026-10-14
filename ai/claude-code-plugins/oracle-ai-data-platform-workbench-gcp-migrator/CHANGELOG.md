@@ -85,6 +85,11 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- External tables lost BigQuery's column list and CSV options: Spark inferred the schema
+  from the files, so a CSV became `_c0, _c1, …` strings and a header row became a data row.
+  The DDL now carries the columns (each by its type rule) and the CSV options (`header`,
+  `sep`, `quote`, `encoding`, `nullValue`, `multiLine`); what does not carry is flagged.
+  Inventory records `csvOptions` and `autodetect`, so run it again. Checked on local Spark 3.5.
 - `00_diagnose` now stops the run, before anything is created, on what would otherwise fail
   later: a source whose columns differ from the plan (the copy stopped it as `type_drift`)
   and a target table already there with another layout (`01_structure` stopped it). Each

@@ -266,7 +266,8 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             findings.append(_f("GS01_BUCKET_MAP", "rewrite", f"{location} → {oci}"))
             if note:
                 findings.append(_f("GS02_LOCATION", "caveat", note))
-        statement, more = ddl.create_external_table(tgt, src.get("format"), oci or location or "")
+        statement, more = ddl.create_external_table(tgt, src.get("format"), oci or location or "",
+                                                    tgt.get("columns"), src.get("csv_options"), src.get("autodetect"))
         findings += [_f(*f) for f in more]
         if _status(findings) == "blocked" or statement is None:
             path = w.sql("external_tables", stem, aid, findings, f"-- source URIs:\n{source_sql}", blocked=True)

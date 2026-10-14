@@ -69,9 +69,13 @@ def _table(dataset: str, t: dict) -> tuple[str, dict]:
                                       "refresh_interval_minutes": interval // 60000 if interval else None}
     if kind == "EXTERNAL":
         ext = t.get("externalDataConfiguration", {})
-        return "external_tables", {**base, "format": ext.get("sourceFormat"),
-                                   "source_uris": ext.get("sourceUris", []),
-                                   "columns": t.get("schema", {}).get("fields", [])}
+        row = {**base, "format": ext.get("sourceFormat"), "source_uris": ext.get("sourceUris", []),
+               "columns": t.get("schema", {}).get("fields", [])}
+        if ext.get("csvOptions") is not None:
+            row["csv_options"] = ext["csvOptions"]
+        if ext.get("autodetect") is not None:
+            row["autodetect"] = ext["autodetect"]
+        return "external_tables", row
     # TABLE, SNAPSHOT, CLONE: stored data, read through the connector.
     row = {**base, "type": kind, "columns": t.get("schema", {}).get("fields", []),
            "num_rows": _int(t.get("numRows")), "num_bytes": _int(t.get("numBytes"))}

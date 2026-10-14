@@ -296,8 +296,10 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: di
     for e in it["external_tables"]:
         out.append(_row(f"bigquery.external_table.{e['dataset']}.{e['name']}", "data+setup", "0.1", MIGRATE,
                         {"type": "bq_external_table", "dataset": e["dataset"], "name": e["name"],
-                         "format": e.get("format"), "source_uris": e.get("source_uris", [])},
-                        {"type": "aidp_external_table", **rel(e["dataset"], e["name"])},
+                         "format": e.get("format"), "source_uris": e.get("source_uris", []),
+                         **{k: e[k] for k in ("csv_options", "autodetect") if k in e}},
+                        {"type": "aidp_external_table", **rel(e["dataset"], e["name"]),
+                         "columns": [map_column(c, **mapping) for c in e.get("columns", [])]},
                         chain=["gcs_to_oci_location", "create_external_table"]))
     for r in it["routines"]:
         rid = f"bigquery.routine.{r['dataset']}.{r['name']}"

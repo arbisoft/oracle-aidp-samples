@@ -70,7 +70,22 @@ class Layout(unittest.TestCase):
         self.assertIn("USING PARQUET\nLOCATION 'oci://b@n/p/'", sql)
         self.assertNotIn("flag", [s for _, s, _ in f])
         _, csv = ddl.create_external_table(T, "CSV", "oci://b@n/p/")
-        self.assertIn("flag", [s for _, s, _ in csv])
+        self.assertIn("flag", [s for _, s, _ in csv])  # an older inventory: no CSV options recorded
+
+    def test_D05_external_columns_and_csv_options_are_carried(self):
+        cols = [map_column({"name": "id", "type": "INTEGER"}), map_column({"name": "n", "type": "STRING"})]
+        sql, f = ddl.create_external_table(T, "CSV", "oci://b@n/p/", cols,
+                                           {"skipLeadingRows": "1", "fieldDelimiter": ";", "quote": '"',
+                                            "allowQuotedNewlines": True, "allowJaggedRows": False})
+        self.assertIn("(\n  `id` BIGINT,\n  `n` STRING\n)\nUSING CSV\n"
+                      "OPTIONS (header 'true', sep ';', quote '\"', multiLine 'true')\nLOCATION 'oci://b@n/p/'", sql)
+        self.assertNotIn("flag", [s for _, s, _ in f])
+        _, f = ddl.create_external_table(T, "CSV", "x", cols, {}, autodetect=True)
+        self.assertIn("detects a header row itself", " ".join(d for _, s, d in f if s == "flag"))
+        _, f = ddl.create_external_table(T, "CSV", "x", cols, {"skipLeadingRows": "2", "preserveAsciiControlCharacters": True})
+        self.assertEqual(len([s for _, s, _ in f if s == "flag"]), 2)
+        geo = [map_column({"name": "g", "type": "GEOGRAPHY"})]
+        self.assertIsNone(ddl.create_external_table(T, "PARQUET", "x", geo)[0])  # a blocked column blocks it
         self.assertIsNone(ddl.create_external_table(T, "GOOGLE_SHEETS", "x")[0])
 
     def test_D06_SQL_FUNCTION(self):

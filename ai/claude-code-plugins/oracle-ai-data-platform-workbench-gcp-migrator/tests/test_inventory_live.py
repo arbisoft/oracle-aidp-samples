@@ -48,7 +48,7 @@ RESPONSES = {
     f"{DS}/tables/mv_daily": _table("mv_daily", "MATERIALIZED_VIEW",
                                     materializedView={"query": "SELECT 1 AS x", "refreshIntervalMs": "1800000"}),
     f"{DS}/tables/ext_files": _table("ext_files", "EXTERNAL", externalDataConfiguration={
-        "sourceFormat": "PARQUET", "sourceUris": ["gs://landing-bucket/x/*.parquet"]}),
+        "sourceFormat": "PARQUET", "sourceUris": ["gs://landing-bucket/x/*.parquet"], "autodetect": True}),
     f"{DS}/tables/orders/rowAccessPolicies": {"rowAccessPolicies": [
         {"rowAccessPolicyReference": {"policyId": "us_only"}, "filterPredicate": "country = 'US'"}]},
     f"{DS}/tables/type_zoo/rowAccessPolicies": {},
@@ -265,6 +265,8 @@ class LiveInventory(unittest.TestCase):
         self.assertEqual([v["name"] for v in it["views"]], ["v_simple", "v_legacy"])
         self.assertEqual(it["materialized_views"][0]["refresh_interval_minutes"], 30)
         self.assertEqual(it["external_tables"][0]["source_uris"], ["gs://landing-bucket/x/*.parquet"])
+        self.assertTrue(it["external_tables"][0]["autodetect"])
+        self.assertNotIn("csv_options", it["external_tables"][0])  # Parquet: none
         self.assertEqual({r["name"]: r["language"] for r in it["routines"]},
                          {"net_price": "SQL", "parse_utm": "JAVASCRIPT"})
         self.assertEqual(it["routines"][1]["arguments"][0]["type"], "ARRAY<STRING>")
