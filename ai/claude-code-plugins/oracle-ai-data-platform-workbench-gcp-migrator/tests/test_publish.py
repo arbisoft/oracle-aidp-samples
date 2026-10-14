@@ -18,7 +18,7 @@ DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.
 class FakeAidp:
     def __init__(self, present=(), jobs=(), runs=None, clusters=("ck",)):
         self.present, self.jobs, self.clusters = set(present), [{"name": n, "key": f"k_{n}"} for n in jobs], clusters
-        self.uploaded, self.created, self.started = [], [], []
+        self.uploaded, self.created, self.started, self.notebooks = [], [], [], {}
         self.runs = list(runs or [])
 
     def folder_names(self, folder):
@@ -31,7 +31,7 @@ class FakeAidp:
         return "" if key in self.clusters else f"cluster {key} is not one of this workspace's clusters"
 
     def put_notebook(self, path, text):
-        json.loads(text)  # a real .ipynb
+        self.notebooks[path] = json.loads(text)  # a real .ipynb
         self.uploaded.append(path)
 
     def put_file(self, path, local):
@@ -89,6 +89,8 @@ class Publish(unittest.TestCase):
         fake = FakeAidp(present={"00_diagnose.ipynb"}, jobs=["ana_refresh_sales_mv_daily_sales"])
         r = publish(self.out, prefix="ana", cluster_key="ck", apply=True, client=fake, log=lambda m: None)
         self.assertNotIn("/Workspace/ana/00_diagnose.ipynb", fake.uploaded)
+        params = "".join(fake.notebooks["/Workspace/ana/01_structure.ipynb"]["cells"][1]["source"])
+        self.assertIn("'reports-dir': '/Workspace/ana/reports',", params)  # run by hand: the job's reports
         status = {j["name"]: j["status"] for j in r["jobs"]}
         self.assertEqual(status["ana_refresh_sales_mv_daily_sales"], "skipped")  # exists: left alone
         self.assertEqual(status["ana_gcp_aidp_migration"], "refused")  # its diagnose notebook was not ours

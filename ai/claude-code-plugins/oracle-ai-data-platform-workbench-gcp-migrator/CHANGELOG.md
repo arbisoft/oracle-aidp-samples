@@ -69,6 +69,9 @@ All notable changes to this project are documented here. Format loosely follows
   `external-tables` parameter to remember: until `transfer --apply` has copied them, the
   table is reported as not created yet (`files_not_on_oci`, not a failure), and the next
   run creates it.
+- A data-plane notebook opened and run by hand in the workspace now keeps its reports
+  where the job's run does (`/Workspace/<prefix>/reports`): `publish` sets that as its
+  `reports-dir`. Before, it wrote to a shared default folder, which reconcile did not read.
 - A saved query is also published: `migrate` writes it as a notebook (its translated SQL,
   the result shown with `.toPandas()`) and `publish` uploads it to the workspace, with no
   job, so it opens and runs there as it did in BigQuery. It used to stay a local `.sql` file.

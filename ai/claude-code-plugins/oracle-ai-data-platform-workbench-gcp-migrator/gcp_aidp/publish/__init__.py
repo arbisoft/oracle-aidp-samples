@@ -77,6 +77,8 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
             raise PublishError(f"two files would land on {remote}")
         remote_of[rel] = remote
         notebooks.append({"local": str(local), "remote": remote, "kind": kind})
+        if kind == "notebook" and rel.startswith("notebooks/") and not rel.startswith("notebooks/jobs/"):
+            notebooks[-1]["reports_dir"] = f"{folder}/reports"  # opened by hand, it reports where the job does
 
     jobs, blocked = [], []
     for job in report["jobs"]:
@@ -158,7 +160,10 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
                 if upload.get("kind") == "file":
                     client.put_file(upload["remote"], upload["local"])
                 else:
-                    client.put_notebook(upload["remote"], Path(upload["local"]).read_text(encoding="utf-8"))
+                    text = Path(upload["local"]).read_text(encoding="utf-8")
+                    if upload.get("reports_dir"):
+                        text = with_reports_dir(text, upload["reports_dir"])
+                    client.put_notebook(upload["remote"], text)
                 upload["status"] = "uploaded"
             except (AidpError, AidpUnavailable, OSError) as exc:
                 upload.update(status="error", reason=str(exc))
@@ -186,6 +191,19 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
 
 _EXCEPTION = re.compile(r"([A-Za-z0-9_.]*(?:Exception|Error)): ([^\n\\]{1,240})")
 _WRAPPERS = ("[Command ", "An error occurred while calling")  # AIDP's and Py4J's: they only wrap the cause
+
+
+def with_reports_dir(text: str, reports_dir: str) -> str:
+    """A data-plane notebook whose `reports-dir` defaults to its publish folder's reports, so a
+    notebook run by hand reads and writes the same reports as the job's run."""
+    nb = json.loads(text)
+    line = f"    'reports-dir': {reports_dir!r},  # this publish's reports, as the job passes\n"
+    for cell in nb["cells"]:
+        source = "".join(cell["source"])
+        if "'reports-dir': None," in source:
+            lines = source.splitlines(keepends=True)
+            cell["source"] = [line if ln.lstrip().startswith("'reports-dir': None,") else ln for ln in lines]
+    return json.dumps(nb, indent=1)
 
 
 def failure_cause(text: str) -> str:
