@@ -72,8 +72,9 @@ class SparkRuntime(unittest.TestCase):
                 continue
             error = None
             for stmt in _statements((self.out / r["output_path"]).read_text(), self.catalog):
-                try:
-                    self.spark.sql(stmt).collect()
+                try:  # a routine's parameters (G25) bound to NULL: the SQL is checked, not the values
+                    params = dict.fromkeys(re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", stmt)) or None
+                    self.spark.sql(stmt, args=params).collect()
                 except Exception as exc:  # noqa: BLE001 - any Spark failure is the outcome
                     error = (str(exc).strip().splitlines() or [type(exc).__name__])[0][:200]
                     break

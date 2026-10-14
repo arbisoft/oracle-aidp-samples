@@ -23,10 +23,22 @@ from pathlib import Path
 from typing import Callable
 
 from gcp_aidp._atomic import write_text_atomic
-from gcp_aidp.dataplane import data_plan, sql_notebook, write_jobs, write_notebooks
+from gcp_aidp.dataplane import (
+    data_plan,
+    routine_notebook,
+    sql_notebook,
+    write_jobs,
+    write_notebooks,
+)
 from gcp_aidp.translate import ddl
 from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_uri
-from gcp_aidp.translate.googlesql_to_spark import Context, Result, statements, translate
+from gcp_aidp.translate.googlesql_to_spark import (
+    Context,
+    Result,
+    bind_parameters,
+    statements,
+    translate,
+)
 from gcp_aidp.translate.notebook_to_aidp import translate_notebook
 from gcp_aidp.translate.pyspark_to_aidp import (
     spark_properties,
@@ -34,6 +46,7 @@ from gcp_aidp.translate.pyspark_to_aidp import (
     translate_spark_sql,
 )
 from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
+from gcp_aidp.translate.types import quote_ident
 
 IN_PROGRESS_MARKER = ".gcp-aidp-migration-in-progress"
 STATUSES = ("ok", "needs_manual_review", "blocked", "reported", "skipped", "error")
@@ -62,9 +75,68 @@ def context_from_plan(plan: dict) -> Context:
             ctx.relations[(src["dataset"], src["name"])] = (tgt["catalog"], tgt["schema"], tgt["name"])
         elif tgt["type"] == "aidp_function":
             ctx.functions[(src["dataset"], src["name"])] = (tgt["catalog"], tgt["schema"], tgt["name"])
+        if src.get("type") == "bq_table" and tgt["type"] in _RELATIONS:
+            ctx.columns[(tgt["catalog"], tgt["schema"], tgt["name"])] = {c["name"] for c in src.get("columns", [])}
         elif tgt["type"] == "oci_bucket":
             ctx.buckets[src["name"]] = tgt["name"]
     return ctx
+
+
+_CREATES = re.compile(r"(?is)\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+                      r"`?(?P<ds>\w+)`?\.`?(?P<name>\w+)`?")
+_CTAS = re.compile(r"(?is)^(?P<head>\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\w.`]+)\s+AS\b")
+_SCALAR_ARGUMENTS = {"INT64", "INTEGER", "FLOAT64", "FLOAT", "NUMERIC", "BIGNUMERIC", "BOOL", "BOOLEAN", "STRING",
+                     "BYTES", "DATE", "DATETIME", "TIMESTAMP"}
+
+
+def _routine(src: dict, tgt: dict, ctx: Context) -> tuple[list[dict], list[str], list[str]]:
+    """(findings, Spark statements, parameters used) for a SQL table function or procedure."""
+    findings, args = [], src.get("arguments", [])
+    for a in args:
+        if str(a.get("type") or "").upper() not in _SCALAR_ARGUMENTS:
+            findings.append(_f("G25_ROUTINE_PARAMETER", "block", f"argument {a.get('name')} {a.get('type')}: a Spark "
+                                                                 "named parameter takes a single value"))
+        if a.get("mode") in ("OUT", "INOUT"):
+            findings.append(_f("D08_PROCEDURE", "block", f"{a['mode']} argument {a['name']}: a notebook returns "
+                                                         "no values to its caller"))
+    if tgt["type"] == "aidp_procedure" and args and any("mode" not in a for a in args):
+        findings.append(_f("D08_PROCEDURE", "flag", "argument modes are not in the manifest: run inventory again"))
+    body = src.get("body", "").strip()
+    if tgt["type"] == "aidp_procedure":  # BEGIN ... END around the statements
+        body = re.sub(r"(?is)^BEGIN\b(.*)\bEND\s*;?$", r"\1", body).strip()
+    parts = statements(body) if tgt["type"] == "aidp_procedure" else [body]
+    # A table the procedure creates in a migrated dataset maps as every table does: dataset → schema.
+    schemas = {(d, c) for (d, _), (c, _, _) in ctx.relations.items()}
+    created = {}
+    for part in parts:
+        m = _CREATES.match(part)
+        if m and (m["ds"], tgt["catalog"]) in schemas:
+            created[(m["ds"], m["name"])] = (tgt["catalog"], m["ds"], m["name"])
+    if created:
+        ctx = Context(**{**vars(ctx), "relations": {**ctx.relations, **created}})
+    out, used = [], []
+    for part in parts:
+        if _CTAS.match(part):  # Spark's CTAS without USING takes the session's default format
+            part = _CTAS.sub(r"\g<head> USING DELTA AS", part, count=1)
+            findings.append(_f("D08_PROCEDURE", "rewrite", "CREATE TABLE ... AS SELECT → USING DELTA"))
+        r = translate(part, ctx)
+        findings += _sql_findings(r)
+        if r.status == "blocked":
+            continue
+        reads = set().union(*[cols for fqn, cols in ctx.columns.items()
+                              if ".".join(quote_ident(x) for x in fqn) in r.sql] or [set()])
+        bound, more = bind_parameters(r.sql, [a["name"] for a in args], reads)
+        findings += _sql_findings(Result("", "", more))
+        out.append(bound)
+        used += [a["name"] for a in args if f":{a['name']}" in bound]
+    rule = "D07_TABLE_FUNCTION" if tgt["type"] == "aidp_table_function" else "D08_PROCEDURE"
+    if any(f["severity"] == "block" for f in findings):
+        findings.append(_f(rule, "block", "not translated as a whole: rewrite it by hand (the blocks above say why)"))
+    else:
+        what = ("a Python function returning a DataFrame" if rule == "D07_TABLE_FUNCTION"
+                else "a notebook, its arguments in PARAMS")
+        findings.append(_f(rule, "rewrite", f"{len(out)} statement(s) as {what}; SQL that calls it is not rewritten"))
+    return list({(f["rule"], f["severity"], f["detail"]): f for f in findings}.values()), out, list(dict.fromkeys(used))
 
 
 def _sql_findings(result) -> list[dict]:
@@ -288,6 +360,18 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
             translated, more = ddl.create_function(tgt, src.get("arguments", []), src.get("return_type"), r.sql)
             findings += [_f(*f) for f in more]
             path = w.sql("functions", stem, aid, findings, translated)
+    elif t in ("aidp_table_function", "aidp_procedure"):
+        findings, statements_out, used = _routine(src, tgt, ctx)
+        source_sql = src.get("body", "")
+        if _status(findings) == "blocked":
+            path = w.sql("functions", stem, aid, findings, source_sql, blocked=True)
+        else:
+            translated = ";\n\n".join(statements_out)
+            path = w.sql("functions", stem, aid, findings, translated)
+            p = w.path("functions", stem, ".ipynb", aid)
+            write_text_atomic(p, json.dumps(routine_notebook(t, stem, src.get("arguments", []), statements_out, used,
+                                                             w.plan_id), indent=1) + "\n")
+            row["notebook"] = p.relative_to(w.out_dir).as_posix()
     elif t == "aidp_notebook":
         cells, notebook_findings = translate_notebook(src["cells"], ctx)
         findings = _sql_findings(Result("", "", notebook_findings))

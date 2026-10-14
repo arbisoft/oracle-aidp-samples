@@ -76,6 +76,7 @@ class Context:
     project: str = ""
     relations: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
     functions: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
+    columns: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)  # a target's column names
     buckets: dict[str, str] = field(default_factory=dict)
     namespace: str = "<your-oci-namespace>"
 
@@ -564,6 +565,34 @@ def names_and_paths(sql: str, ctx: Context | None = None) -> Result:
             out += [Finding("G21_GCS_PATH", "flag", f"{p}: bucket not in the bucket map") for p in missing]
     _references(s, ctx, out)
     return Result(sql, s.render(), list(dict.fromkeys(out)))
+
+
+def bind_parameters(sql: str, names: list[str], columns: set[str] = frozenset()) -> tuple[str, list[Finding]]:
+    """A routine's parameters, which its body references by bare name, as Spark named parameter
+    markers (`:name`), bound by `spark.sql(sql, args=...)`. Blocked, never guessed: a name that
+    is also a column of a table the body reads (which one BigQuery reads is not carried), or an
+    alias or SQL keyword."""
+    wanted = {n.lower(): n for n in names}
+    s, used, out = _Sql(sql), [], []
+    for low, name in wanted.items():
+        if low in {c.lower() for c in columns}:
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"parameter {name} is also a column of a table the "
+                                                                 "body reads; rename the parameter in BigQuery"))
+        elif low in SPARK_KEYWORDS:
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"parameter {name} is a Spark SQL keyword"))
+    for j in range(len(s.sig)):
+        t = s.t(j)
+        if t.kind != "word" or t.text.lower() not in wanted or s.is_punct(j - 1, ".") or s.is_punct(j + 1, "."):
+            continue
+        if s.is_punct(j + 1, "(") or s.word(j - 1) == "AS":
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"{t.text} is used as a parameter and as a name"))
+            continue
+        name = wanted[t.text.lower()]
+        t.text = f":{name}"
+        used.append(name)
+    out += [Finding("G25_ROUTINE_PARAMETER", "rewrite", f"parameter {n} → :{n}, a Spark named parameter")
+            for n in dict.fromkeys(used)]
+    return s.render(), out
 
 
 def statements(sql: str) -> list[str]:

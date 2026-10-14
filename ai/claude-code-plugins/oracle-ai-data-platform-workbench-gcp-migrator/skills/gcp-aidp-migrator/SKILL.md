@@ -105,8 +105,10 @@ gcp-aidp run       migrated                               # runs the published m
 | Dataproc Spark SQL job | → | a job running its statements in a notebook |
 | Dataproc workflow template | → | one job: steps as tasks, prerequisites as `dependsOn` |
 | BigQuery Studio notebook (through Dataform with `--scan-services`, or exported `.ipynb` with `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
+| SQL table function | → | a notebook defining a Python function that returns a DataFrame, its arguments as Spark named parameters |
+| SQL procedure | → | a notebook: arguments in `PARAMS`, statements in order; procedural logic (`DECLARE`, `IF`, loops) blocked |
 
-Reported, not translated: procedures, JavaScript and table functions, BigQuery ML
+Reported, not translated: JavaScript functions, BigQuery ML
 models, row access policies and policy tags, Dataproc clusters (with their sizing), and
 Dataproc JAR, Hive, Pig and other engines' jobs. Skipped: BigQuery Studio notebooks whose
 content was not read, Composer and Dataform (0.3), Dataflow and Vertex AI (later).

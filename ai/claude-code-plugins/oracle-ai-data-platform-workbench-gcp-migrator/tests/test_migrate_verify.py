@@ -29,7 +29,8 @@ EXPECTED = {
     "bigquery.view.logs.v_all_app_events": "REVIEW",    # blocked: wildcard
     "bigquery.materialized_view.sales.mv_daily_sales": "PASS",
     "bigquery.routine.sales.net_price": "REVIEW",       # no SQL UDFs on Spark 3.5
-    "bigquery.routine.finance.close_month": "SKIP",     # reported
+    "bigquery.routine.finance.close_month": "REVIEW",   # blocked: DECLARE, procedural logic
+    "bigquery.routine.sales.orders_for_customer": "PASS",  # table function: a notebook, cid a named parameter
     "bigquery.saved_query.Churn_scoring": "REVIEW",     # blocked: ML.PREDICT
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
     "gcs.bucket.northwind-landing": "PASS",             # copied by `transfer`; nothing to set up

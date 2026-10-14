@@ -318,6 +318,12 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: di
             out.append(_row(rid, "code", "0.1", MIGRATE, src,
                             {"type": "aidp_function", **rel(r["dataset"], r["name"])},
                             chain=["googlesql_to_spark", "create_function"]))
+        elif r["routine_type"] in ("TABLE_VALUED_FUNCTION", "PROCEDURE") and r["language"] == "SQL":
+            kind = "aidp_table_function" if r["routine_type"] == "TABLE_VALUED_FUNCTION" else "aidp_procedure"
+            out.append(_row(rid, "code", "0.2", MIGRATE, src, {"type": kind, **rel(r["dataset"], r["name"])},
+                            chain=["googlesql_to_spark", "bind_parameters", "routine_notebook"],
+                            notes=[("a notebook in the workspace that runs its SQL with its arguments as Spark "
+                                    "named parameters; procedural logic (DECLARE, IF, loops) is blocked")]))
         else:
             what = {"PROCEDURE": "stored procedure", "TABLE_VALUED_FUNCTION": "table function"}.get(
                 r["routine_type"], f"{r['language'].lower()} function")

@@ -231,7 +231,7 @@ Every asset gets a plan row with one of three actions:
 | Action | Meaning |
 |---|---|
 | `MIGRATE` | migrated in this version |
-| `REPORT` | inventoried and reported with an effort band; not translated (procedures, JavaScript and table functions, BigQuery ML models, access rules) |
+| `REPORT` | inventoried and reported with an effort band; not translated (JavaScript functions, BigQuery ML models, access rules) |
 | `SKIP` | planned for a later version, with the reason (Composer and Dataform in 0.3, Dataflow and Vertex AI later), a notebook listed but not exported, or outside `--datasets` |
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project

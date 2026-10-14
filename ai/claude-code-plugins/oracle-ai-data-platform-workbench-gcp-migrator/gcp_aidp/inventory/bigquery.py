@@ -169,8 +169,8 @@ def _dataset(client: GcpClient, p: str, ds: str, items: dict, not_scanned: dict,
         items["routines"].append({
             "dataset": ds, "name": rid, "routine_type": r.get("routineType", "ROUTINE_TYPE_UNSPECIFIED"),
             "language": r.get("language", "SQL"), "body": r.get("definitionBody", ""),
-            "arguments": [{"name": a.get("name"), "type": _type_name(a.get("dataType"))}
-                          for a in r.get("arguments", [])],
+            "arguments": [{"name": a.get("name"), "type": _type_name(a.get("dataType")),
+                           **({"mode": a["mode"]} if a.get("mode") else {})} for a in r.get("arguments", [])],
             "return_type": _type_name(r.get("returnType"))})
 
     for m in client.pages(f"{BQ}/projects/{p}/datasets/{ds}/models", "models"):

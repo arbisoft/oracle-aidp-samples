@@ -39,6 +39,7 @@ must run.
 | `G19_CAST_TYPE` | `CAST(x AS INT64)` (also `FLOAT64`, `BOOL`, `BYTES`, `NUMERIC`, nested `ARRAY<STRUCT<...>>`) | `CAST(x AS BIGINT)` ... | rewrite | Spark cannot parse `INT64` (verified). `DATETIME` is a caveat; `TIME`, `JSON`, `GEOGRAPHY`, `BIGNUMERIC`, `INTERVAL` are flagged |
 | `G20_HASH_COMMENT` | `# note` | `-- note` | rewrite | Spark has no `#` comment (verified) |
 | `G21_GCS_PATH` | `'gs://bucket/path'` in a literal | `'oci://bucket@namespace/path'` | rewrite | Through the bucket map; an unmapped bucket is flagged |
+| `G25_ROUTINE_PARAMETER` | a table function's or procedure's argument `d`, by bare name in its body | `:d`, bound by `spark.sql(sql, args={"d": ...})` | rewrite | Spark 3.5 named parameters (verified on local Spark: queries, `INSERT`, `DELETE`). Blocked, never guessed: a name that is also a column of a table the body reads, an alias, a function name or a Spark keyword; an `ARRAY` or `STRUCT` argument |
 
 ## Flagged — left as written
 

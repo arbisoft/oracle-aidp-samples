@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format loosely follows
 ## [0.2.1] - unreleased
 
 ### Added
+- SQL table functions and procedures are migrated, not reported (`D07_TABLE_FUNCTION`,
+  `D08_PROCEDURE`, `G25_ROUTINE_PARAMETER`). A table function becomes a notebook defining a
+  Python function of the same name that runs the translated query with its arguments as Spark
+  named parameters (`spark.sql(sql, args=...)`) and returns a DataFrame. A procedure becomes a
+  notebook with its arguments in `PARAMS` and its statements in order; a table it creates in a
+  migrated dataset lands in the plan's catalog as Delta. Blocked, never guessed: procedural
+  logic, `OUT` arguments, `ARRAY`/`STRUCT` arguments, and a parameter named like a column the
+  body reads. Inventory records argument modes. Tested on local Spark 3.5: the generated
+  notebooks run with their parameters bound.
 - *Needs a decision* at the top of `plan.md`, and in `plan`'s terminal output: each type the
   plan blocks, the option that carries it, what that gives up, and every column it would
   carry. Before, a blocked column was one note in a long table, and the user learned of it
