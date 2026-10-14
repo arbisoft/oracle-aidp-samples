@@ -23,7 +23,7 @@ from gcp_aidp._atomic import write_text_atomic
 from gcp_aidp.inventory.manifest import ALL_SOURCES
 from gcp_aidp.translate.ddl import table_layout
 from gcp_aidp.translate.schedules import from_bigquery, from_unix_cron
-from gcp_aidp.translate.types import MODES, OPTIONS, map_column
+from gcp_aidp.translate.types import MODES, OPTIONS, connector_unreadable, map_column
 
 OCI_NAMESPACE_DEFAULT = "<your-oci-namespace>"
 MIGRATE, REPORT, SKIP = "MIGRATE", "REPORT", "SKIP"
@@ -210,12 +210,13 @@ _AS_TEXT = {"JSON": "TO_JSON_STRING({c})", "TIME": "FORMAT_TIME('%H:%M:%E6S', {c
             "RANGE": "IF({c} IS NULL, NULL, STRUCT(RANGE_START({c}) AS `start`, RANGE_END({c}) AS `end`))"}
 
 
-def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]:
-    """Large tables go BigQuery → Parquet on GCS → OCI → loaded into Delta, not through the connector."""
+def _export_route(t: dict, export: dict | None, unreadable: list[str] = ()) -> tuple[dict | None, list[str]]:
+    """Large tables go BigQuery → Parquet on GCS → OCI → loaded into Delta, not through the
+    connector; so does a table with a column the connector cannot read, whatever its size."""
     size = t.get("num_bytes")
-    if not export or size is None or size < export["over_bytes"]:
+    if not export or (not unreadable and (size is None or size < export["over_bytes"])):
         return None, []
-    gb = f"{size / 1e9:.1f} GB"
+    gb = f"{(size or 0) / 1e9:.1f} GB" + (f"; the connector cannot read {', '.join(unreadable)}" if unreadable else "")
     as_text = {c["name"]: e for c in t.get("columns", []) if (e := _text_expr(c, _q(c["name"])))}
     rel = f"{export['prefix']}/{t['dataset']}/{t['name']}/"
     route = {"gcs": f"gs://{export['bucket']}/{rel}", "oci": f"oci://{export['oci_bucket']}@{export['namespace']}/{rel}"}
@@ -225,6 +226,8 @@ def _export_route(t: dict, export: dict | None) -> tuple[dict | None, list[str]]
         route["pseudo_columns"] = pseudo
     if as_text:
         route["as_text"] = as_text
+    if unreadable:  # the copy counts BigQuery's rows from the export, not through the connector
+        route["connector_unreadable"] = list(unreadable)
     if as_text or pseudo:
         how = ("Parquet by EXPORT DATA (a billed query; "
                + "; ".join(x for x in (f"{', '.join(as_text)} as text" if as_text else "",
@@ -268,7 +271,12 @@ def _bigquery(it: dict[str, list[dict]], catalog: str, mapping: dict, export: di
                         chain=["create_schema"]))
     for t in it["tables"]:
         target, notes = _table_target(t, rel(t["dataset"], t["name"]), mapping)
-        route, route_notes = _export_route(t, export)
+        unreadable = [f"{c['name']} {x}" for c in t.get("columns", []) for x in connector_unreadable(c)]
+        route, route_notes = _export_route(t, export, unreadable)
+        if unreadable and not route:
+            target["needs_export"] = unreadable
+            notes.append(f"BLOCK X02_NEEDS_EXPORT: the BigQuery connector cannot read {', '.join(unreadable)}; "
+                         "plan with --export-over-gb and --export-bucket so it goes through Parquet files")
         chain = ["map_types", "create_delta_table", "copy_dataset_job"]
         if route:
             target["load_from"] = route
@@ -704,6 +712,8 @@ def decisions(plan: dict) -> list[str]:
         table = f"{tgt['schema']}.{tgt['name']}"
         if not tgt["columns"]:
             by_hand.append(f"{table}: no columns in the manifest")
+        if tgt.get("needs_export"):
+            by_option.setdefault("X02_NEEDS_EXPORT", []).append(f"{table} ({', '.join(tgt['needs_export'])})")
         for c in tgt["columns"]:
             if c["severity"] != "block":
                 continue
@@ -712,7 +722,10 @@ def decisions(plan: dict) -> list[str]:
                 by_option.setdefault(r, []).append(f"{table}.{c['name']}")
             if not fixable:
                 by_hand.append(f"{table}.{c['name']} ({', '.join(c['rules'])}): {'; '.join(c['details'])}")
-    lines = [f"--{OPTIONS[r][0]} {OPTIONS[r][1]}: {OPTIONS[r][2]}. Blocked now: {', '.join(cols)}"
+    lines = [f"--export-over-gb N --export-bucket B: the BigQuery connector cannot read these columns, so "
+             f"the table needs the export route (BigQuery converts them). Blocked now: {', '.join(cols)}"
+             if r == "X02_NEEDS_EXPORT" else
+             f"--{OPTIONS[r][0]} {OPTIONS[r][1]}: {OPTIONS[r][2]}. Blocked now: {', '.join(cols)}"
              for r, cols in by_option.items()]
     return lines + [f"no option, a person rewrites it: {x}" for x in by_hand]
 

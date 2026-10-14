@@ -36,6 +36,8 @@ def main(spark, params: dict, plan: dict) -> list[str]:
             try:
                 names = spark.read.parquet(t["files"]).schema.names  # reading the footers is the check
                 print(f"export files {t['dataset']}.{t['name']}: readable at {t['files']}")
+                if t.get("rows_file"):
+                    print(f"  {exported_rows(spark, t['rows_file']):,} rows exported (the count the copy checks)")
                 drift = column_drift([c["name"] for c in t["columns"]], names)[2]
                 if drift:
                     problems.append(f"{t['dataset']}.{t['name']}: the export files' columns differ from the plan: "
@@ -47,6 +49,9 @@ def main(spark, params: dict, plan: dict) -> list[str]:
     if read is not None:
         print(f"\n{'table.column':<45} {'BigQuery':<18} {'connector (Spark)':<28} target")
         for t in plan["tables"]:
+            if t.get("rows_file"):  # the connector refuses the table; its export files were checked above
+                print(f"{t['dataset'] + '.' + t['name']:<45} read from its export files, not the connector")
+                continue
             try:
                 schema = {f.name: f.dataType.simpleString() for f in read(t["source"]).schema.fields}
             except Exception as exc:  # noqa: BLE001

@@ -328,6 +328,48 @@ class DataPlaneNotebooks(unittest.TestCase):
                                         "WHERE id = 2").collect()[0][0], "2026-06-30 23:59:59.999999")
 
 
+    def test_6b_a_table_the_connector_cannot_read_is_counted_from_its_export(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest["sources"]["bigquery"]["items"]["tables"].append(
+            {"dataset": "shop", "name": "spans", "num_rows": 2, "num_bytes": 1000, "columns": [  # small: routed anyway
+                C("id", "INTEGER"), C("dwell", "INTERVAL"), C("w", "RANGE", rangeElementType={"type": "DATE"})]})
+        plan = build_plan(manifest, catalog="spark_catalog", oci_namespace="ns", export_over_gb=1,
+                          export_bucket="stage-bkt", interval="string", range_="struct")
+        route = next(a["target"]["load_from"] for a in plan["assets"] if a["source"]["name"] == "spans")
+        self.assertEqual(route["connector_unreadable"], ["dwell INTERVAL", "w RANGE"])
+        out = Path(self.tmp.name) / "migrated-spans"
+        migrate(plan, out_dir=out)
+        # What EXPORT DATA writes, and the row count `export` puts beside the files.
+        files = Path(self.tmp.name) / "exported" / "spans"
+        self.spark.createDataFrame(
+            [(1, "0-0 1 2:30:00", (dt.date(2026, 1, 1), dt.date(2026, 2, 1))), (2, "1-2 0 0:0:0", (None, None))],
+            "id long, dwell string, w struct<start:date,end:date>").write.parquet(str(files))
+        files.with_name("spans.rows.json").write_text('{"rows": 2, "job": "job0"}')
+        self.notebooks.update({stage: json.loads((out / f"notebooks/{stage}.ipynb").read_text()
+                                                 .replace(route["oci"].rstrip("/"), files.as_uri()))
+                               for stage in ("00_diagnose", "02_copy_dataset")})
+
+        class Refuses(dict):  # connector 0.45 on AIDP: "Unexpected type: INTERVAL", reading the schema
+            def __getitem__(self, fqn):
+                if fqn == "proj.shop.spans":
+                    raise RuntimeError("java.lang.IllegalStateException: Unexpected type: INTERVAL")
+                return super().__getitem__(fqn)
+        self.source = Refuses(SOURCE)
+        import contextlib
+        import io
+        out_text = io.StringIO()
+        with contextlib.redirect_stdout(out_text):
+            self.run_notebook("00_diagnose")
+        self.assertNotIn("Unexpected type", out_text.getvalue())  # not read through the connector
+        self.assertIn("2 rows exported", out_text.getvalue())
+        ddl = "\n".join(l for l in (out / "tables/shop.spans.sql").read_text().splitlines() if not l.startswith("--"))
+        self.spark.sql(ddl.replace("`spark_catalog`.", "spark_catalog."))  # what 01_structure runs
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="spans", mode="overwrite")
+        rec = self.report("copy_report_shop.json")["tables"]["shop.spans"]
+        self.assertEqual((rec["status"], rec["source_rows"], rec["target_rows"]), ("verified", 2, 2))
+        row = self.spark.table("spark_catalog.shop.spans").where("id = 1").collect()[0]
+        self.assertEqual((row["dwell"], row["w"]["start"]), ("0-0 1 2:30:00", dt.date(2026, 1, 1)))
+
     def test_7_export_route_text_inside_structs_and_arrays(self):
         manifest = json.loads(json.dumps(MANIFEST))
         manifest["sources"]["bigquery"]["items"]["tables"].append(

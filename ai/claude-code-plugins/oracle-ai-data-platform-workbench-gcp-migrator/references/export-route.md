@@ -13,6 +13,15 @@ same as on the connector path, and the row count is still checked against BigQue
 If no table reaches the threshold, nothing changes: no table takes the route and
 `export` has nothing to do.
 
+A table with a column the connector cannot read takes the route whatever its size:
+`INTERVAL`, `RANGE`, and a `BIGNUMERIC` wider than 38 digits. On AIDP, connector 0.45
+refuses the whole table while reading its schema ("Unexpected type: INTERVAL"; "BigNumeric
+precision is too wide (76)"). Without `--export-bucket`, such a table is blocked
+(`X02_NEEDS_EXPORT`) and listed under *Needs a decision* in `plan.md`. Its row count comes
+from the `EXPORT DATA` job (`exportDataStatistics.rowCount`), which `export` writes beside
+the folder on OCI (`…/<table>.rows.json`); `00_diagnose` and the copy read that instead of
+the connector.
+
 ## The steps
 
 ```bash
@@ -112,6 +121,8 @@ those columns into text; the copy notebook casts the text to the planned type.
 | `TIME` | `FORMAT_TIME('%H:%M:%E6S', col)` | `STRING` `HH:MM:SS.ffffff`, as on the connector path | Spark cannot read a Parquet TIME column |
 | `BIGNUMERIC` | `CAST(col AS STRING)` | the planned `DECIMAL(p,s)`, or text with `--bignumeric string` | Spark cannot read a 76-digit decimal |
 | `GEOGRAPHY` (with `--geography wkt`) | `ST_ASTEXT(col)` | `STRING`, WKT | no spatial type in Delta |
+| `INTERVAL` (with `--interval string`) | `CAST(col AS STRING)` | `STRING`, `Y-M D H:M:S` | no Delta interval column; the connector cannot read it |
+| `RANGE<T>` (with `--range struct`) | `STRUCT(RANGE_START(col) AS start, RANGE_END(col) AS end)` | `STRUCT<start: T, end: T>` | no Delta range type; the connector does not read it |
 | `TIMESTAMP`, `DATETIME` | as is | `TIMESTAMP` | the file holds them without a zone (UTC clock time); the notebook reads them in UTC |
 | everything else, `ARRAY` and `STRUCT` included | as is | the planned type | read natively |
 

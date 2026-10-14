@@ -20,6 +20,13 @@ COPY_WORKERS = 32
 PROGRESS_SECONDS = 10  # a copy shows its progress this often, so a long one does not look stuck
 
 
+def rows_file(folder_url: str) -> str:
+    """Beside a table's export folder (…/orders/ → …/orders.rows.json): the rows BigQuery's EXPORT
+    DATA job wrote, the count the copy checks for a table the connector cannot read. Not inside the
+    folder: Spark would read it as Parquet, and skips a "_" name even when asked for it."""
+    return folder_url.rstrip("/") + ".rows.json"
+
+
 class CopyError(Exception):
     """The copy cannot start as it stands; nothing was sent."""
 

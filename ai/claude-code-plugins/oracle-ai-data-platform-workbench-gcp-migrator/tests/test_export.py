@@ -70,7 +70,8 @@ class FakeGoogle:
             folder = uri[len("gs://"):].rsplit("/", 1)[0]
             for n in (0, 1):
                 self.objects[f"{folder}/part-{n:012d}.parquet"] = f"{table}-{n}".encode()
-            return Response({"status": {"state": "DONE"}})
+            stats = {"query": {"exportDataStatistics": {"rowCount": "2", "fileCount": "2"}}} if "query" in config else {}
+            return Response({"status": {"state": "DONE"}, "statistics": stats})
         bucket = url.split("/b/")[1].split("/")[0]
         if params and params.get("alt") == "media":
             from urllib.parse import unquote
@@ -95,7 +96,7 @@ class FakeOci:
         # The SDK's requests takes anything with a fileno() for a file and reads its .mode:
         # a raw download stream has the first and not the second (seen live).
         assert not hasattr(body, "fileno") or hasattr(body, "mode"), "a raw stream fails in the OCI SDK"
-        data = body.read()
+        data = body if isinstance(body, bytes) else body.read()
         assert len(data) == content_length  # what OCI checks on upload
         assert content_md5 is None or md5(data) == content_md5
         content_md5 = content_md5 or md5(data)  # OCI computes it when none is sent
@@ -141,6 +142,9 @@ class Export(unittest.TestCase):
                          (1, 1))
         self.assertEqual(result["tables"]["shop.events"]["copied"], 2)
         self.assertEqual(oci.objects[f"{self.prefix}/shop/events/part-000000000001.parquet"][0], b"events-1")
+        # EXPORT DATA reports the rows it wrote: kept beside the folder for the copy's count check.
+        self.assertEqual(json.loads(oci.objects[f"{self.prefix}/shop/events.rows.json"][0]), {"rows": 2, "job": "job1"})
+        self.assertNotIn(f"{self.prefix}/shop/orders.rows.json", oci.objects)  # an extract reports none
         self.assertTrue(Path(result["report"]).exists())
 
         # A rerun exports nothing again and copies nothing again.

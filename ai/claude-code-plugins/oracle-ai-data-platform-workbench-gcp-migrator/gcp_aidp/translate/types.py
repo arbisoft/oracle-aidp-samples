@@ -159,6 +159,23 @@ def map_column(col: dict, **modes: str) -> dict:
     return out
 
 
+def connector_unreadable(col: dict) -> list[str]:
+    """The types in this column the Spark BigQuery connector cannot read. Seen on AIDP with
+    connector 0.45: it refuses the whole table, while reading its schema, for an INTERVAL
+    ("Unexpected type: INTERVAL") and for a BIGNUMERIC wider than 38 digits. RANGE is
+    routed the same way: not yet seen through the connector, and EXPORT DATA converts it
+    in BigQuery."""
+    t = str(col.get("type", "")).upper()
+    if t in ("RECORD", "STRUCT"):
+        return [x for f in col.get("fields", []) for x in connector_unreadable(f)]
+    if t in ("INTERVAL", "RANGE"):
+        return [t]
+    if t in ("BIGNUMERIC", "BIGDECIMAL"):
+        ps = _decimal(col, (76, 38))
+        return [] if ps is not None and ps[0] <= 38 else [t]
+    return []
+
+
 def map_type_name(name: str) -> tuple[str | None, str, str, str]:
     """A GoogleSQL type name in SQL text (CAST, function arguments) → Spark type name."""
     return _scalar({"type": name}, {})

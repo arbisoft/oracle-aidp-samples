@@ -216,6 +216,10 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         findings += [_f(*f) for f in tgt.get("layout_findings", [])]
         if not tgt["columns"]:
             findings.append(_f("TY99_UNKNOWN", "block", "no columns in the manifest"))
+        if tgt.get("needs_export"):
+            findings.append(_f("X02_NEEDS_EXPORT", "block",
+                               f"the BigQuery connector cannot read {', '.join(tgt['needs_export'])}; plan with "
+                               "--export-over-gb and --export-bucket so it goes through Parquet files"))
         if tgt.get("load_from") and _status(findings) != "blocked":
             findings.append(_f("X01_EXPORT_ROUTE", "flag",
                                f"before the copy job, `gcp-aidp export --apply` exports it to {tgt['load_from']['gcs']} "

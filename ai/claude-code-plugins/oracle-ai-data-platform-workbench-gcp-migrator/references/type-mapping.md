@@ -18,7 +18,7 @@ condition; makes the table REVIEW), **flag** (carried, needs review), **block**
 | `TY06_DATE` | `DATE` | `DATE` | map | |
 | `TY07_TIMESTAMP` | `TIMESTAMP` | `TIMESTAMP` | map | Both are an instant in UTC |
 | `TY08_NUMERIC` | `NUMERIC`, `NUMERIC(P,S)` | `DECIMAL(38,9)`, `DECIMAL(P,S)` | map | |
-| `TY09_BIGNUMERIC` | `BIGNUMERIC` | none | **block** | 76 digits exceed Spark's 38. `--bignumeric string` carries exact decimal text (caveat). A parameterized `BIGNUMERIC(P,S)` with P ≤ 38 maps to `DECIMAL(P,S)` |
+| `TY09_BIGNUMERIC` | `BIGNUMERIC` | none | **block** | 76 digits exceed Spark's 38. `--bignumeric string` carries exact decimal text (caveat); the connector refuses such a table, so it takes the export route, where BigQuery writes the text. A parameterized `BIGNUMERIC(P,S)` with P ≤ 38 maps to `DECIMAL(P,S)` and stays on the connector |
 | `TY10_DATETIME` | `DATETIME` | `TIMESTAMP` | caveat | AIDP refuses `TIMESTAMP_NTZ` in `CREATE TABLE`, so the wall-clock value is stored as `TIMESTAMP` and read through the session time zone. Keep `spark.sql.session.timeZone=UTC` |
 | `TY11_TIME` | `TIME` | `STRING` | flag | No Spark TIME type; comparison, ordering and arithmetic become string operations |
 | `TY12_STRUCT` | `STRUCT` / `RECORD` | `STRUCT<...>` | map | Recursive; the column takes its worst field's severity, and a blocked field blocks the column |

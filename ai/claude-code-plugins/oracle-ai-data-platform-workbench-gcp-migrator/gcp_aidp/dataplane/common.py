@@ -158,6 +158,11 @@ def target_columns(spark, fqn: str) -> list[tuple[str, str]]:
     return [(f.name, f.dataType.simpleString()) for f in spark.table(fqn).schema.fields]
 
 
+def exported_rows(spark, rows_file: str) -> int:
+    """The rows BigQuery's EXPORT DATA job wrote, recorded by `gcp-aidp export` beside the files."""
+    return int(spark.read.json(rows_file).collect()[0]["rows"])
+
+
 def column_drift(planned: list[str], read: list[str]) -> tuple[list[str], list[str], str]:
     """(planned but not read, read but not planned, the reason naming them; "" when they agree)."""
     missing, extra = sorted(set(planned) - set(read)), sorted(set(read) - set(planned))

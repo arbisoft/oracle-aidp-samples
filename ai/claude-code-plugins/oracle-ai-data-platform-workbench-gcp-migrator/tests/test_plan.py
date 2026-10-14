@@ -265,8 +265,9 @@ class ExportRoute(unittest.TestCase):
     def test_large_tables_take_the_export_route(self):
         plan = build_plan(DEMO, oci_namespace="ns", export_over_gb=1, export_bucket="stage-bkt")
         routed = {a["id"]: a["target"]["load_from"] for a in plan["assets"] if a["target"].get("load_from")}
-        self.assertEqual(sorted(routed), ["bigquery.table.finance.gl_entries", "bigquery.table.marketing.web_events",
-                                          "bigquery.table.sales.order_items"])
+        self.assertEqual(sorted(routed), ["bigquery.table.finance.fx_rates", "bigquery.table.finance.gl_entries",
+                                          "bigquery.table.marketing.web_events", "bigquery.table.sales.order_items",
+                                          "bigquery.table.sales.store_visits"])  # the last: INTERVAL, any size
         prefix = f"gcp-aidp-export/{plan['plan_id']}"
         self.assertEqual(routed["bigquery.table.sales.order_items"],
                          {"gcs": f"gs://stage-bkt/{prefix}/sales/order_items/",
@@ -352,8 +353,15 @@ class ExportRoute(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             md = write_plan_markdown(plan, Path(d) / "plan.md").read_text()
         self.assertLess(md.index("## Needs a decision"), md.index("## To migrate"))
-        chosen = build_plan(DEMO, bignumeric="string", geography="wkt", interval="string", range_="struct")
+        modes = {"bignumeric": "string", "geography": "wkt", "interval": "string", "range_": "struct"}
+        # Chosen, but the connector cannot read INTERVAL, RANGE or a 76-digit BIGNUMERIC: still asked, for the export.
+        left = [d for d in decisions(build_plan(DEMO, **modes)) if d.startswith("--")]
+        self.assertEqual(len(left), 1)
+        self.assertIn("sales.store_visits (", left[0])
+        self.assertIn("finance.fx_rates (rate BIGNUMERIC)", left[0])
+        chosen = build_plan(DEMO, export_over_gb=50, export_bucket="stage-bkt", **modes)
         self.assertFalse([d for d in decisions(chosen) if d.startswith("--")])  # chosen: no longer asked
+        self.assertIn("load_from", next(a for a in chosen["assets"] if a["id"] == "bigquery.table.finance.fx_rates")["target"])
 
     def test_bucket_mapping_sends_files_and_paths_to_the_mapped_oci_bucket(self):
         from gcp_aidp.plan.planner import bucket_mapping

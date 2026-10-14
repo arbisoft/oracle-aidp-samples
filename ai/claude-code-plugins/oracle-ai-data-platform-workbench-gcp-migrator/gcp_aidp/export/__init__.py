@@ -91,8 +91,9 @@ def _export_tables(writer, reader, spec: dict, log) -> dict[str, dict]:
     while running and time.time() < deadline:
         time.sleep(POLL_SECONDS)
         for key, ref in list(running.items()):
-            status = check(writer.get(f"{BQ}/projects/{ref['projectId']}/jobs/{ref['jobId']}",
-                                       params={"location": ref.get("location")}, timeout=60))["status"]
+            job = check(writer.get(f"{BQ}/projects/{ref['projectId']}/jobs/{ref['jobId']}",
+                                    params={"location": ref.get("location")}, timeout=60))
+            status = job["status"]
             if status["state"] != "DONE":
                 continue
             del running[key]
@@ -103,7 +104,10 @@ def _export_tables(writer, reader, spec: dict, log) -> dict[str, dict]:
                 log(f"  export FAILED     {key}  {records[key]['reason']}")
             else:
                 records[key]["export"] = "exported"
-                log(f"  exported          {key}")
+                rows = job.get("statistics", {}).get("query", {}).get("exportDataStatistics", {}).get("rowCount")
+                if rows is not None:
+                    records[key]["rows"] = int(rows)
+                log(f"  exported          {key}" + (f"  {int(rows):,} rows" if rows is not None else ""))
     for key, ref in running.items():  # a re-run now would copy a folder BigQuery is still writing
         records[key].update(export="failed", reason=f"BigQuery job {ref['jobId']} still running at the time "
                                                     "limit; run export again once it has finished")
@@ -135,6 +139,10 @@ def export(out_dir: str | Path, *, apply: bool = False, writer=None, reader=None
         if rec["export"] in ("exported", "already_exported"):
             rec.update(_copy.copy(reader, oci_client, spec["namespace"], t["gcs"], t["oci"], key, log))
             log(_copy.copied_line(key, rec))
+            if rec.get("rows") is not None and not rec["copy_failures"]:
+                bucket, name = _copy.split(_copy.rows_file(t["oci"]), "oci://")
+                body = json.dumps({"rows": rec["rows"], "job": rec["job"]}).encode()
+                oci_client.put_object(spec["namespace"], bucket, name, body, content_length=len(body))
         result["tables"][key] = rec
     path = write_text_atomic(Path(out_dir) / "exports" / "export_report.json", json.dumps(result["tables"], indent=2))
     result["report"] = str(path)

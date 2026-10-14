@@ -91,9 +91,12 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
     if not table_exists(spark, fqn):
         return {"status": "target_missing", "reason": "run 01_structure first"}
 
+    def source_rows() -> int:  # a table the connector cannot read: the rows its export wrote
+        return exported_rows(spark, t["rows_file"]) if t.get("rows_file") else read(t["source"]).count()
+
     existing = spark.table(fqn).count()
     if existing and mode == "skip-existing":
-        src = read(t["source"]).count()
+        src = source_rows()
         return {"status": "skipped_nonempty" if src == existing else "count_mismatch",
                 "source_rows": src, "target_rows": existing, "copied": False}
 
@@ -107,7 +110,7 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
         spark.conf.set("spark.sql.ansi.enabled", ansi)
 
     target = spark.table(fqn)
-    rec = {"source_rows": read(t["source"]).count(), "target_rows": target.count(), "copied": True,
+    rec = {"source_rows": source_rows(), "target_rows": target.count(), "copied": True,
            "seconds": round(time.time() - started, 1), "plan_rows": t.get("num_rows")}
     if mode == "append":
         rec["target_rows_before"] = existing
@@ -120,7 +123,8 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
             rec["reason"] = (f"the exported files hold {rec['export_rows']} rows, BigQuery {rec['source_rows']}: "
                              "the table changed since the export, or the export is incomplete")
     elif verify == "counts+sums":
-        rec["source_sums"], rec["target_sums"] = _sums(read(t["source"]), t["columns"]), _sums(target, t["columns"])
+        sums_from = source if t.get("rows_file") else read(t["source"])
+        rec["source_sums"], rec["target_sums"] = _sums(sums_from, t["columns"]), _sums(target, t["columns"])
         # Compared as exact decimals: the source's scale (DECIMAL(38,9)) need not be the target's.
         differ = [c for c in rec["source_sums"] if _dec(rec["source_sums"][c]) != _dec(rec["target_sums"].get(c))]
         rec["status"] = "sum_mismatch" if differ else "verified"

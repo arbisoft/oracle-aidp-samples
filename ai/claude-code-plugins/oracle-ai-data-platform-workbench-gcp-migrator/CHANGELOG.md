@@ -92,6 +92,14 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- A table with an `INTERVAL`, a `RANGE` or a `BIGNUMERIC` wider than 38 digits could not be
+  copied: Spark BigQuery connector 0.45 refuses the whole table while reading its schema
+  (seen on AIDP), so `--bignumeric string` failed at run time unless the table happened to
+  be large enough for the export route. Such a table now always takes the export route,
+  where BigQuery converts the values; without `--export-bucket` it is blocked
+  (`X02_NEEDS_EXPORT`) and listed under *Needs a decision*. Its row count is the one the
+  `EXPORT DATA` job reports, written beside the files on OCI and checked by `00_diagnose`
+  and the copy instead of the connector.
 - External tables lost BigQuery's column list and CSV options: Spark inferred the schema
   from the files, so a CSV became `_c0, _c1, …` strings and a header row became a data row.
   The DDL now carries the columns (each by its type rule) and the CSV options (`header`,

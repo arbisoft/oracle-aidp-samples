@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from gcp_aidp._copy import rows_file
+
 HERE = Path(__file__).parent
 CREDENTIAL_NAME = "gcp_bigquery_reader"
 CREDENTIAL_KEY = "credentials_b64"
@@ -118,6 +120,8 @@ def data_plan(plan: dict, results: list[dict]) -> dict:
                     "source": f"{plan.get('source_project')}.{src['dataset']}.{src['name']}",
                     "target": [tgt["catalog"], tgt["schema"], tgt["name"]], "ddl": r["translated_sql"],
                     "num_rows": src.get("num_rows"), "files": (tgt.get("load_from") or {}).get("oci"),
+                    "rows_file": (rows_file(tgt["load_from"]["oci"])
+                                  if (tgt.get("load_from") or {}).get("connector_unreadable") else None),
                     "columns": [{"name": c["name"], "source_type": c["source_type"],
                                  "target_type": c["target_type"]} for c in tgt["columns"]]})
             else:
