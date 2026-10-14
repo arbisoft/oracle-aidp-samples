@@ -65,6 +65,10 @@ All notable changes to this project are documented here. Format loosely follows
   keep their names, as before.
 
 ### Changed
+- `01_structure` creates an external table when its files are on OCI, with no
+  `external-tables` parameter to remember: until `transfer --apply` has copied them, the
+  table is reported as not created yet (`files_not_on_oci`, not a failure), and the next
+  run creates it.
 - A saved query is also published: `migrate` writes it as a notebook (its translated SQL,
   the result shown with `.toPandas()`) and `publish` uploads it to the workspace, with no
   job, so it opens and runs there as it did in BigQuery. It used to stay a local `.sql` file.

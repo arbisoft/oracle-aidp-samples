@@ -59,8 +59,7 @@ def main(spark, params: dict, plan: dict) -> list[str]:
                    "failed": "EXTERNAL_FAILED"}.get(
             rec.get("status"), "EXTERNAL_NOT_CREATED_YET")
         rows.append({"object": key, "kind": "external_table", "verdict": verdict,
-                     "detail": rec.get("reason", "" if rec else "run 01_structure with external-tables=True "
-                                                               "after `gcp-aidp transfer --apply`")})
+                     "detail": rec.get("reason", "" if rec else "run 01_structure")})
     for v in plan["views"]:
         key = f"{v['dataset']}.{v['name']}"
         rec = structure.get("views", {}).get(key, {})

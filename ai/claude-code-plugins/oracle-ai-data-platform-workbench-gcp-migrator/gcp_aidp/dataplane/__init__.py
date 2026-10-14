@@ -24,7 +24,7 @@ STAGES = {
     "00_diagnose": ("stage_00_diagnose.py", "Diagnose the environment",
                     {**_CREDENTIAL_PARAMS}),
     "01_structure": ("stage_01_structure.py", "Create the structure",
-                     {"datasets": None, "external-tables": False, "dry-run": False}),
+                     {"datasets": None, "dry-run": False}),
     "02_copy_dataset": ("stage_02_copy_dataset.py", "Copy one dataset",
                         {"dataset": None, "tables": None, "mode": "skip-existing", "verify": "counts",
                          "dry-run": False, **_CREDENTIAL_PARAMS}),
@@ -40,7 +40,6 @@ _NOTES = {
     "credential-name": "AIDP credential store entry holding the base64 service account key",
     "key-file": "a /Workspace/... key file instead of the credential store (not recommended)",
     "counts": "True = recount every verified table now",
-    "external-tables": "True = also create external tables; only after their files are on OCI (gcp-aidp transfer --apply)",
 }
 
 
@@ -139,7 +138,7 @@ def data_plan(plan: dict, results: list[dict]) -> dict:
             if mapped:
                 out["external_tables"].append({"dataset": src["dataset"], "name": src["name"],
                                                "target": [tgt["catalog"], tgt["schema"], tgt["name"]],
-                                               "ddl": r["translated_sql"]})
+                                               "location": r.get("location"), "ddl": r["translated_sql"]})
             else:
                 out["not_created"].append({"dataset": src["dataset"], "name": src["name"], "kind": "external_table",
                                            "verdict": "BLOCKED", "reason": _blocks(r)})

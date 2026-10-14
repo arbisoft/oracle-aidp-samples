@@ -274,6 +274,7 @@ def _migrate_one(a: dict, ctx: Context, w: _Writer) -> dict:
         else:
             translated = statement
             path = w.sql("external_tables", stem, aid, findings, translated)
+            row["location"] = oci  # 01_structure creates the table once files are there
     elif t == "aidp_function":
         r = translate(src["body"], ctx)
         source_sql, findings = src["body"], _sql_findings(r)

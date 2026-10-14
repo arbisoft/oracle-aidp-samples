@@ -39,6 +39,6 @@ Never print or copy a key. What to tell the user:
   the reason and the command exits 1; the other buckets still copy. The record is in
   `transfers/transfer_report.json`.
 
-External tables read their files from OCI: run this before `run` creates them
-(`01_structure` with `external-tables=True`). Then suggest
+External tables read their files from OCI: `01_structure` creates each one once its
+files are there, so run this before `run` (or run `01_structure` again after). Then suggest
 `/oracle-ai-data-platform-workbench-gcp-migrator:publish`.

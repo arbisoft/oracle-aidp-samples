@@ -96,9 +96,9 @@ class DataPlaneNotebooks(unittest.TestCase):
         cls.source = dict(SOURCE)
         out = Path(cls.tmp.name) / "migrated"
         migrate(build_plan(MANIFEST, catalog="spark_catalog", oci_namespace="ns"), out_dir=out)
-        # The external table's files, "transferred": a local folder stands in for oci://shop-landing@ns/files/.
-        files = Path(cls.tmp.name) / "landing" / "files"
-        cls.spark.createDataFrame([(1, "a"), (2, "b")], "id long, v string").write.parquet(str(files))
+        # The external table's files: a local folder stands in for oci://shop-landing@ns/files/,
+        # empty until test_1 "transfers" them.
+        files = cls.files = Path(cls.tmp.name) / "landing" / "files"
         cls.notebooks = {}
         for p in (out / "notebooks").rglob("*.ipynb"):
             text = p.read_text().replace("oci://shop-landing@ns/files/", files.as_uri())
@@ -170,8 +170,12 @@ class DataPlaneNotebooks(unittest.TestCase):
         verdicts = {o["object"]: o["verdict"] for o in self.report("MIGRATION_REPORT.json")["objects"]}
         self.assertEqual(verdicts["shop.mv_daily"], "SNAPSHOT_BUILT")
 
-        # After the transfer: external tables on request, readable, and reconciled.
-        self.assertEqual(self.run_notebook("01_structure", **{"external-tables": "true"}), 0)
+        detail = {o["object"]: o["detail"] for o in self.report("MIGRATION_REPORT.json")["objects"]}
+        self.assertIn("run `gcp-aidp transfer --apply`", detail["shop.ext_files"])  # no files yet: says what to do
+
+        # After the transfer: the next structure run creates the external table, readable, and reconciled.
+        self.spark.createDataFrame([(1, "a"), (2, "b")], "id long, v string").write.parquet(str(self.files))
+        self.assertEqual(self.run_notebook("01_structure"), 0)
         self.assertEqual(self.spark.table("spark_catalog.shop.ext_files").count(), 2)
         self.run_notebook("03_reconcile")
         verdicts = {o["object"]: o["verdict"] for o in self.report("MIGRATION_REPORT.json")["objects"]}

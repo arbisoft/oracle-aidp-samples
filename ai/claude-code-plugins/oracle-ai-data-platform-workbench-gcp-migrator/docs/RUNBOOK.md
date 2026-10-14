@@ -160,8 +160,8 @@ Claude Code you can instead ask for the migration in plain words; the
    dry run: per bucket, the files and MB still to copy), then
    `gcp-aidp transfer migrated --apply [--bucket <gcs-bucket>]`, which copies them to
    OCI, read-only on Google Cloud and never deleting. External tables read these files:
-   after step 7, create them by running the `01_structure` notebook with
-   `external-tables` = True.
+   `01_structure` creates each one once its files are on OCI, and reports it as not
+   created yet until then; run it again after a late transfer.
 
 5. **Publish, dry run first:**
 
