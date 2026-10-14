@@ -11,6 +11,7 @@ from pathlib import Path
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
 from gcp_aidp.publish import PublishError, plan_publish, publish, run
+from gcp_aidp.publish.aidp_client import AidpError
 
 DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text())
 
@@ -105,6 +106,26 @@ class Publish(unittest.TestCase):
         with self.assertRaisesRegex(PublishError, "nothing was sent"):
             publish(self.out, prefix="ana", cluster_key="ck", apply=True, client=fake, log=lambda m: None)
         self.assertEqual((fake.uploaded, fake.created), ([], []))
+
+    def test_run_retries_a_job_created_seconds_ago(self):
+        class NotReadyYet(FakeAidp):
+            def run_job(self, key):
+                self.started.append(key)
+                if len(self.started) < 3:
+                    raise AidpError("AIDP 404 NotAuthorizedOrNotFound: ... Required permission: USE")
+                return "run1"
+        fake, slept = NotReadyYet(jobs=["ana_gcp_aidp_migration"], runs=[[("t", "SUCCESS", "", None)] * 9]), []
+        run(self.out, prefix="ana", client=fake, sleep=slept.append, log=lambda m: None)
+        self.assertEqual((len(fake.started), slept[:2]), (3, [10, 10]))
+
+        class Refused(FakeAidp):
+            def run_job(self, key):
+                self.started.append(key)
+                raise AidpError("AIDP 400 InvalidParameter")
+        refused = Refused(jobs=["ana_gcp_aidp_migration"])
+        with self.assertRaises(PublishError):
+            run(self.out, prefix="ana", client=refused, sleep=lambda s: None, log=lambda m: None)
+        self.assertEqual(len(refused.started), 1)  # any other error is not retried
 
     def test_run_follows_the_job_to_the_end(self):
         n = len(json.loads((self.out / "report.json").read_text())["jobs"][0]["tasks"])

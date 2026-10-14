@@ -29,6 +29,7 @@ from gcp_aidp.publish.aidp_client import AidpClient, AidpError, AidpUnavailable
 
 DEFAULT_WORKSPACE_ROOT = "/Workspace"
 JOB_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+RUN_RETRIES, RUN_RETRY_SECONDS = 6, 10  # about a minute
 TASK_TIMEOUT_SECONDS = 12 * 3600  # per task; one dataset's copy can run for hours
 FINAL = {"SUCCESS", "FAILED", "UPSTREAM_FAILED", "CANCELED", "SKIPPED", "TIMEDOUT", "INTERNAL_ERROR"}
 
@@ -285,7 +286,15 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
         key = next((j.get("key") for j in client.list_jobs() if j.get("name") == name and j.get("key")), None)
         if key is None:
             raise PublishError(f"no job {name!r} in the workspace; run `publish --apply` first")
-        run_key = client.run_job(key)
+        for attempt in range(RUN_RETRIES + 1):
+            try:
+                run_key = client.run_job(key)
+                break
+            except AidpError as exc:  # live on AIDP: a job created seconds ago can 404 until its permissions apply
+                if attempt == RUN_RETRIES or "NotAuthorizedOrNotFound" not in str(exc):
+                    raise
+                log(f"job {name} not ready yet ({exc}); retrying in {RUN_RETRY_SECONDS}s")
+                sleep(RUN_RETRY_SECONDS)
         log(f"started {name} ({key}): run {run_key}")
         seen, tasks = {}, []
         for _ in range(max(1, int(wait / poll)) + 1):

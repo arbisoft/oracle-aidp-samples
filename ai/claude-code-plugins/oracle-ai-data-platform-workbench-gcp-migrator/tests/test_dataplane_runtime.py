@@ -195,7 +195,10 @@ class DataPlaneNotebooks(unittest.TestCase):
         schema, rows = self.source["proj.shop.orders"]
         self.source["proj.shop.orders"] = (schema, rows + [(4, "paid", dt.date(2026, 1, 3), Decimal(1))])
         self.assertEqual(self.run_notebook("02_copy_dataset", dataset="shop", tables="orders"), 1)
-        self.assertEqual(self.report("copy_report_shop.json")["tables"]["shop.orders"]["status"], "count_mismatch")
+        rec = self.report("copy_report_shop.json")["tables"]["shop.orders"]
+        self.assertEqual(rec["status"], "count_mismatch")
+        self.assertIn("source=4 target=3: the target was copied by an earlier run", rec["reason"])
+        self.assertIn("DELETE FROM `spark_catalog`.`shop`.`orders`", rec["reason"])
 
         # A column renamed at the source: nothing is copied.
         self.source["proj.shop.profiles"] = ("id long, address struct<city:string>, labels array<string>", [])

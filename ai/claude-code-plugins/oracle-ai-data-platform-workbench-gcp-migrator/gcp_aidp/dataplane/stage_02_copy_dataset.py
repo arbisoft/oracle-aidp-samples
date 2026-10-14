@@ -97,8 +97,12 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
     existing = spark.table(fqn).count()
     if existing and mode == "skip-existing":
         src = source_rows()
-        return {"status": "skipped_nonempty" if src == existing else "count_mismatch",
-                "source_rows": src, "target_rows": existing, "copied": False}
+        rec = {"status": "skipped_nonempty" if src == existing else "count_mismatch",
+               "source_rows": src, "target_rows": existing, "copied": False}
+        if src != existing:  # copied by an earlier run; the source has changed since
+            rec["reason"] = (f"source={src} target={existing}: the target was copied by an earlier run and the "
+                             f"source has changed since. Empty it (DELETE FROM {fqn}) and run again to copy it afresh")
+        return rec
 
     fields = {f.name: f for f in source.schema.fields}
     exprs = [column_expr(spark, c, fields[c["name"]]) for c in t["columns"]]

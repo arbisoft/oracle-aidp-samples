@@ -118,6 +118,12 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- `run` retries for about a minute when AIDP answers 404 NotAuthorizedOrNotFound on a job
+  `publish` created seconds earlier (seen live: the job's permissions apply a little after it
+  exists). Any other error is not retried.
+- A `count_mismatch` on a target an earlier run copied now says why and what to do: the
+  source has changed since, so empty the target (`DELETE FROM ...`) and run again. Seen live
+  on a table a BigQuery scheduled query appends to daily.
 - A `%%bigquery` cell holding only `dataset.table` became `spark.sql("dataset.table")`, which
   fails, graded rewrite. The magic reads it as a table in the notebook's project: it is now
   `spark.table` on the migrated table, and any other one-word body is blocked (`N01`). Found
