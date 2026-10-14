@@ -78,6 +78,10 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- An ingestion-time partitioned table failed its copy as `type_drift`: the connector adds
+  BigQuery's `_PARTITIONTIME` and `_PARTITIONDATE` pseudo-columns, which the plan does not
+  carry (`D03_INGESTION_TIME`). `02_copy_dataset` now drops them. A `type_drift` also names
+  the columns that differ, where it printed `source=None target=None`.
 - A `TIME` inside a `STRUCT` or `ARRAY` copied through the connector landed as its
   microsecond count (`"37800123456"`), and the table still passed as verified: the
   conversion to `HH:MM:SS.ffffff` text applied to top-level columns only. `02_copy_dataset`

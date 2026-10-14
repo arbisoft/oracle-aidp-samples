@@ -199,7 +199,18 @@ class DataPlaneNotebooks(unittest.TestCase):
         rec = self.report("copy_report_shop.json")["tables"]["shop.profiles"]
         self.assertEqual(rec["status"], "type_drift")
         self.assertEqual(rec["layout_drift"], {"not_in_source": ["tags"], "not_in_plan": ["labels"]})
+        self.assertIn("planned but not read: tags; read but not planned: labels", rec["reason"])  # named, not None
         self.assertEqual(self.spark.table("spark_catalog.shop.profiles").count(), 2)
+
+        # An ingestion-time partitioned source: the connector adds BigQuery's pseudo-columns, which
+        # the plan does not carry. They are dropped, not taken for drift.
+        schema, grown = self.source["proj.shop.orders"]
+        self.source["proj.shop.orders"] = (schema + ", _PARTITIONTIME timestamp, _PARTITIONDATE date",
+                                           [(*r, dt.datetime(2026, 1, 1), dt.date(2026, 1, 1)) for r in grown])
+        self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite")
+        self.assertEqual(self.report("copy_report_shop.json")["tables"]["shop.orders"]["status"], "verified")
+        self.assertNotIn("_PARTITIONTIME", self.spark.table("spark_catalog.shop.orders").columns)
+        self.source["proj.shop.orders"] = (schema, grown)
 
         # Overwrite fixes the grown table; reconcile then agrees.
         self.assertEqual(self.run_notebook("02_copy_dataset", dataset="shop", tables="orders", mode="overwrite"), 1)
