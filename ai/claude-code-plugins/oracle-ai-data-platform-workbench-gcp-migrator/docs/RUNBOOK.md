@@ -269,7 +269,7 @@ which run on an AIDP cluster:
 
 | Notebook | Reads | Writes |
 |---|---|---|
-| `00_diagnose` | connector, credential, catalog, export-route files | nothing; prints the connector's type for every column |
+| `00_diagnose` | connector, credential, catalog, export-route files, existing target tables | nothing; prints the connector's type for every column, and stops the run when a source's columns or an existing target's layout differ from the plan |
 | `01_structure` | the plan | schemas, empty Delta tables (each read back against the plan), views |
 | `02_copy_dataset` | one BigQuery dataset, table by table (export-route tables from their Parquet files) | rows; verifies counts, and with `counts+sums` exact decimal sums |
 | `03_reconcile` | plan, reports, catalog | `MIGRATION_REPORT.md` |

@@ -238,6 +238,30 @@ class DataPlaneNotebooks(unittest.TestCase):
         self.assertIn("diagnose: OK", out.getvalue())
         self.assertNotIn("not-a-real-key", out.getvalue())  # the key is never printed
 
+    def test_4_diagnose_finds_what_would_fail_later(self):
+        import contextlib
+        import io
+        schema, _rows = SOURCE["proj.shop.orders"]
+        self.source = {**SOURCE, "proj.shop.orders": (schema + ", _PARTITIONTIME timestamp", [])}
+        kept = self.spark.catalog.tableExists("spark_catalog.shop.profiles")
+        if kept:
+            self.spark.sql("ALTER TABLE spark_catalog.shop.profiles RENAME TO shop.profiles_kept")
+        self.spark.sql("CREATE SCHEMA IF NOT EXISTS spark_catalog.shop")
+        self.spark.sql("CREATE TABLE spark_catalog.shop.profiles (id BIGINT) USING DELTA")  # an earlier layout
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(self.run_notebook("00_diagnose"), 1)
+        finally:
+            self.spark.sql("DROP TABLE spark_catalog.shop.profiles")
+            if kept:
+                self.spark.sql("ALTER TABLE spark_catalog.shop.profiles_kept RENAME TO shop.profiles")
+        problems = [l for l in out.getvalue().splitlines() if l.startswith("PROBLEM:")]
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("proj.shop.orders: the connector's columns differ from the plan: "
+                      "read but not planned: _PARTITIONTIME", problems[0])
+        self.assertIn("spark_catalog.shop.profiles already exists with another layout: column 2:", problems[1])
+
     def test_5_export_route_loads_the_files_and_checks_bigquery(self):
         manifest = json.loads(json.dumps(MANIFEST))
         manifest["sources"]["bigquery"]["items"]["tables"][0]["num_bytes"] = 2_000_000_000  # orders

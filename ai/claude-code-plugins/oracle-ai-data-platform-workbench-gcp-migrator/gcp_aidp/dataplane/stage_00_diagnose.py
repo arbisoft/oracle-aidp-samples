@@ -6,6 +6,10 @@ prints how the connector types every planned column next to the target type.
 Reading each table's column list (no rows) is the connector check.
 The type table is the check the plan asks for: confirm each type mapping
 against what the connector returns.
+
+What would otherwise fail later is a problem here, before anything is created: a
+source whose columns differ from the plan (the copy would stop), and a target table
+already there with another layout (structure leaves it as it is).
 """
 from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
@@ -30,8 +34,12 @@ def main(spark, params: dict, plan: dict) -> list[str]:
     for t in plan["tables"]:  # export route: the files must be on OCI before the copy
         if t.get("files"):
             try:
-                _ = spark.read.parquet(t["files"]).schema  # reading the footers is the check
+                names = spark.read.parquet(t["files"]).schema.names  # reading the footers is the check
                 print(f"export files {t['dataset']}.{t['name']}: readable at {t['files']}")
+                drift = column_drift([c["name"] for c in t["columns"]], names)[2]
+                if drift:
+                    problems.append(f"{t['dataset']}.{t['name']}: the export files' columns differ from the plan: "
+                                    f"{drift} (plan, migrate and export again)")
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{t['dataset']}.{t['name']}: export files not readable at {t['files']} "
                                 f"(run `gcp-aidp export --apply` first): {error_text(exc, 160)}")
@@ -50,9 +58,23 @@ def main(spark, params: dict, plan: dict) -> list[str]:
                     break
                 problems.append(f"{t['source']}: {text}")
                 continue
+            drift = column_drift([c["name"] for c in t["columns"]], list(schema))[2]
+            if drift and not t.get("files"):  # an export-route table is read from its files, checked above
+                problems.append(f"{t['source']}: the connector's columns differ from the plan: {drift} "
+                                "(the copy would stop; inventory and plan again)")
             for c in t["columns"]:
                 print(f"{t['dataset'] + '.' + t['name'] + '.' + c['name']:<45} {c['source_type']:<18} "
                       f"{schema.get(c['name'], 'MISSING'):<28} {c['target_type']}")
+
+    for t in plan["tables"]:  # structure never alters a table that is already there
+        try:
+            drift = table_exists(spark, quote(*t["target"])) and layout_drift(spark, t)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"{'.'.join(t['target'])}: {error_text(exc, 160)}")
+            continue
+        if drift:
+            problems.append(f"{'.'.join(t['target'])} already exists with another layout: {'; '.join(drift)} "
+                            "(structure leaves it as it is: drop it if it is empty, then run again)")
     print()
     for p in problems:
         print("PROBLEM:", p)

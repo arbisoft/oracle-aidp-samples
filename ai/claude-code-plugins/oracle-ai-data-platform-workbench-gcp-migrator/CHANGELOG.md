@@ -78,6 +78,11 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- `00_diagnose` now stops the run, before anything is created, on what would otherwise fail
+  later: a source whose columns differ from the plan (the copy stopped it as `type_drift`)
+  and a target table already there with another layout (`01_structure` stopped it). Each
+  problem names the columns. Before, diagnose printed the connector's columns without
+  comparing them (seen on AIDP).
 - An ingestion-time partitioned table failed its copy as `type_drift`: the connector adds
   BigQuery's `_PARTITIONTIME` and `_PARTITIONDATE` pseudo-columns, which the plan did not have
   (seen on AIDP). They are now carried as columns of the same names (`D03_INGESTION_TIME`):

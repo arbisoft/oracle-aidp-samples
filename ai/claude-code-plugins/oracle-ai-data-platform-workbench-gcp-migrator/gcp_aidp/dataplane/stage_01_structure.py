@@ -15,18 +15,6 @@ created, already_existed, failed, dry_run (external tables, views).
 from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 
-def _layout_drift(spark, t) -> list[str]:
-    actual = target_columns(spark, quote(*t["target"]))
-    planned = [(c["name"], c["target_type"]) for c in t["columns"]]
-    drift = []
-    for i in range(max(len(actual), len(planned))):
-        a = actual[i] if i < len(actual) else ("<none>", "")
-        p = planned[i] if i < len(planned) else ("<none>", "")
-        if a[0].lower() != p[0].lower() or normalize_type(a[1]) != normalize_type(p[1]):
-            drift.append(f"column {i + 1}: target {a[0]} {a[1]}, plan {p[0]} {p[1]}")
-    return drift
-
-
 def main(spark, params: dict, plan: dict) -> list[str]:
     datasets = set(as_list(params.get("datasets"))) or {s["name"] for s in plan["schemas"]}
     dry = params.get("dry-run")
@@ -54,7 +42,7 @@ def main(spark, params: dict, plan: dict) -> list[str]:
                 rec = {"status": "dry_run", "existed": existed}
             else:
                 spark.sql(t["ddl"])
-                drift = _layout_drift(spark, t)
+                drift = layout_drift(spark, t)
                 if drift:
                     rec = {"status": "type_drift", "drift": drift}
                 else:

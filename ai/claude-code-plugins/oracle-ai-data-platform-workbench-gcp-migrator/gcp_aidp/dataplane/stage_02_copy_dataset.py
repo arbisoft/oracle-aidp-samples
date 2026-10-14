@@ -84,13 +84,10 @@ def copy_table(spark, read, t: dict, mode: str, verify: str) -> dict:
     started = time.time()
     source = spark.read.parquet(t["files"]) if t.get("files") else read(t["source"])
     planned = [c["name"] for c in t["columns"]]  # with an ingestion-time table's _PARTITIONTIME (D03)
-    source_types = {f.name: f.dataType.simpleString() for f in source.schema.fields}
-    if set(source_types) != set(planned):
-        missing, extra = sorted(set(planned) - set(source_types)), sorted(set(source_types) - set(planned))
+    missing, extra, drift = column_drift(planned, [f.name for f in source.schema.fields])
+    if drift:
         return {"status": "type_drift", "layout_drift": {"not_in_source": missing, "not_in_plan": extra},
-                "reason": "the source's columns differ from the plan: "
-                          + "; ".join(f"{what} {', '.join(cols)}" for what, cols in
-                                      (("planned but not read:", missing), ("read but not planned:", extra)) if cols)}
+                "reason": f"the source's columns differ from the plan: {drift}"}
     if not table_exists(spark, fqn):
         return {"status": "target_missing", "reason": "run 01_structure first"}
 

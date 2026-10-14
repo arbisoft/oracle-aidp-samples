@@ -156,3 +156,24 @@ def table_exists(spark, fqn: str) -> bool:
 
 def target_columns(spark, fqn: str) -> list[tuple[str, str]]:
     return [(f.name, f.dataType.simpleString()) for f in spark.table(fqn).schema.fields]
+
+
+def column_drift(planned: list[str], read: list[str]) -> tuple[list[str], list[str], str]:
+    """(planned but not read, read but not planned, the reason naming them; "" when they agree)."""
+    missing, extra = sorted(set(planned) - set(read)), sorted(set(read) - set(planned))
+    reason = "; ".join(f"{what} {', '.join(cols)}" for what, cols in
+                       (("planned but not read:", missing), ("read but not planned:", extra)) if cols)
+    return missing, extra, reason
+
+
+def layout_drift(spark, t: dict) -> list[str]:
+    """An existing target compared with the plan, column by column and in order."""
+    actual = target_columns(spark, quote(*t["target"]))
+    planned = [(c["name"], c["target_type"]) for c in t["columns"]]
+    drift = []
+    for i in range(max(len(actual), len(planned))):
+        a = actual[i] if i < len(actual) else ("<none>", "")
+        p = planned[i] if i < len(planned) else ("<none>", "")
+        if a[0].lower() != p[0].lower() or normalize_type(a[1]) != normalize_type(p[1]):
+            drift.append(f"column {i + 1}: target {a[0]} {a[1]}, plan {p[0]} {p[1]}")
+    return drift
