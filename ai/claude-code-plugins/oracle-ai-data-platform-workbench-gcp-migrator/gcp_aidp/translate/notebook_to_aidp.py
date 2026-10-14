@@ -57,7 +57,11 @@ def _magic(header: str, body: str, ctx: Context) -> tuple[str, list[Finding]]:
         return "", [Finding("N02_MAGIC_OPTION", "block", f"destination {var!r} is not a Python name")]
     query = body.strip()
     parts = query.strip("`").replace(":", ".").split(".")
-    if query and "\n" not in query and " " not in query and len(parts) == 3:  # a table id, read whole
+    if query and not re.search(r"\s", query):  # one word: the magic reads it as a table id, in its project if unqualified
+        if len(parts) == 2:
+            parts = [ctx.project, *parts]
+        if len(parts) != 3:
+            return "", [Finding("N01_BIGQUERY_MAGIC", "block", f"{query!r}: neither a query nor a table id")]
         target = ctx.relations.get((parts[1], parts[2])) if parts[0] == ctx.project else None
         if target is None:
             return "", [Finding("N01_BIGQUERY_MAGIC", "flag", f"reads table {query}, which is not in the plan")]

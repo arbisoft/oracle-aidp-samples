@@ -118,6 +118,10 @@ All notable changes to this project are documented here. Format loosely follows
   behind `G90_NOT_SPARK_BUILTIN` is regenerated here (unchanged for Spark 3.5.9).
 
 ### Fixed
+- A `%%bigquery` cell holding only `dataset.table` became `spark.sql("dataset.table")`, which
+  fails, graded rewrite. The magic reads it as a table in the notebook's project: it is now
+  `spark.table` on the migrated table, and any other one-word body is blocked (`N01`). Found
+  by the reviewer agent on the live test project.
 - A table with an `INTERVAL`, a `RANGE` or a `BIGNUMERIC` wider than 38 digits could not be
   copied: Spark BigQuery connector 0.45 refuses the whole table while reading its schema
   (seen on AIDP), so `--bignumeric string` failed at run time unless the table happened to

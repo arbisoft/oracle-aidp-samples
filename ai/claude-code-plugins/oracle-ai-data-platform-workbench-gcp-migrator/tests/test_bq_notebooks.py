@@ -34,6 +34,9 @@ class Rules(unittest.TestCase):
         code, _ = cell("%%bigquery t\nproj.sales.orders")
         self.assertEqual(code, f't = spark.table("{ORDERS}").toPandas()')
         self.assertIn(("N01_BIGQUERY_MAGIC", "flag"), cell("%%bigquery t\nproj.sales.missing")[1])
+        # dataset.table: the magic reads it in the notebook's project (seen live: became spark.sql of a bare name)
+        self.assertEqual(cell("%%bigquery\nsales.orders")[0], f'spark.table("{ORDERS}").toPandas()')
+        self.assertIn(("N01_BIGQUERY_MAGIC", "block"), cell("%%bigquery\norders")[1])  # never spark.sql("orders")
         ast.parse(code)
 
     def test_N02_MAGIC_OPTION(self):
