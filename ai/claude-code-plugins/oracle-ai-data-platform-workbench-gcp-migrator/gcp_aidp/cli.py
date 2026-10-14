@@ -308,7 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="RANGE columns: block the table (default) or carry the bounds as STRUCT<start, end>")
     pl.add_argument("--export-over-gb", type=float, metavar="GB",
                     help="tables of at least GB gigabytes go the export route: Parquet in GCS, transferred to "
-                         "OCI, loaded into Delta (default: every table through the connector)")
+                         "OCI, loaded into Delta; so do tables the connector cannot read (INTERVAL, RANGE, "
+                         "76-digit BIGNUMERIC), whatever their size (default: every table through the connector)")
     pl.add_argument("--export-bucket", metavar="BUCKET",
                     help="with --export-over-gb: the GCS bucket the Parquet files are staged in; the OCI "
                          "bucket of the same name (or its --bucket-mapping entry) receives them")

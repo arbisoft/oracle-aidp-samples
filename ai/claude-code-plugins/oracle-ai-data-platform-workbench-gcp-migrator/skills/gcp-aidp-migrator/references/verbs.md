@@ -41,7 +41,9 @@ gcp-aidp plan <inv.json> [-o plan.json] [--catalog NAME] [--namespace OCI_NS]
   text instead of blocking the table; `--range struct` carries a RANGE as
   `STRUCT<start, end>`. What stays blocked is listed under *Needs a decision* in `plan.md`.
 - `--export-over-gb` + `--export-bucket`: tables of at least GB gigabytes take the
-  export route: `gcp-aidp export` (below) puts them on OCI as Parquet, and the copy
+  export route, and so do tables the connector cannot read (`INTERVAL`, `RANGE`, a
+  `BIGNUMERIC` wider than 38 digits) whatever their size; without these flags such a
+  table is blocked. The route: `gcp-aidp export` (below) puts them on OCI as Parquet, and the copy
   notebook loads them. Steps, permissions and per-type rules:
   `references/export-route.md` at the plugin root.
 - `--bucket-mapping`: which OCI bucket each GCS bucket lands in, for `transfer`,
