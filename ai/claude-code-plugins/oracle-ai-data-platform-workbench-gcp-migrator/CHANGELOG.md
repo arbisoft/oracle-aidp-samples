@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format loosely follows
 ## [0.2.1] - unreleased
 
 ### Added
+- What to do with a REVIEW asset. `references/review-guide.md` gives, per rule, what to
+  check and when it is done. The `gcp-migration-reviewer` agent (`/review`) goes through a
+  migration's REVIEW findings and sorts each into accept (with the evidence from the files),
+  check (one command for the user, and what each answer means) or change (the edit), in
+  `migrated/REVIEW.md`. It edits nothing else and runs nothing. `verify` points to both.
 - An arithmetic SQL function becomes a Python UDF (`D06_SQL_FUNCTION`, rewrite): a notebook
   whose one line registers it, e.g. `spark.udf.register('net_price', lambda price, discount:
   ..., 'double')`, NULL in, NULL out as in SQL. Only `+ - * /`, number literals, its

@@ -99,6 +99,8 @@ def format_verify(result: dict) -> str:
         "  PASS = translated, no known issue detected -- not execution-verified.",
         "         Nothing parses or runs the artifact, so a construct no rule",
         "         covers is reported clean. Review before running in production.",
+        "  REVIEW = a caveat, flag or block: what to check per rule is in",
+        "         references/review-guide.md; /review goes through them for you.",
         "",
         "per-asset:",
     ]

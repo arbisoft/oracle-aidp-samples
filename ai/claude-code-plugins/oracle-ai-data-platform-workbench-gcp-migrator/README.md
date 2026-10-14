@@ -156,10 +156,16 @@ checks every item without printing a secret.
 | `…:plan` | The plan and its approval document. |
 | `…:migrate` | Translated artifacts and copy notebooks, locally. |
 | `…:verify` | PASS / REVIEW / SKIP / FAIL per asset. |
+| `…:review` | Each REVIEW finding sorted into accept, check (a command for you to run) or change (the edit), in `migrated/REVIEW.md`. |
 | `…:export` | Large tables to Parquet in GCS and on to OCI (dry run first). |
 | `…:transfer` | Cloud Storage buckets to OCI Object Storage (dry run first). |
 | `…:publish` | Notebooks and jobs into the AIDP workspace (dry run first). |
 | `…:run` | Starts the migration job and follows it. |
+
+### Agent
+| Agent | What it does |
+|---|---|
+| `gcp-migration-reviewer` | Reads the report, the generated files and the plan, and decides per caveat, flag and block: **accept** (with the evidence), **check** (one command, and what each answer means) or **change** (the edit). Writes `migrated/REVIEW.md`; edits nothing else and runs nothing. |
 
 ### MCP server
 `inventory`, `plan`, `migrate` and `verify` are also exposed as an MCP server
@@ -172,6 +178,7 @@ they are CLI-only.
 |---|---|
 | [`docs/RUNBOOK.md`](./docs/RUNBOOK.md) | Setup, the migration step by step with the check at each step, the copy, publishing, the safety posture. |
 | [`references/type-mapping.md`](./references/type-mapping.md) | BigQuery → Delta types (`TY01`–`TY99`) and table layout rules. |
+| [`references/review-guide.md`](./references/review-guide.md) | What a REVIEW asset needs: per rule, what to check and when it is done. |
 | [`references/dialect-translation.md`](./references/dialect-translation.md) | GoogleSQL → Spark SQL rules (`G01`–`G98`), with the evidence for each. |
 | [`references/dataproc-translation.md`](./references/dataproc-translation.md) | Dataproc PySpark and Spark SQL rules (`P01`–`P99`). |
 | [`references/notebook-translation.md`](./references/notebook-translation.md) | BigQuery Studio notebook rules (`N01`–`N04`). |

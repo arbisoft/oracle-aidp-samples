@@ -12,7 +12,7 @@ Report the PASS / REVIEW / SKIP / FAIL counts and the per-asset list. Explain ea
 PASS = translated with no known issue detected; REVIEW = a caveat or flag needs a
 human, or the asset is blocked; SKIP = reported only, or planned for a later version;
 FAIL = the migrator failed or the report contradicts itself. A non-zero FAIL count is
-the only hard failure.
+the only hard failure. For REVIEW, offer `/oracle-ai-data-platform-workbench-gcp-migrator:review`.
 
 Say plainly that PASS is **not execution-verified**: nothing parses or runs the
 artifacts, so a construct no rule covers is reported clean. Do not describe a PASS

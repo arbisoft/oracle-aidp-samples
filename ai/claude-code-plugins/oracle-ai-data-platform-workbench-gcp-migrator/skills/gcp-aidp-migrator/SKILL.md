@@ -78,7 +78,9 @@ gcp-aidp run       migrated                               # runs the published m
    plan; tell the user to rename one side, never pick a winner.
 4. **Read the reports.** After `migrate`, open `migrated/report.md` and surface every
    flag, caveat and block; they need a human. After `verify`, give the PASS / REVIEW /
-   SKIP / FAIL counts.
+   SKIP / FAIL counts. If REVIEW is not 0, offer the `gcp-migration-reviewer` agent
+   (`/review`): it sorts each finding into accept, check or change, per
+   `references/review-guide.md`, in `migrated/REVIEW.md`.
 5. **Export, transfer, then publish, each only after a dry run the user has read.**
    `export` only if the plan routed tables (`X01_EXPORT_ROUTE`); its dry run names the
    tables that use a billed `EXPORT DATA` query. `transfer` only if the plan has buckets

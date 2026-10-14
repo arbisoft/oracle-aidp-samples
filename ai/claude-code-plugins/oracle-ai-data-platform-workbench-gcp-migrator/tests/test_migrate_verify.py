@@ -161,6 +161,15 @@ class VerifyFailsClosed(unittest.TestCase):
 
 
 class EveryRuleHasATest(unittest.TestCase):
+    def test_every_rule_that_grades_review_is_in_the_review_guide(self):
+        code = "\n".join(p.read_text() for p in Path(__file__).parents[1].joinpath("gcp_aidp").rglob("*.py"))
+        rule = r"[A-Z]{1,2}[0-9]{2}_[A-Z0-9_]+"
+        review = set(re.findall(rf'"({rule})",\s*"(?:caveat|flag)"', code))  # emitted as caveat or flag
+        calls = code[code.index("_FLAGGED_CALLS = {"):]
+        review |= set(re.findall(rf'\("({rule})",', calls[:calls.index("\n}\n")]))  # flagged calls
+        guide = Path(__file__).parents[1].joinpath("references", "review-guide.md").read_text()
+        self.assertEqual(sorted(r for r in review if f"`{r}`" not in guide), [])
+
     def test_rule_ids_in_code_appear_in_tests(self):
         rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
