@@ -3,8 +3,9 @@
 Exposes the four offline migration verbs as MCP tools so any MCP-compatible
 client (OpenAI Codex, Cursor, Claude Desktop, etc.) gets the same workflow the
 Claude Code plugin does. Each tool shells out to the already-tested
-`gcp_aidp.cli` pipeline rather than reimplementing logic. `publish` and `run`
-change an AIDP workspace, so they stay CLI-only.
+`gcp_aidp.cli` pipeline rather than reimplementing logic. `export`, `transfer`,
+`publish` and `run` write to Google Cloud, OCI or an AIDP workspace, so they stay
+CLI-only.
 
 Run:   gcp-aidp-mcp                 (after `pip install -e '.[mcp]'`)
    or:  python3 -m gcp_aidp.mcp_server
@@ -13,7 +14,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Optional
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -33,6 +33,7 @@ def _run(args: list[str], *, timeout: float = 300.0) -> str:
             [sys.executable, "-m", "gcp_aidp.cli", *args],
             capture_output=True,
             text=True,
+            check=False,
             timeout=timeout,
             # Detach the child's stdin from the MCP stdio transport pipe, or the
             # spawned CLI blocks forever at interpreter start on Windows.
@@ -49,11 +50,12 @@ def _run(args: list[str], *, timeout: float = 300.0) -> str:
 
 @mcp.tool()
 def inventory(
-    project: Optional[str] = None,
-    fixture: Optional[str] = None,
-    sources: Optional[str] = None,
-    regions: Optional[str] = None,
-    saved_queries_dir: Optional[str] = None,
+    project: str | None = None,
+    fixture: str | None = None,
+    sources: str | None = None,
+    regions: str | None = None,
+    saved_queries_dir: str | None = None,
+    notebooks_dir: str | None = None,
     scan_services: bool = False,
     output: str = "inv.json",
 ) -> str:
@@ -63,9 +65,10 @@ def inventory(
         project: GCP project id (default: $GCP_PROJECT; ignored if fixture is set).
         fixture: use a bundled fixture (e.g. "demo") instead of live Google Cloud.
         sources: comma-separated subset of the sources to scan (default: all).
-        regions: comma-separated regions for Dataproc, Composer, Dataform and Vertex AI.
+        regions: comma-separated regions for Dataproc and Dataform.
         saved_queries_dir: a folder of saved queries exported as .sql files.
-        scan_services: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI
+        notebooks_dir: a folder of BigQuery Studio notebooks exported as .ipynb files.
+        scan_services: also list Dataproc and Dataform
             (asks for a cloud-platform token; still GET calls only).
         output: manifest output path.
     """
@@ -80,6 +83,8 @@ def inventory(
         args += ["--regions", regions]
     if saved_queries_dir:
         args += ["--saved-queries-dir", saved_queries_dir]
+    if notebooks_dir:
+        args += ["--notebooks-dir", notebooks_dir]
     if scan_services:
         args.append("--scan-services")
     return _run(args)
@@ -89,11 +94,15 @@ def inventory(
 def plan(
     manifest: str,
     output: str = "plan.json",
-    namespace: Optional[str] = None,
-    catalog: Optional[str] = None,
-    datasets: Optional[str] = None,
+    namespace: str | None = None,
+    catalog: str | None = None,
+    datasets: str | None = None,
+    dataform_repos: str | None = None,
     bignumeric: str = "block",
     geography: str = "block",
+    export_over_gb: float | None = None,
+    export_bucket: str | None = None,
+    bucket_mapping: str | None = None,
 ) -> str:
     """Turn an inventory manifest into an AIDP migration plan and approval document.
 
@@ -104,8 +113,14 @@ def plan(
         catalog: target AIDP catalog (default: the project id, made a valid name).
         datasets: comma-separated BigQuery datasets to migrate (default: all); the
             others stay in the plan as SKIP.
+        dataform_repos: comma-separated Dataform repositories to migrate (default: all);
+            the others stay in the plan as SKIP.
         bignumeric: BIGNUMERIC columns: "block" the table or carry exact decimal "string".
         geography: GEOGRAPHY columns: "block" the table or carry "wkt" text.
+        export_over_gb: tables of at least this many GB go the export route (Parquet
+            through GCS and OCI); needs export_bucket. Default: all through the connector.
+        export_bucket: the GCS bucket the export route stages Parquet files in.
+        bucket_mapping: path to a JSON file naming the OCI bucket for each GCS bucket.
     """
     args = ["plan", manifest, "-o", output, "--bignumeric", bignumeric, "--geography", geography]
     if namespace:
@@ -114,6 +129,14 @@ def plan(
         args += ["--catalog", catalog]
     if datasets:
         args += ["--datasets", datasets]
+    if export_over_gb is not None:
+        args += ["--export-over-gb", str(export_over_gb)]
+    if export_bucket:
+        args += ["--export-bucket", export_bucket]
+    if bucket_mapping:
+        args += ["--bucket-mapping", bucket_mapping]
+    if dataform_repos:
+        args += ["--dataform-repos", dataform_repos]
     return _run(args)
 
 

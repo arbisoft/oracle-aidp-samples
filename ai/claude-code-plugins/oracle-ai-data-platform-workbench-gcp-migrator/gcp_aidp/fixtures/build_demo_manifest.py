@@ -5,7 +5,7 @@ Deterministic, so a rebuild only changes the file when this script changes:
     python3 -m gcp_aidp.fixtures.build_demo_manifest
 
 The estate is larger than the `test-estate/` seed and includes services the
-seed cannot create for free (Dataproc, Composer, Dataform, Dataflow, Vertex AI),
+seed cannot create for free (Dataproc, Dataform),
 so `inventory`, `plan` and SKIP reporting are tested without paying for them.
 
 Column types use the names the BigQuery `tables.get` API returns (`INTEGER`,
@@ -288,9 +288,28 @@ ACCESS_POLICIES = [
      "role": "roles/bigquery.dataViewer", "members": ["group:finance-analysts@example.com"]},
 ]
 
+# Two notebooks as exported .ipynb (cell sources only); the third is listed, not exported.
 BQ_NOTEBOOKS = [
-    {"name": "Customer segmentation exploration", "id": "nb-0001"},
-    {"name": "Revenue anomaly triage", "id": "nb-0002"},
+    {"name": "Customer segmentation exploration", "id": "nb-0001", "cells": [
+        {"cell_type": "markdown", "source": "# Customer segmentation\nOrders per customer, by country."},
+        {"cell_type": "code", "source": "%load_ext bigquery_magics\n!pip install seaborn\nimport seaborn as sns\n"
+                                        "import bigframes.pandas as bpd"},
+        {"cell_type": "code", "source": "%%bigquery segments\nSELECT c.country, COUNT(*) AS orders,\n"
+                                        "       COUNTIF(o.status = 'Returned') AS returned\n"
+                                        "FROM `northwind-analytics-demo.sales.orders` o\n"
+                                        "JOIN `northwind-analytics-demo.sales.customers` c USING (customer_id)\n"
+                                        "GROUP BY c.country"},
+        {"cell_type": "code", "source": "%%bigquery products\nnorthwind-analytics-demo.sales.products"},
+        {"cell_type": "code", "source": "sns.barplot(data=segments, x=\"country\", y=\"orders\")"},
+    ]},
+    {"name": "Revenue anomaly triage", "id": "nb-0002", "cells": [
+        {"cell_type": "code", "source": "%%bigquery daily\nSELECT order_date, SAFE_DIVIDE(SUM(amount), COUNT(*)) AS avg_order\n"
+                                        "FROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date"},
+        {"cell_type": "code", "source": "import pandas as pd\n"
+                                        "targets = pd.read_csv(\"gs://northwind-landing/finance/targets.csv\")"},
+        {"cell_type": "code", "source": "%%bigquery legacy --use_legacy_sql\n"
+                                        "SELECT order_id FROM [northwind-analytics-demo:sales.orders] LIMIT 10"},
+    ]},
     {"name": "Ad spend data checks", "id": "nb-0003"},
 ]
 
@@ -300,52 +319,188 @@ GCS_BUCKETS = [
     {"name": "northwind-landing", "location": "US", "storage_class": "STANDARD"},
     {"name": "northwind-logs-archive", "location": "US", "storage_class": "COLDLINE"},
     {"name": "northwind-ml-artifacts", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
-    {"name": "northwind-composer-dags", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
+    {"name": "northwind-orchestration", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
 ]
+
+# Dataproc job definitions, as the inventory groups the run history: the newest run's
+# settings, a run count and the code it reads from Cloud Storage. The scripts read
+# BigQuery tables through the connector and gs:// paths, which is what 0.2 translates.
+SESSIONIZE_PY = """from pyspark.sql import SparkSession, functions as F
+import sys
+
+run_date = sys.argv[1]
+spark = SparkSession.builder.appName("sessionize").getOrCreate()
+
+visits = (spark.read.format("bigquery")
+          .option("table", "northwind-analytics-demo.sales.store_visits")
+          .load()
+          .where(F.col("visit_date") == run_date))
+events = spark.read.json(f"gs://northwind-landing/clickstream/dt={run_date}/")
+
+sessions = (events.groupBy("customer_id", F.window("event_ts", "30 minutes"))
+            .agg(F.count("*").alias("events")))
+sessions.write.mode("overwrite").parquet(f"gs://northwind-landing/sessions/dt={run_date}/")
+"""
+
+DEDUPE_PY = """from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+spark.conf.set("temporaryGcsBucket", "northwind-landing")
+
+raw = spark.read.format("bigquery").load("northwind-analytics-demo.logs.app_events")
+clean = raw.dropDuplicates(["event_id"])
+clean.write.format("bigquery").option("table", "logs.app_events_clean").mode("overwrite").save()
+spark.sql("SELECT COUNT(*) FROM logs.app_events_clean").show()
+"""
+
+COHORTS_SQL = """CREATE OR REPLACE TEMPORARY VIEW first_orders AS
+SELECT customer_id, MIN(order_date) AS first_order
+FROM sales.orders
+GROUP BY customer_id;
+
+INSERT OVERWRITE DIRECTORY 'gs://northwind-landing/reports/cohorts/'
+USING parquet
+SELECT date_trunc('MONTH', first_order) AS cohort, COUNT(*) AS customers
+FROM first_orders
+GROUP BY 1;
+"""
+
+SCORE_RETURNS_PY = """from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+returns = spark.read.format("bigquery").load("sales.returns")
+returns.groupBy("reason").count().write.mode("overwrite").csv("gs://northwind-landing/reports/returns/")
+"""
 
 DATAPROC = {
     "clusters": [
-        {"name": "etl-nightly", "region": "us-central1", "image_version": "2.2-debian12",
-         "worker_count": 8, "machine_type": "n2-standard-8"},
-        {"name": "adhoc-analytics", "region": "us-central1", "image_version": "2.1-debian11",
-         "worker_count": 2, "machine_type": "n2-standard-4"},
+        {"name": "etl-nightly", "region": "us-central1", "state": "RUNNING", "image_version": "2.2-debian12",
+         "master_machine_type": "n2-standard-4", "machine_type": "n2-standard-8", "worker_count": 8,
+         "secondary_worker_count": 4,
+         "autoscaling_policy": "projects/northwind-analytics-demo/regions/us-central1/autoscalingPolicies/etl",
+         "properties": {"spark:spark.executor.memory": "12g", "spark:spark.sql.shuffle.partitions": "400"},
+         "init_actions": ["gs://northwind-landing/init/install-deps.sh"]},
+        {"name": "adhoc-analytics", "region": "us-central1", "state": "RUNNING", "image_version": "2.1-debian11",
+         "master_machine_type": "n2-standard-4", "machine_type": "n2-standard-4", "worker_count": 2,
+         "optional_components": ["JUPYTER"]},
     ],
     "jobs": [
-        {"id": "job-sessionize-01", "cluster": "etl-nightly", "job_type": "pyspark",
-         "main_file": "gs://northwind-landing/jobs/sessionize.py"},
-        {"id": "job-dedupe-events", "cluster": "etl-nightly", "job_type": "pyspark",
-         "main_file": "gs://northwind-landing/jobs/dedupe_events.py"},
-        {"id": "job-gl-export", "cluster": "etl-nightly", "job_type": "spark",
-         "main_file": "gs://northwind-landing/jobs/gl-export.jar"},
-        {"id": "job-cohort-sql", "cluster": "adhoc-analytics", "job_type": "spark_sql",
-         "main_file": "gs://northwind-landing/jobs/cohorts.sql"},
+        {"id": "us-central1/etl-nightly/sessionize.py", "region": "us-central1", "cluster": "etl-nightly",
+         "job_type": "pyspark", "main_file": "gs://northwind-landing/jobs/sessionize.py", "args": ["2026-10-07"],
+         "jars": ["gs://spark-lib/bigquery/spark-bigquery-with-dependencies_2.12-0.45.0.jar"],
+         "runs": 412, "last_run": "2026-10-08T02:00:41Z", "last_state": "DONE", "last_run_id": "sessionize-1001",
+         "args_vary": True, "code": SESSIONIZE_PY},
+        {"id": "us-central1/etl-nightly/dedupe_events.py", "region": "us-central1", "cluster": "etl-nightly",
+         "job_type": "pyspark", "main_file": "gs://northwind-landing/jobs/dedupe_events.py",
+         "properties": {"spark.executor.cores": "4", "spark.sql.shuffle.partitions": "64"},
+         "runs": 412, "last_run": "2026-10-08T02:41:10Z", "last_state": "DONE", "last_run_id": "dedupe-1001",
+         "code": DEDUPE_PY},
+        {"id": "us-central1/etl-nightly/gl-export.jar", "region": "us-central1", "cluster": "etl-nightly",
+         "job_type": "spark", "main_file": "gs://northwind-landing/jobs/gl-export.jar",
+         "args": ["--month", "2026-09"], "runs": 13, "last_run": "2026-10-01T05:00:12Z", "last_state": "DONE",
+         "last_run_id": "gl-export-13", "args_vary": True},
+        {"id": "us-central1/adhoc-analytics/cohorts.sql", "region": "us-central1", "cluster": "adhoc-analytics",
+         "job_type": "spark_sql", "main_file": "gs://northwind-landing/jobs/cohorts.sql",
+         "runs": 30, "last_run": "2026-10-06T09:15:00Z", "last_state": "DONE", "last_run_id": "cohorts-30",
+         "code": COHORTS_SQL},
+        {"id": "us-central1/adhoc-analytics/legacy_rollup.hql", "region": "us-central1",
+         "cluster": "adhoc-analytics", "job_type": "hive", "main_file": "gs://northwind-landing/jobs/legacy_rollup.hql",
+         "runs": 4, "last_run": "2026-09-14T11:00:00Z", "last_state": "ERROR", "last_run_id": "rollup-4"},
+    ],
+    "batches": [
+        {"id": "us-central1/serverless/score_returns.py", "region": "us-central1", "job_type": "pyspark",
+         "main_file": "gs://northwind-landing/jobs/score_returns.py", "runtime_version": "2.2",
+         "runs": 9, "last_run": "2026-10-05T07:30:00Z", "last_state": "SUCCEEDED", "last_run_id": "score-9",
+         "code": SCORE_RETURNS_PY},
+    ],
+    "workflow_templates": [
+        {"id": "month-end-close", "region": "us-central1", "cluster": "month-end-ephemeral",
+         "managed_cluster": {"name": "month-end-ephemeral", "region": "us-central1", "image_version": "2.2-debian12",
+                             "machine_type": "n2-highmem-8", "worker_count": 4},
+         "parameters": ["MONTH"],
+         "steps": [
+             {"step_id": "extract", "prerequisites": [], "job_type": "pyspark",
+              "main_file": "gs://northwind-landing/jobs/dedupe_events.py", "code": DEDUPE_PY},
+             {"step_id": "ledger", "prerequisites": ["extract"], "job_type": "spark",
+              "main_class": "com.northwind.finance.LedgerClose",
+              "jars": ["gs://northwind-landing/jobs/finance-close.jar"], "args": ["--month", "${MONTH}"]},
+             {"step_id": "report", "prerequisites": ["ledger"], "job_type": "spark_sql",
+              "main_file": "gs://northwind-landing/jobs/cohorts.sql", "code": COHORTS_SQL},
+         ]},
+    ],
+    # Cloud Scheduler jobs that call the Dataproc API, with what each starts.
+    "schedules": [
+        {"name": "sessionize-nightly", "region": "us-central1", "schedule": "0 2 * * *",
+         "time_zone": "America/Chicago", "state": "ENABLED",
+         "target": {"kind": "job", "region": "us-central1", "job_type": "pyspark",
+                    "main_file": "gs://northwind-landing/jobs/sessionize.py", "cluster": "etl-nightly"}},
+        {"name": "score-returns-weekdays", "region": "us-central1", "schedule": "30 7 * * 1-5",
+         "time_zone": "UTC", "state": "ENABLED",
+         "target": {"kind": "batch", "region": "us-central1", "job_type": "pyspark",
+                    "main_file": "gs://northwind-landing/jobs/score_returns.py"}},
+        {"name": "month-end-close-trigger", "region": "us-central1", "schedule": "0 6 1 * *",
+         "time_zone": "America/New_York", "state": "ENABLED",
+         "target": {"kind": "workflow_template", "region": "us-central1", "id": "month-end-close"}},
+        {"name": "legacy-rollup-weekly", "region": "us-central1", "schedule": "0 4 * * 0",
+         "time_zone": "UTC", "state": "PAUSED",
+         "target": {"kind": "workflow_template", "region": "us-central1", "id": "legacy-rollup"}},
     ],
 }
 
-COMPOSER = {
-    "environments": [{"name": "northwind-orchestration", "region": "us-central1",
-                      "image_version": "composer-2.9.7-airflow-2.9.3"}],
-    "dags": [
-        {"environment": "northwind-orchestration", "dag_id": dag}
-        for dag in ("daily_sales_load", "marketing_attribution", "finance_month_end",
-                    "logs_compaction", "ml_feature_refresh", "data_quality_checks")
-    ],
-}
+def _t(schema, name):
+    return {"database": PROJECT, "schema": schema, "name": name}
 
-DATAFORM = {"repositories": [{"name": "northwind-transformations", "region": "us-central1"}]}
 
-DATAFLOW = {"jobs": [
-    {"id": "2026-09-01_02_00_00-111", "name": "pubsub-orders-to-bq", "job_type": "JOB_TYPE_STREAMING"},
-    {"id": "2026-09-01_03_00_00-222", "name": "gcs-cdn-logs-to-bq", "job_type": "JOB_TYPE_BATCH"},
-    {"id": "2026-09-01_04_00_00-333", "name": "crm-sync", "job_type": "JOB_TYPE_BATCH"},
+ORDER_TOTALS = "`northwind-analytics-demo.sales.order_totals_by_day`"
+# Compiled actions as `compilationResults.query` returns them, reduced to the fields the migrator uses.
+DATAFORM = {"repositories": [
+    {"name": "northwind-transformations", "region": "us-central1",
+     "compiled_from": "an enabled release config (production-2026-10-01)",
+     "schedules": [
+         {"kind": "release_config", "name": "production", "cronSchedule": "0 4 * * *",
+          "timeZone": "America/New_York", "disabled": "false"},
+         {"kind": "workflow_config", "name": "nightly", "cronSchedule": "30 4 * * *",
+          "timeZone": "America/New_York", "disabled": "false"}],
+     "actions": [
+         {"target": _t("sales", "orders"), "filePath": "definitions/sources.js", "declaration": {}},
+         {"target": _t("sales", "order_totals_by_day"), "filePath": "definitions/order_totals_by_day.sqlx",
+          "relation": {"relationType": "TABLE",
+                       "selectQuery": "SELECT order_date, COUNT(*) AS orders, SUM(total) AS revenue\n"
+                                      "FROM `northwind-analytics-demo.sales.orders`\nGROUP BY order_date",
+                       "dependencyTargets": [_t("sales", "orders")], "tags": ["daily"]}},
+         {"target": _t("sales", "v_order_totals_nonempty"), "filePath": "definitions/v_order_totals_nonempty.sqlx",
+          "relation": {"relationType": "VIEW",
+                       "selectQuery": f"SELECT order_date, orders, revenue\nFROM {ORDER_TOTALS}\n"
+                                      "WHERE orders > 0",
+                       "dependencyTargets": [_t("sales", "order_totals_by_day")], "tags": ["daily"]}},
+         {"target": _t("dataform_assertions", "order_totals_by_day_assertions_uniqueKey_0"),
+          "filePath": "definitions/order_totals_by_day.sqlx",
+          "assertion": {"selectQuery": "SELECT * FROM (SELECT order_date, COUNT(1) AS index_row_count\n"
+                                       f"FROM {ORDER_TOTALS}\nGROUP BY order_date) AS data\n"
+                                       "WHERE index_row_count > 1",
+                        "dependencyTargets": [_t("sales", "order_totals_by_day")]}},
+         {"target": _t("sales", "legacy_order_export"), "filePath": "definitions/legacy_order_export.sqlx",
+          "relation": {"relationType": "TABLE", "disabled": True,
+                       "selectQuery": "SELECT * FROM `northwind-analytics-demo.sales.orders`",
+                       "dependencyTargets": [_t("sales", "orders")]}}]},
+    # An incremental table: first-run and merge semantics are not translated, so no job is created.
+    {"name": "northwind-events-incremental", "region": "us-central1",
+     "compiled_from": "the newest compilation result (8d1f0c2e)", "schedules": [],
+     "actions": [
+         {"target": _t("marketing", "web_events"), "filePath": "definitions/sources.js", "declaration": {}},
+         {"target": _t("marketing", "events_daily"), "filePath": "definitions/events_daily.sqlx",
+          "relation": {"relationType": "INCREMENTAL_TABLE",
+                       "selectQuery": "SELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events\n"
+                                      "FROM `northwind-analytics-demo.marketing.web_events`\nGROUP BY 1, 2",
+                       "incrementalTableConfig": {
+                           "incrementalSelectQuery": "SELECT DATE(event_ts) AS event_date, event_name, COUNT(*) "
+                                                     "AS events\nFROM `northwind-analytics-demo.marketing."
+                                                     "web_events`\nWHERE event_ts > (SELECT MAX(event_date) "
+                                                     "FROM `northwind-analytics-demo.marketing.events_daily`)"
+                                                     "\nGROUP BY 1, 2",
+                           "uniqueKeyParts": ["event_date", "event_name"]},
+                       "dependencyTargets": [_t("marketing", "web_events")]}}]},
 ]}
-
-VERTEX = {
-    "models": [{"name": "propensity-xgb", "id": "vm-001"}, {"name": "reco-two-tower", "id": "vm-002"}],
-    "endpoints": [{"name": "reco-online", "id": "ve-001"}],
-    "pipelines": [{"name": "propensity-training", "id": "vp-001"}],
-}
-
 
 def build() -> dict:
     tables = _tables()
@@ -360,16 +515,13 @@ def build() -> dict:
         "project_id": PROJECT,
         "scanned_at": "2026-10-01T09:00:00Z",
         "customer_persona": "Northwind Retail — sample/fixture, no real data",
-        "sources_scanned": ["bigquery", "gcs", "dataproc", "composer",
-                            "dataform", "dataflow", "vertex"],
+        "sources_scanned": ["bigquery", "gcs", "dataproc",
+                            "dataform"],
         "sources": {
             "bigquery": {"summary": {k: len(v) for k, v in bq_items.items()}, "items": bq_items},
             "gcs": {"summary": {"buckets": len(GCS_BUCKETS)}, "items": {"buckets": GCS_BUCKETS}},
             "dataproc": {"summary": {k: len(v) for k, v in DATAPROC.items()}, "items": DATAPROC},
-            "composer": {"summary": {k: len(v) for k, v in COMPOSER.items()}, "items": COMPOSER},
             "dataform": {"summary": {k: len(v) for k, v in DATAFORM.items()}, "items": DATAFORM},
-            "dataflow": {"summary": {k: len(v) for k, v in DATAFLOW.items()}, "items": DATAFLOW},
-            "vertex": {"summary": {k: len(v) for k, v in VERTEX.items()}, "items": VERTEX},
         },
     }
 

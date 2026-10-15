@@ -27,7 +27,7 @@ def resolve_params(params: dict) -> dict:
     for name in params:
         for spelling in dict.fromkeys((name, name.replace("-", "_"))):
             try:
-                value = oidlUtils.parameters.getParameter(spelling, _MISS)  # noqa: F821
+                value = oidlUtils.parameters.getParameter(spelling, _MISS)
             except NameError:  # outside AIDP: no oidlUtils
                 value = _MISS
             if value != _MISS and value is not None and str(value).strip() != "":
@@ -148,7 +148,7 @@ def table_exists(spark, fqn: str) -> bool:
     try:
         spark.sql(f"DESCRIBE TABLE {fqn}").collect()
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if "TABLE_OR_VIEW_NOT_FOUND" in str(exc) or "not found" in str(exc).lower():
             return False
         raise  # "could not look" is never recorded as "absent"
@@ -156,3 +156,29 @@ def table_exists(spark, fqn: str) -> bool:
 
 def target_columns(spark, fqn: str) -> list[tuple[str, str]]:
     return [(f.name, f.dataType.simpleString()) for f in spark.table(fqn).schema.fields]
+
+
+def exported_rows(spark, rows_file: str) -> int:
+    """The rows BigQuery's EXPORT DATA job wrote, recorded by `gcp-aidp export` beside the files."""
+    return int(spark.read.json(rows_file).collect()[0]["rows"])
+
+
+def column_drift(planned: list[str], read: list[str]) -> tuple[list[str], list[str], str]:
+    """(planned but not read, read but not planned, the reason naming them; "" when they agree)."""
+    missing, extra = sorted(set(planned) - set(read)), sorted(set(read) - set(planned))
+    reason = "; ".join(f"{what} {', '.join(cols)}" for what, cols in
+                       (("planned but not read:", missing), ("read but not planned:", extra)) if cols)
+    return missing, extra, reason
+
+
+def layout_drift(spark, t: dict) -> list[str]:
+    """An existing target compared with the plan, column by column and in order."""
+    actual = target_columns(spark, quote(*t["target"]))
+    planned = [(c["name"], c["target_type"]) for c in t["columns"]]
+    drift = []
+    for i in range(max(len(actual), len(planned))):
+        a = actual[i] if i < len(actual) else ("<none>", "")
+        p = planned[i] if i < len(planned) else ("<none>", "")
+        if a[0].lower() != p[0].lower() or normalize_type(a[1]) != normalize_type(p[1]):
+            drift.append(f"column {i + 1}: target {a[0]} {a[1]}, plan {p[0]} {p[1]}")
+    return drift

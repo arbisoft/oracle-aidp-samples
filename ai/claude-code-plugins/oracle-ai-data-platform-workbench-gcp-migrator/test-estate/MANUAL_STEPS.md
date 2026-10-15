@@ -59,15 +59,35 @@ bq query --use_legacy_sql=false \
 
 In BigQuery Studio, open a new query, paste
 `saved_queries/Returned_orders_by_status.sql`, and **Save** it as
-*Returned orders by status*. The inventory cannot read saved queries through an API
-in 0.1, so pass the exported copy instead:
+*Returned orders by status*. `inventory --scan-services` reads it through Dataform
+(Dataform Viewer); without that, pass the exported copy:
 `--saved-queries-dir test-estate/saved_queries`.
 
 ## 5. Notebook
 
-In BigQuery Studio, create a notebook named *migration test notebook*. The
-inventory records notebooks as **not scanned** in 0.1 (they migrate in 0.2), and
-the plan shows that at the top.
+In BigQuery Studio, create a notebook named *migration test notebook* with a
+`%%bigquery` cell, and download it as `.ipynb` into a folder (**File → Download**). The
+inventory reads it with `--notebooks-dir <folder>`; without that, notebooks are recorded
+as **not scanned** and the plan shows that at the top.
+
+## 5b. Dataproc (billing required, optional)
+
+Enable the Dataproc API, give the service account **Dataproc Viewer**, then create a
+small cluster and run a job twice with different arguments, so the inventory has run
+history to group:
+
+```bash
+gcloud dataproc clusters create e2e --region=us-central1 --single-node
+gsutil cp job.py gs://<project>-migration-test/jobs/job.py      # any PySpark script
+gcloud dataproc jobs submit pyspark gs://<project>-migration-test/jobs/job.py \
+  --cluster=e2e --region=us-central1 -- 2026-10-01
+gcloud dataproc jobs submit pyspark gs://<project>-migration-test/jobs/job.py \
+  --cluster=e2e --region=us-central1 -- 2026-10-02
+```
+
+Then run the inventory with `--sources bigquery,dataproc --scan-services`: the two runs
+are one definition with `runs: 2` and `args_vary: true`. Delete the cluster the same day
+(`gcloud dataproc clusters delete e2e --region=us-central1`): it bills by the hour.
 
 ## 6. Run the inventory
 
@@ -81,8 +101,8 @@ gcp-aidp plan $WORK/inv.json --catalog gcp_migration_test --datasets migration_t
 ```
 
 Every call is a metadata `GET` with a read-only token: nothing is queried and
-nothing is billed. Add `--scan-services` to also list Dataproc, Composer,
-Dataform, Dataflow and Vertex AI (their APIs refuse a read-only token, so this
+nothing is billed. Add `--scan-services` to also list Dataproc and
+Dataform (their APIs refuse a read-only token, so this
 asks for a broader one; the calls are still GETs). In the sandbox they report
 "API not enabled: none". `$WORK/inv.json` should list:
 
@@ -118,7 +138,7 @@ gcp-aidp migrate $WORK/plan.json -o $WORK/migrated
 gcp-aidp verify $WORK/migrated
 ```
 
-On AIDP, as in the README's **Setup**, step 2: create the standard catalog
+On AIDP, as in **Setup**, step 2, of `docs/RUNBOOK.md`: create the standard catalog
 `gcp_migration_test`, add the credential `gcp_bigquery_reader` (key
 `credentials_b64`, the base64 service account key), and give a Spark 3.5 cluster
 the `spark-bigquery-with-dependencies_2.12-<version>.jar` library. Then either:

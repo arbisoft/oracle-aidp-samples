@@ -15,7 +15,7 @@ HAS_MCP = importlib.util.find_spec("mcp") is not None
 
 def run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, "-m", "gcp_aidp.cli", *args],
-                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
 
 
 @unittest.skipUnless(HAS_MCP, "install the mcp extra to enable the MCP parity tests")
@@ -38,6 +38,15 @@ class McpParityTests(unittest.TestCase):
             self.assertEqual(cli_report["counts"], mcp_report["counts"])
             self.assertEqual(run_cli("verify", str(root / "cli")).stdout,
                              verify(str(root / "mcp")).replace(str(root / "mcp"), str(root / "cli")))
+
+    def test_plan_takes_the_export_route_options(self):
+        from gcp_aidp.mcp_server import inventory, plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inv, pln = Path(tmp) / "inv.json", Path(tmp) / "plan.json"
+            inventory(fixture="demo", output=str(inv))
+            self.assertNotIn("[exit", plan(str(inv), output=str(pln), export_over_gb=1, export_bucket="stage-bkt"))
+            self.assertEqual(json.loads(pln.read_text())["export"]["over_gb"], 1)
 
     def test_cli_failure_is_reported_with_exit_code(self):
         from gcp_aidp.mcp_server import verify

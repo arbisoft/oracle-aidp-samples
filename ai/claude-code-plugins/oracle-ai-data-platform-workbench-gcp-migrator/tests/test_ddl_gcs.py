@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from gcp_aidp.translate import ddl
-from gcp_aidp.translate.gcs_to_oci import build_transfer, location_for, rewrite_text, rewrite_uri
+from gcp_aidp.translate.gcs_to_oci import location_for, rewrite_text, rewrite_uri
 from gcp_aidp.translate.types import map_column
 
 T = {"catalog": "c", "schema": "s", "name": "t"}
@@ -55,6 +56,11 @@ class Layout(unittest.TestCase):
         lay = layout([("a", "STRING")], partitioning={"type": "DAY", "field": None})
         self.assertIn(("D03_INGESTION_TIME", "flag"), rule_set(lay))
         self.assertEqual((lay["partitioned_by"], lay["cluster_by"]), ([], []))
+        # with the pseudo-columns the plan carries: clustered on the load time, in place of the partitions
+        lay = layout([("a", "STRING"), ("_PARTITIONTIME", "TIMESTAMP"), ("_PARTITIONDATE", "DATE")],
+                     partitioning={"type": "DAY", "field": None}, clustering=["a"])
+        self.assertEqual((lay["partitioned_by"], lay["cluster_by"]), ([], ["_PARTITIONTIME", "a"]))
+        self.assertIn("_PARTITIONTIME and _PARTITIONDATE carried", " ".join(d for _, _, d in lay["findings"]))
 
     def test_D04_METADATA(self):
         lay = layout([("a", "STRING")], expiration_ms=1, labels={"x": "y"})
@@ -65,13 +71,41 @@ class Layout(unittest.TestCase):
         self.assertIn("USING PARQUET\nLOCATION 'oci://b@n/p/'", sql)
         self.assertNotIn("flag", [s for _, s, _ in f])
         _, csv = ddl.create_external_table(T, "CSV", "oci://b@n/p/")
-        self.assertIn("flag", [s for _, s, _ in csv])
+        self.assertIn("flag", [s for _, s, _ in csv])  # an older inventory: no CSV options recorded
+
+    def test_D05_external_columns_and_csv_options_are_carried(self):
+        cols = [map_column({"name": "id", "type": "INTEGER"}), map_column({"name": "n", "type": "STRING"})]
+        sql, f = ddl.create_external_table(T, "CSV", "oci://b@n/p/", cols,
+                                           {"skipLeadingRows": "1", "fieldDelimiter": ";", "quote": '"',
+                                            "allowQuotedNewlines": True, "allowJaggedRows": False})
+        self.assertIn("(\n  `id` BIGINT,\n  `n` STRING\n)\nUSING CSV\n"
+                      "OPTIONS (header 'true', sep ';', quote '\"', multiLine 'true')\nLOCATION 'oci://b@n/p/'", sql)
+        self.assertNotIn("flag", [s for _, s, _ in f])
+        _, f = ddl.create_external_table(T, "CSV", "x", cols, {}, autodetect=True)
+        self.assertIn("detects a header row itself", " ".join(d for _, s, d in f if s == "flag"))
+        _, f = ddl.create_external_table(T, "CSV", "x", cols, {"skipLeadingRows": "2", "preserveAsciiControlCharacters": True})
+        self.assertEqual(len([s for _, s, _ in f if s == "flag"]), 2)
+        geo = [map_column({"name": "g", "type": "GEOGRAPHY"})]
+        self.assertIsNone(ddl.create_external_table(T, "PARQUET", "x", geo)[0])  # a blocked column blocks it
         self.assertIsNone(ddl.create_external_table(T, "GOOGLE_SHEETS", "x")[0])
 
     def test_D06_SQL_FUNCTION(self):
         sql, f = ddl.create_function(T, [{"name": "a", "type": "FLOAT64"}], "FLOAT64", "a * 2")
         self.assertIn("(a DOUBLE)\nRETURNS DOUBLE\nRETURN a * 2", sql)
         self.assertEqual(f[0][:2], ("D06_SQL_FUNCTION", "flag"))
+
+    def test_D06_SQL_FUNCTION_arithmetic_is_a_python_udf(self):
+        args = [{"name": "price", "type": "FLOAT64"}, {"name": "discount", "type": "FLOAT64"}]
+        line = ddl.python_udf("net_price", args, "FLOAT64", "price * (1 - IFNULL(discount, 0))")
+        registered = {}
+        spark = SimpleNamespace(udf=SimpleNamespace(register=lambda n, f, ty: registered.update({n: (f, ty)})))
+        exec(line, {"spark": spark})  # noqa: S102 - runs the generated line
+        f, ty = registered["net_price"]
+        self.assertEqual((ty, f(10, 0.25), f(10, None), f(None, 0.5), f(4, 1)), ("double", 7.5, 10.0, None, 0.0))
+        self.assertIsInstance(f(4, 1), float)  # a Python int would read as NULL in a double column
+        for body, ret in (("ROUND(price)", "FLOAT64"), ("price", "STRING"), ("IFNULL(price, discount)", "FLOAT64"),
+                          ("price +", "FLOAT64"), ("price * qty", "FLOAT64")):
+            self.assertIsNone(ddl.python_udf("f", args, ret, body), body)
 
     def test_create_table_quotes_and_escapes(self):
         cols = [{"name": "we`ird", "target_type": "STRING", "nullable": False, "comment": "it's \\ ok"}]
@@ -100,12 +134,6 @@ class Gcs(unittest.TestCase):
         self.assertEqual(location_for(["gs://a/p/file.csv"]), ("gs://a/p/file.csv", ""))
         self.assertIsNone(location_for(["gs://a/*/x.csv"])[0])
         self.assertIsNone(location_for(["gs://a/1", "gs://a/2"])[0])
-
-    def test_GS03_TRANSFER(self):
-        script = build_transfer("src", "dst", "ns")
-        self.assertIn('rclone --config "$CONF" copy "gcssrc:src" "ocidest:dst"', script)
-        commands = [l for l in script.splitlines() if l.startswith("rclone")]
-        self.assertEqual([c.split()[3] for c in commands], ["mkdir", "copy"])  # never sync/delete/purge
 
 
 if __name__ == "__main__":

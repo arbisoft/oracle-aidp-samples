@@ -1,6 +1,7 @@
 """migrate --demo labels and verify's fail-closed checks."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from gcp_aidp.migrate import IN_PROGRESS_MARKER, migrate
 from gcp_aidp.plan import build_plan
+from gcp_aidp.publish import plan_publish
 from gcp_aidp.verify import verify
 
 ROOT = Path(__file__).parents[1]
@@ -28,12 +30,18 @@ EXPECTED = {
     "bigquery.view.logs.v_all_app_events": "REVIEW",    # blocked: wildcard
     "bigquery.materialized_view.sales.mv_daily_sales": "PASS",
     "bigquery.routine.sales.net_price": "REVIEW",       # no SQL UDFs on Spark 3.5
-    "bigquery.routine.finance.close_month": "SKIP",     # reported
+    "bigquery.routine.finance.close_month": "REVIEW",   # blocked: DECLARE, procedural logic
+    "bigquery.routine.sales.orders_for_customer": "PASS",  # table function: a notebook, cid a named parameter
     "bigquery.saved_query.Churn_scoring": "REVIEW",     # blocked: ML.PREDICT
     "bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002": "REVIEW",  # J02: destination table
-    "gcs.bucket.northwind-landing": "REVIEW",           # transfer prerequisites
-    "dataproc.cluster.etl-nightly": "SKIP",
-    "vertex.model.vm-001": "SKIP",
+    "gcs.bucket.northwind-landing": "PASS",             # copied by `transfer`; nothing to set up
+    "dataform.repository.northwind-transformations": "PASS",
+    "dataform.repository.northwind-events-incremental": "REVIEW",  # DF04: incremental table, no job
+    "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
+    "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
+    "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
+    "dataproc.job.us-central1/etl-nightly/gl-export.jar": "SKIP",    # reported: JAR_TASK unproven
+    "dataproc.workflow_template.month-end-close": "REVIEW",  # its JAR step blocks it (P97)
 }
 
 
@@ -56,16 +64,92 @@ class Demo(unittest.TestCase):
         self.assertEqual(self.result["summary"]["FAIL"], 0)
         self.assertEqual(sum(self.result["summary"].values()), len(self.report["results"]))
 
+    def test_the_check_job_runs_each_on_demand_notebook_once_and_leaves_procedures_out(self):
+        check = next(j for j in self.report["jobs"] if j["name"] == "check_notebooks")
+        kinds = {r["notebook"]: r["kind"] for r in self.report["results"] if r.get("notebook")}
+        checked = {kinds[t["notebook"]] for t in check["tasks"]}
+        self.assertTrue({"bq_saved_query", "bq_notebook"} <= checked)
+        self.assertNotIn("bq_procedure", checked)  # it changes data: only in check_notebooks_writes
+        self.assertFalse(any(t.get("dependsOn") for t in check["tasks"]))  # each runs on its own; one failing stops none
+        self.assertNotIn("schedule", check)
+        defn = next(j["definition"] for j in plan_publish(self.out, prefix="p", cluster_key="ck")["jobs"]
+                    if j["name"] == "p_check_notebooks")
+        self.assertFalse(any("parameters" in t for t in defn["tasks"]))  # reports_dir is the data-plane notebooks'
+
+    def test_a_notebook_that_could_change_data_is_never_checked(self):
+        from gcp_aidp.dataplane import write_jobs
+
+        def nb(code):
+            return json.dumps({"cells": [{"cell_type": "code", "source": code}]})
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            sources = {"reads": 'df = spark.sql("""SELECT * FROM t""").toPandas()',
+                       "inserts": 'spark.sql("""INSERT INTO t SELECT 1""")',
+                       "writes": 'spark.table("t").write.mode("append").saveAsTable("u")',
+                       "deletes": 'spark.sql("delete from t where x = 1")'}
+            results = []
+            for name, code in sources.items():
+                (out / f"{name}.ipynb").write_text(nb(code))
+                results.append({"kind": "bq_saved_query", "status": "ok", "notebook": f"{name}.ipynb"})
+            dp = {"plan_id": "p", "project": "p", "catalog": "c", "tables": []}
+            check = next(j for j in write_jobs(dp, results, out) if j["name"] == "check_notebooks")
+            writes = next(j for j in write_jobs(dp, results, out) if j["name"] == "check_notebooks_writes")
+        self.assertEqual([t["notebook"] for t in check["tasks"]], ["reads.ipynb"])
+        # The ones that could write are checked only on purpose, in their own job that says so.
+        self.assertEqual(sorted(t["notebook"] for t in writes["tasks"]), ["deletes.ipynb", "inserts.ipynb", "writes.ipynb"])
+        self.assertTrue(writes["description"].startswith("CHANGES DATA."))
+        self.assertNotIn("schedule", writes)
+
+    def test_a_saved_query_is_published_as_a_notebook_that_shows_its_result(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        top = by_id["bigquery.saved_query.Top_products_last_30_days"]
+        self.assertIn(top["notebook"], self.report["notebooks"])  # publish uploads it once
+        self.assertEqual(self.report["notebooks"].count(top["notebook"]), 1)
+        # Only the check job runs it, when someone starts it: it has no schedule of its own.
+        self.assertEqual({j["name"] for j in self.report["jobs"] for t in j["tasks"] if t.get("notebook") == top["notebook"]},
+                         {"check_notebooks"})
+        cells = json.loads((self.out / top["notebook"]).read_text())["cells"]
+        code = "".join(cells[-1]["source"])
+        self.assertTrue(code.startswith("spark.sql(") and code.endswith(".toPandas()"), code)
+        ast.parse(code)
+        self.assertNotIn("notebook", by_id["bigquery.saved_query.Churn_scoring"])  # blocked: stays local
+
     def test_blocked_artifacts_are_not_runnable(self):
         for r in self.report["results"]:
-            if r["status"] == "blocked" and r["kind"] != "bq_table":
+            if r["status"] == "blocked" and r["kind"] == "bq_notebook":
+                # Kept for a person to finish: its blocked cells are commented out, and it is never uploaded.
+                nb = json.loads((self.out / r["output_path"]).read_text())
+                self.assertTrue(any(c["source"].startswith("# gcp-aidp: NOT TRANSLATED") for c in nb["cells"]))
+                self.assertNotIn(r["output_path"], self.report["notebooks"])
+            elif r["status"] == "blocked" and r["kind"] != "bq_table":
                 body = (self.out / r["output_path"]).read_text()
-                self.assertTrue(all(l.startswith("--") or not l.strip() for l in body.splitlines()), r["asset_id"])
+                self.assertTrue(all(l.startswith(("--", "#")) or not l.strip() for l in body.splitlines()),
+                                r["asset_id"])
 
-    def test_J01_UNSCHEDULED_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
+    def test_dataproc_artifacts_hold_the_translated_code(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}
-        job = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440003"]  # no destination
-        self.assertIn("J01_UNSCHEDULED", [f["rule"] for f in job["findings"]])
+        job = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
+        body = (self.out / job["output_path"]).read_text()
+        self.assertIn('spark.table("`northwind_analytics_demo`.`sales`.`store_visits`")', body)
+        self.assertIn("# args: 2026-10-07", body)
+        ast.parse(body)  # the artifact is the script, ready to run
+
+    def test_P97_NOT_TRANSLATED_TYPE_blocks_the_whole_template(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        t = by_id["dataproc.workflow_template.month-end-close"]
+        self.assertEqual(t["status"], "blocked")
+        self.assertIn(("P97_NOT_TRANSLATED_TYPE", "block"), [(f["rule"], f["severity"]) for f in t["findings"]])
+        self.assertEqual([(st["step_id"], st["status"]) for st in t["steps"]],
+                         [("extract", "needs_manual_review"), ("ledger", "blocked"), ("report", "needs_manual_review")])
+        self.assertEqual(t["steps"][2]["prerequisites"], ["ledger"])
+
+    def test_J03_SCHEDULE_J02_DESTINATION_TABLE_and_M01_MATERIALIZED_VIEW_are_recorded(self):
+        by_id = {r["asset_id"]: r for r in self.report["results"]}
+        call = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440003"]  # a blocked CALL: no job
+        self.assertFalse({"job", "J03_SCHEDULE"} & ({f["rule"] for f in call["findings"]} | set(call)))
+        nightly = by_id["dataproc.job.us-central1/etl-nightly/sessionize.py"]
+        self.assertEqual(nightly["job"]["schedules"], [{"quartzCronExpression": "0 0 2 * * ?",
+                                                        "timezoneId": "America/Chicago"}])
         into = by_id["bigquery.scheduled_query.6512f0a1-0000-2b8e-a1d4-001a11440002"]
         self.assertIn(("J02_DESTINATION_TABLE", "flag"), [(f["rule"], f["severity"]) for f in into["findings"]])
         self.assertNotIn("job", into)  # running only its SELECT would write nothing
@@ -118,13 +202,36 @@ class VerifyFailsClosed(unittest.TestCase):
 
 
 class EveryRuleHasATest(unittest.TestCase):
+    def test_every_rule_that_grades_review_is_in_the_review_guide(self):
+        code = "\n".join(p.read_text() for p in Path(__file__).parents[1].joinpath("gcp_aidp").rglob("*.py"))
+        rule = r"[A-Z]{1,2}[0-9]{2}_[A-Z0-9_]+"
+        review = set(re.findall(rf'"({rule})",\s*"(?:caveat|flag)"', code))  # emitted as caveat or flag
+        calls = code[code.index("_FLAGGED_CALLS = {"):]
+        review |= set(re.findall(rf'\("({rule})",', calls[:calls.index("\n}\n")]))  # flagged calls
+        guide = Path(__file__).parents[1].joinpath("references", "review-guide.md").read_text()
+        self.assertEqual(sorted(r for r in review if f"`{r}`" not in guide), [])
+
+    def test_every_rule_in_code_is_in_a_rule_reference(self):
+        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py") if "fixtures" not in str(p))
+        refs = "".join(p.read_text() for p in (ROOT / "references").glob("*.md") if p.name != "review-guide.md")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|DF|GS|M|J|P|N|X)\d\d(?:_[A-Z0-9]+)+")
+        self.assertEqual(sorted(r for r in set(rule.findall(code)) if f"`{r}`" not in refs), [])
+
     def test_rule_ids_in_code_appear_in_tests(self):
-        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|GS|M|J)\d\d(?:_[A-Z0-9]+)+")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|DF|C|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
         tests = "".join(p.read_text() for p in (ROOT / "tests").glob("test_*.py"))
         ids = set(rule.findall(code))
         self.assertGreater(len(ids), 40)  # the guard is not passing on an empty set
         self.assertEqual(sorted(ids - set(rule.findall(tests))), [])
+
+    def test_dataform_rules_have_a_row_in_the_reference(self):
+        rule = re.compile(r"(?<![A-Z0-9])DF\d\d(?:_[A-Z0-9]+)+")
+        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
+        reference = (ROOT / "references/dataform-translation.md").read_text()
+        ids = set(rule.findall(code))
+        self.assertEqual(len(ids), 15)
+        self.assertEqual(sorted(i for i in ids if f"| `{i}` |" not in reference), [])
 
 
 if __name__ == "__main__":

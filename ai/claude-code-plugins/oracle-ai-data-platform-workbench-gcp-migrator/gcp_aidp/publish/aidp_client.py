@@ -74,12 +74,10 @@ class AidpClient:
         scratch = None
         try:
             if body is not None:
-                scratch = tempfile.NamedTemporaryFile(
-                    "w", suffix=".json", delete=False, encoding="utf-8")
-                json.dump(body, scratch)
-                scratch.close()
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as scratch:
+                    json.dump(body, scratch)
                 command += ["--body", f"@{scratch.name}"]
-            done = subprocess.run(command, capture_output=True, text=True,
+            done = subprocess.run(command, capture_output=True, text=True, check=False,
                                   timeout=self.timeout + 30)
         except subprocess.TimeoutExpired as exc:
             raise AidpError(f"aidp timed out after {self.timeout}s") from exc
@@ -158,6 +156,15 @@ class AidpClient:
         return self._run(["notebook", "update-content", self.workspace_key, path],
                          body={"type": "notebook", "format": "json",
                                "content": json.loads(ipynb_text)})
+
+    def put_file(self, path: str, local: str) -> dict:
+        """Create a plain workspace FILE (a Python task's script) from a local file.
+
+        Live on AIDP, 2026-10-09: `workspace-object create --type FILE --body @file`
+        stores the file as given, and its response's `data` is a list.
+        """
+        return self._run(["workspace-object", "create", self.workspace_key, "--path",
+                          _literal(self.object_path(path)), "--type", "FILE", "--body", f"@{local}"])
 
     # --- jobs -------------------------------------------------------------
     def list_jobs(self) -> list:

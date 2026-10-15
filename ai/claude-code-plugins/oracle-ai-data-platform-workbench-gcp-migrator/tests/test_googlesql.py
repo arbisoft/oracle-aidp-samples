@@ -11,8 +11,8 @@ CTX = Context(project="proj",
               buckets={"landing": "landing-oci"}, namespace="ns")
 
 
-def t(sql):
-    return translate(sql, CTX)
+def t(sql, ctx=None):
+    return translate(sql, ctx or CTX)
 
 
 def rules(r, severity=None):
@@ -232,7 +232,13 @@ class Blocks(unittest.TestCase):
             self.assertIn(why, t(sql).findings[0].detail, sql)
 
     def test_G16_PSEUDO_COLUMN(self):
-        self.blocked("SELECT _PARTITIONTIME FROM t", "G16_PSEUDO_COLUMN")
+        # carried as columns of the same names (D03): the reference stays as written, flagged
+        for sql in ("SELECT n FROM t WHERE _PARTITIONTIME >= TIMESTAMP '2026-01-01'", "SELECT _PARTITIONDATE FROM t"):
+            r = t(sql)
+            self.assertNotEqual(r.status, "blocked", sql)
+            self.assertIn("G16_PSEUDO_COLUMN", rules(r, "flag"), sql)
+        self.assertIn("_PARTITIONTIME >=", t("SELECT n FROM t WHERE _PARTITIONTIME >= TIMESTAMP '2026-01-01'").sql)
+        self.blocked("SELECT _TABLE_SUFFIX FROM `proj.logs.events_*`", "G16_PSEUDO_COLUMN")
         self.blocked("SELECT * FROM `proj.logs.events_*`", "G16_PSEUDO_COLUMN")
 
     def test_G17_SCRIPTING(self):
@@ -244,6 +250,35 @@ class Blocks(unittest.TestCase):
     def test_G18_ML_AI_GEO(self):
         self.blocked("SELECT * FROM ML.PREDICT(MODEL m, TABLE t)", "G18_ML_AI_GEO")
         self.blocked("SELECT ST_DISTANCE(a, b)", "G18_ML_AI_GEO")
+        self.blocked("SELECT ST_GEOGPOINT(1, 2)", "G18_ML_AI_GEO")  # without --geography wkt
+
+    def test_G27_DATE_TRUNC(self):
+        typed = Context(**{**vars(CTX), "column_types": {"order_date": {"DATE"}, "created_at": {"TIMESTAMP"},
+                                                         "d": {"DATE", "TIMESTAMP"}}})
+        for sql, want in [("SELECT DATE_TRUNC(order_date, MONTH) FROM t", "SELECT trunc(order_date, 'MM') FROM t"),
+                          ("SELECT DATE_TRUNC(o.order_date, QUARTER) FROM t o", "SELECT trunc(o.order_date, 'QUARTER') FROM t o"),
+                          ("SELECT DATE_TRUNC(order_date, YEAR) FROM t", "SELECT trunc(order_date, 'YEAR') FROM t"),
+                          ("SELECT DATE_TRUNC(order_date, ISOWEEK) FROM t", "SELECT trunc(order_date, 'WEEK') FROM t"),
+                          ("SELECT DATE_TRUNC(order_date, DAY) FROM t", "SELECT order_date FROM t")]:
+            r = t(sql, typed)
+            self.assertEqual((r.sql, r.status), (want, "ok"), sql)
+            self.assertIn("G27_DATE_TRUNC", rules(r, "rewrite"))
+        # Never guessed: WEEK starts on another day, a TIMESTAMP changes type, a name that is not
+        # a DATE in every table, an expression, a column the plan does not know.
+        for sql in ("SELECT DATE_TRUNC(order_date, WEEK) FROM t", "SELECT DATE_TRUNC(created_at, MONTH) FROM t",
+                    "SELECT DATE_TRUNC(d, MONTH) FROM t", "SELECT DATE_TRUNC(DATE(created_at), MONTH) FROM t",
+                    "SELECT DATE_TRUNC(unknown, MONTH) FROM t"):
+            r = t(sql, typed)
+            self.assertIn("DATE_TRUNC(", r.sql, sql)
+            self.assertIn("G22_SAME_NAME", rules(r, "flag"), sql)
+
+    def test_G26_GEOGPOINT_WKT(self):
+        wkt = Context(**{**vars(CTX), "geography": "wkt"})
+        r = t("SELECT ST_GEOGPOINT(-122.40, 37.8) AS p, ST_GEOGPOINT(1, -2) AS q", wkt)
+        self.assertEqual(r.sql, "SELECT 'POINT(-122.4 37.8)' AS p, 'POINT(1 -2)' AS q")  # as ST_ASTEXT writes it
+        self.assertEqual({(f.rule, f.severity) for f in r.findings}, {("G26_GEOGPOINT_WKT", "rewrite")})
+        for sql in ("SELECT ST_GEOGPOINT(lon, lat) FROM t", "SELECT ST_GEOGPOINT(200, 0)", "SELECT ST_DISTANCE(a, b)"):
+            self.assertEqual(t(sql, wkt).status, "blocked", sql)
 
     def test_G98_UNBALANCED(self):
         self.blocked("SELECT 'open", "G98_UNBALANCED")

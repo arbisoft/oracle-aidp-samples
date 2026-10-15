@@ -9,7 +9,7 @@ gcp-aidp publish ./migrated --prefix <name>
 ```
 
 `publish` and `run` are the only verbs that reach AIDP. Everything before them is
-local.
+local, except `export --apply`, which writes only to the staging and OCI buckets.
 
 Before the first `--apply`, run the `gcp-aidp-migrator-bootstrap` skill's checks.
 
@@ -35,8 +35,9 @@ What publish guarantees, and what to tell the user:
 - **`--prefix` namespaces the folder and job names**, so two people publishing into
   one workspace do not collide. It must be a letter followed by letters, digits or
   underscores.
-- **Jobs are created unscheduled.** The refresh job for a materialized view, and the
-  job for a scheduled query, run only when someone runs or schedules them.
+- **Nothing is scheduled to run.** A job is created unscheduled, or with its source
+  schedule (scheduled query, Cloud Scheduler) translated to Quartz and PAUSED. It runs
+  only when someone runs it or turns its schedule on in AIDP. Never offer to turn one on.
 - **A refusal makes `--apply` exit 1**: a job with no cluster key, a cluster that is
   not the workspace's or is its Default Master, a job whose notebooks this run did not
   upload. Report a non-zero exit; do not re-run with different flags to make it green.

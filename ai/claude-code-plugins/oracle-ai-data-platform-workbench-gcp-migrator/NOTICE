@@ -8,9 +8,8 @@ Trademarks
 Oracle, Java, MySQL, and NetSuite are registered trademarks of Oracle and/or
 its affiliates. Other names may be trademarks of their respective owners.
 Claude and Claude Code are trademarks of Anthropic, PBC. Google Cloud,
-BigQuery, Cloud Storage, Dataproc, Cloud Composer, Dataform, Dataflow and
-Vertex AI are trademarks of Google LLC. Apache, Apache Spark, Apache Airflow
-and Spark are either registered trademarks or trademarks of The Apache
+BigQuery, Cloud Storage, Dataproc and Dataform are trademarks of Google LLC.
+Apache, Apache Spark and Spark are either registered trademarks or trademarks of The Apache
 Software Foundation in the United States and/or other countries. No
 endorsement by The Apache Software Foundation is implied. Third-party names
 are used only to identify the products this plugin works with; it is not

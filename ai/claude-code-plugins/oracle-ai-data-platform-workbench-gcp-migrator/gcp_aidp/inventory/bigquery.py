@@ -4,13 +4,15 @@ Metadata calls only (`datasets.get`, `tables.get`, `routines.get`, ...): no
 query runs and no bytes are billed. Row counts are the table metadata's
 `numRows`.
 
-Saved queries, BigQuery Studio notebooks and BigQuery pipelines have no read
-API this tool relies on in 0.1. They are recorded as not scanned, so the plan
-says so. Saved queries exported as .sql files can be read with
-`--saved-queries-dir`.
+BigQuery Studio notebooks, saved queries and pipelines are read through Dataform
+with `--scan-services` (`manifest._studio_notebooks`); notebooks and saved queries
+also from exported .ipynb and .sql files with `--notebooks-dir` and
+`--saved-queries-dir`. Without them, each is recorded as not scanned, so the plan
+says so.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from gcp_aidp.gcp_client import GcpClient, GcpError
@@ -67,9 +69,13 @@ def _table(dataset: str, t: dict) -> tuple[str, dict]:
                                       "refresh_interval_minutes": interval // 60000 if interval else None}
     if kind == "EXTERNAL":
         ext = t.get("externalDataConfiguration", {})
-        return "external_tables", {**base, "format": ext.get("sourceFormat"),
-                                   "source_uris": ext.get("sourceUris", []),
-                                   "columns": t.get("schema", {}).get("fields", [])}
+        row = {**base, "format": ext.get("sourceFormat"), "source_uris": ext.get("sourceUris", []),
+               "columns": t.get("schema", {}).get("fields", [])}
+        if ext.get("csvOptions") is not None:
+            row["csv_options"] = ext["csvOptions"]
+        if ext.get("autodetect") is not None:
+            row["autodetect"] = ext["autodetect"]
+        return "external_tables", row
     # TABLE, SNAPSHOT, CLONE: stored data, read through the connector.
     row = {**base, "type": kind, "columns": t.get("schema", {}).get("fields", []),
            "num_rows": _int(t.get("numRows")), "num_bytes": _int(t.get("numBytes"))}
@@ -96,6 +102,23 @@ def _type_name(data_type: dict | None) -> str | None:
         fields = data_type.get("structType", {}).get("fields", [])
         return "STRUCT<" + ", ".join(f"{f.get('name')} {_type_name(f.get('type'))}" for f in fields) + ">"
     return kind
+
+
+def _notebooks(directory: str, warnings: list[str]) -> list[dict]:
+    """BigQuery Studio notebooks exported as .ipynb: cell sources only; outputs (which can hold
+    query results) are dropped."""
+    out = []
+    for p in sorted(Path(directory).glob("*.ipynb")):
+        try:
+            nb = json.loads(p.read_text(encoding="utf-8"))
+            cells = [{"cell_type": c["cell_type"],
+                      "source": "".join(c["source"]) if isinstance(c.get("source"), list) else c.get("source", "")}
+                     for c in nb["cells"] if c.get("cell_type") in ("code", "markdown")]
+        except (ValueError, KeyError, TypeError) as exc:
+            warnings.append(f"notebook {p.name} not read: {type(exc).__name__}: {exc}")
+            continue
+        out.append({"id": p.stem, "name": p.stem, "cells": cells})
+    return out
 
 
 def _saved_queries(directory: str | None) -> list[dict]:
@@ -146,8 +169,8 @@ def _dataset(client: GcpClient, p: str, ds: str, items: dict, not_scanned: dict,
         items["routines"].append({
             "dataset": ds, "name": rid, "routine_type": r.get("routineType", "ROUTINE_TYPE_UNSPECIFIED"),
             "language": r.get("language", "SQL"), "body": r.get("definitionBody", ""),
-            "arguments": [{"name": a.get("name"), "type": _type_name(a.get("dataType"))}
-                          for a in r.get("arguments", [])],
+            "arguments": [{"name": a.get("name"), "type": _type_name(a.get("dataType")),
+                           **({"mode": a["mode"]} if a.get("mode") else {})} for a in r.get("arguments", [])],
             "return_type": _type_name(r.get("returnType"))})
 
     for m in client.pages(f"{BQ}/projects/{p}/datasets/{ds}/models", "models"):
@@ -155,21 +178,28 @@ def _dataset(client: GcpClient, p: str, ds: str, items: dict, not_scanned: dict,
                                 "model_type": m.get("modelType")})
 
 
-def scan(client: GcpClient, *, saved_queries_dir: str | None = None, log=None) -> dict:
+def scan(client: GcpClient, *, saved_queries_dir: str | None = None, notebooks_dir: str | None = None,
+         log=None) -> dict:
     p = client.project
     items: dict[str, list] = {k: [] for k in (
         "datasets", "tables", "views", "materialized_views", "external_tables", "routines", "models",
         "saved_queries", "scheduled_queries", "access_policies", "notebooks", "pipelines")}
     not_scanned: dict[str, str] = {
-        "notebooks": "BigQuery Studio notebooks have no read API this tool uses in 0.1; list them by hand",
-        "pipelines": "BigQuery pipelines have no read API this tool uses in 0.1; list them by hand",
+        "notebooks": "BigQuery Studio notebooks are read through the Dataform API with --scan-services "
+                     "(Dataform Viewer); or export them as .ipynb and pass --notebooks-dir",
+        "pipelines": "BigQuery pipelines are listed through the Dataform API with --scan-services "
+                     "(Dataform Viewer)",
     }
     warnings: list[str] = []
+    if notebooks_dir:
+        items["notebooks"] = _notebooks(notebooks_dir, warnings)
+        del not_scanned["notebooks"]
     if saved_queries_dir:
         items["saved_queries"] = _saved_queries(saved_queries_dir)
     else:
-        not_scanned["saved_queries"] = ("saved queries have no read API this tool uses in 0.1; "
-                                        "export them as .sql files and pass --saved-queries-dir")
+        not_scanned["saved_queries"] = ("saved queries are read through the Dataform API with --scan-services "
+                                        "(Dataform Viewer); or export them as .sql files and pass "
+                                        "--saved-queries-dir")
     row_policies = {"ok": True}
 
     for ref in client.pages(f"{BQ}/projects/{p}/datasets", "datasets"):
@@ -196,7 +226,8 @@ def scan(client: GcpClient, *, saved_queries_dir: str | None = None, log=None) -
             items["scheduled_queries"].append({
                 "id": c["name"].rsplit("/", 1)[-1], "name": c.get("displayName") or c["name"],
                 "query": (c.get("params") or {}).get("query", ""), "schedule": c.get("schedule"),
-                "destination_dataset": c.get("destinationDatasetId"), "location": location})
+                "destination_dataset": c.get("destinationDatasetId"), "location": location,
+                "next_run_time": c.get("nextRunTime"), "disabled": c.get("disabled", False)})
 
     summary: dict = {k: len(v) for k, v in items.items() if k not in not_scanned}
     if not_scanned:

@@ -1,4 +1,4 @@
-"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, publish, run."""
+"""`gcp-aidp <verb>`: inventory, plan, migrate, verify, export, transfer, publish, run."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,8 @@ from pathlib import Path
 
 from gcp_aidp import __version__
 from gcp_aidp._env import load_dotenv
-from gcp_aidp.inventory.manifest import ALL_SOURCES
+from gcp_aidp.dataplane import MIGRATION_JOB
+from gcp_aidp.inventory.manifest import ALL_SOURCES, DEFAULT_REGIONS
 
 _FIXTURE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -56,17 +57,19 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
         client = GcpClient(args.project or os.environ.get("GCP_PROJECT", ""))
         try:
-            client.session  # fail fast on missing google-auth or credentials, before any scan
+            _ = client.session  # fail fast on missing google-auth or credentials, before any scan
         except Exception as exc:  # noqa: BLE001 - reported, never echoing a credential
             print(f"error: cannot authenticate to Google Cloud: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 2
-        regions = tuple(r.strip() for r in args.regions.split(",") if r.strip())
-        print(f"# project={client.project}  regions={','.join(regions)}  (read-only metadata calls)")
+        regions = tuple(r.strip() for r in args.regions.split(",") if r.strip()) if args.regions else None
+        print(f"# project={client.project}  regions={','.join(regions or DEFAULT_REGIONS)}"
+              f"{'' if regions else ' (default)'}  (read-only metadata calls)")
         log = lambda line: print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
         if args.scan_services:
-            print("# --scan-services: Dataproc, Composer, Dataform, Dataflow and Vertex AI are listed with a "
-                  "cloud-platform token (GET calls only)")
+            print("# --scan-services: Dataproc (with its Cloud Scheduler jobs) and Dataform (with BigQuery Studio "
+                  "notebooks) are listed with a cloud-platform token (GET calls only)")
         manifest = build_manifest(client, sources, regions=regions, saved_queries_dir=args.saved_queries_dir,
+                                  notebooks_dir=args.notebooks_dir,
                                   scan_services=args.scan_services, log=log)
     else:
         path = _fixture_path(args.fixture)
@@ -90,7 +93,12 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    from gcp_aidp.plan import build_plan, summarize_plan, write_plan, write_plan_markdown
+    from gcp_aidp.plan import (
+        build_plan,
+        summarize_plan,
+        write_plan,
+        write_plan_markdown,
+    )
 
     manifest = _load_json_object(Path(args.manifest), "manifest")
     ns = args.namespace or os.environ.get("OCI_NAMESPACE") or "<your-oci-namespace>"
@@ -99,8 +107,22 @@ def cmd_plan(args: argparse.Namespace) -> int:
         datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
         if not datasets:
             raise ValueError("--datasets is empty; leave it out to plan every dataset")
-    plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog,
-                      bignumeric=args.bignumeric, geography=args.geography, datasets=datasets)
+    buckets = {}
+    if args.bucket_mapping:
+        from gcp_aidp.plan.planner import bucket_mapping
+
+        buckets, mapped_ns = bucket_mapping(_load_json_object(Path(args.bucket_mapping), "bucket mapping"),
+                                            args.namespace or os.environ.get("OCI_NAMESPACE"))
+        ns = mapped_ns or ns
+    repos = None
+    if args.dataform_repos is not None:
+        repos = [r.strip() for r in args.dataform_repos.split(",") if r.strip()]
+        if not repos:
+            raise ValueError("--dataform-repos is empty; leave it out to plan every repository")
+    plan = build_plan(manifest, oci_namespace=ns, catalog=args.catalog, buckets=buckets,
+                      bignumeric=args.bignumeric, geography=args.geography, interval=args.interval,
+                      range_=args.range, datasets=datasets, dataform_repos=repos,
+                      export_over_gb=args.export_over_gb, export_bucket=args.export_bucket)
     out = Path(args.output) if args.output else Path(args.manifest).with_suffix(".plan.json")
     write_plan(plan, out)
     md = write_plan_markdown(plan, out.with_suffix(".md"))
@@ -159,9 +181,11 @@ def cmd_publish(args: argparse.Namespace) -> int:
         print(f"dry run: nothing was sent. Would upload to {result['folder']}:")
         for n in result["notebooks"]:
             print(f"    {n['remote']}")
-        print("and create, unscheduled:")
+        print("and create (unscheduled, or with the source schedule PAUSED):")
         for j in result["jobs"]:
-            print(f"    job {j['name']}: " + " → ".join(t["taskKey"] for t in j["definition"]["tasks"]))
+            sc = j["definition"].get("schedule")
+            print(f"    job {j['name']}: " + " → ".join(t["taskKey"] for t in j["definition"]["tasks"])
+                  + (f"  [schedule {sc['quartzCronExpression']} {sc['timezoneId']}, PAUSED]" if sc else ""))
         if not result["prefix"]:
             print("warning: no --prefix; --apply refuses to run without one.")
         print("re-run with --apply to publish.")
@@ -169,9 +193,59 @@ def cmd_publish(args: argparse.Namespace) -> int:
     failed = [x for x in result["notebooks"] + result["jobs"] if x.get("status") in ("error", "refused")]
     failed += result["blocked"]
     print(f"\nuploaded {sum(n['status'] == 'uploaded' for n in result['notebooks'])}/{len(result['notebooks'])} "
-          f"notebook(s); created {sum(j.get('status') == 'created' for j in result['jobs'])}/"
+          f"file(s) (notebooks and scripts); created {sum(j.get('status') == 'created' for j in result['jobs'])}/"
           f"{len(result['jobs']) + len(result['blocked'])} job(s); {len(failed)} failed or refused.")
     return 1 if failed else 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from gcp_aidp._copy import CopyError
+    from gcp_aidp.export import export
+
+    try:
+        result = export(args.out_dir, apply=args.apply, log=lambda line: print(line, flush=True))
+    except CopyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    spec = result["spec"]
+    if not args.apply:
+        print(f"dry run: nothing was sent. Would export {len(spec['tables'])} table(s) from {spec['project']} to "
+              f"gs://{spec['bucket']}/{spec['prefix']}/, then copy them to "
+              f"oci://{spec['oci_bucket']}@{spec['namespace']}/{spec['prefix']}/:")
+        for t in spec["tables"]:
+            how = ("EXPORT DATA, a billed query" + (f"; as text: {', '.join(t['as_text'])}" if t.get("as_text") else "")
+                   + (f"; with {', '.join(t['pseudo_columns'])}" if t.get("pseudo_columns") else "")
+                   if t.get("as_text") or t.get("pseudo_columns") else "bq extract, free")
+            print(f"    {t['dataset']}.{t['name']}  ({how})")
+        print("the export runs as GCP_EXPORT_CREDENTIALS; the copy reads with the read-only key and writes with "
+              "~/.oci/config. Re-run with --apply.")
+        return 0
+    bad = [k for k, r in result["tables"].items() if r["export"] == "failed" or r.get("copy_failures")]
+    print(f"\nexport: {len(result['tables']) - len(bad)}/{len(result['tables'])} table(s) on OCI; "
+          f"{len(bad)} failed. Report: {result['report']}")
+    return 1 if bad else 0
+
+
+def cmd_transfer(args: argparse.Namespace) -> int:
+    from gcp_aidp._copy import CopyError
+    from gcp_aidp.transfer import transfer
+
+    print("transfer: " + ("copying" if args.apply else "dry run, nothing is sent; listing") +
+          " Cloud Storage → OCI (read-only key on Google Cloud, ~/.oci/config on OCI)", flush=True)
+    try:
+        result = transfer(args.out_dir, apply=args.apply, buckets=args.bucket or None,
+                          log=lambda line: print(line, flush=True))
+    except CopyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    bad = [b for b, r in result["buckets"].items() if r.get("error") or r.get("copy_failures")]
+    if not args.apply:
+        print("Re-run with --apply to copy (never deletes; files already in OCI are skipped)."
+              + (f" {len(bad)} bucket(s) could not be read." if bad else ""))
+        return 1 if bad else 0
+    print(f"\ntransfer: {len(result['buckets']) - len(bad)}/{len(result['buckets'])} bucket(s) on OCI; "
+          f"{len(bad)} failed. Report: {result['report']}")
+    return 1 if bad else 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -183,9 +257,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if result["ok"]:
-        print("run finished: every task succeeded. The verdicts are in MIGRATION_REPORT.md in the reports folder.")
+        print("run finished: every task succeeded."
+              + (" The verdicts are in MIGRATION_REPORT.md in the reports folder." if args.job == MIGRATION_JOB else ""))
     elif result["finished"]:
-        print("run finished with failures (above). Fix the cause, then run again: completed copies are skipped.")
+        print("run finished with failures (above). Fix the cause, then run again"
+              + (": completed copies are skipped." if args.job == MIGRATION_JOB else "."))
     return 0 if result["ok"] else 1
 
 
@@ -208,12 +284,15 @@ def build_parser() -> argparse.ArgumentParser:
     inv = sub.add_parser("inventory", help="scan Google Cloud (read-only, metadata only) and emit a manifest")
     inv.add_argument("--project", help="GCP project id (default: $GCP_PROJECT)")
     inv.add_argument("--sources", help=f"comma-separated subset of {','.join(ALL_SOURCES)} (default: all)")
-    inv.add_argument("--regions", default="us-central1",
-                     help="comma-separated regions for Dataproc, Composer, Dataform and Vertex AI (default: us-central1)")
+    inv.add_argument("--regions",
+                     help="comma-separated regions for Dataproc and Dataform (default: us-central1, with a "
+                          "warning that other regions were not scanned)")
     inv.add_argument("--saved-queries-dir", help="a folder of saved queries exported as .sql files")
+    inv.add_argument("--notebooks-dir", help="a folder of BigQuery Studio notebooks exported as .ipynb files")
     inv.add_argument("--scan-services", action="store_true",
-                     help="also list Dataproc, Composer, Dataform, Dataflow and Vertex AI; their APIs refuse a "
-                          "read-only token, so this asks for a cloud-platform token (still GET calls only)")
+                     help="also list Dataproc (with its Cloud Scheduler jobs), Dataform (with BigQuery "
+                          "Studio notebooks); their APIs refuse a read-only token, so this "
+                          "asks for a cloud-platform token (still GET calls only)")
     inv.add_argument("--fixture", help="load a bundled fixture manifest instead of scanning (e.g. 'demo')")
     inv.add_argument("-o", "--output", help="manifest output path (default: ./inventory-<project>-<ts>.json)")
     inv.set_defaults(func=cmd_inventory)
@@ -226,10 +305,27 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--datasets",
                     help="comma-separated BigQuery datasets to migrate (default: all); the others stay in "
                          "the plan as SKIP")
+    pl.add_argument("--dataform-repos",
+                    help="comma-separated Dataform repositories to migrate (default: all); the others stay "
+                         "in the plan as SKIP")
     pl.add_argument("--bignumeric", choices=("block", "string"), default="block",
                     help="BIGNUMERIC columns: block the table (default) or carry exact decimal text")
     pl.add_argument("--geography", choices=("block", "wkt"), default="block",
                     help="GEOGRAPHY columns: block the table (default) or carry WKT text")
+    pl.add_argument("--interval", choices=("block", "string"), default="block",
+                    help="INTERVAL columns: block the table (default) or carry BigQuery's interval text")
+    pl.add_argument("--range", choices=("block", "struct"), default="block",
+                    help="RANGE columns: block the table (default) or carry the bounds as STRUCT<start, end>")
+    pl.add_argument("--export-over-gb", type=float, metavar="GB",
+                    help="tables of at least GB gigabytes go the export route: Parquet in GCS, transferred to "
+                         "OCI, loaded into Delta; so do tables the connector cannot read (INTERVAL, RANGE, "
+                         "76-digit BIGNUMERIC), whatever their size (default: every table through the connector)")
+    pl.add_argument("--export-bucket", metavar="BUCKET",
+                    help="with --export-over-gb: the GCS bucket the Parquet files are staged in; the OCI "
+                         "bucket of the same name (or its --bucket-mapping entry) receives them")
+    pl.add_argument("--bucket-mapping", metavar="JSON",
+                    help='GCS bucket → OCI bucket: {"buckets": {"<gcs>": {"oci_bucket": "<oci>"}}, '
+                         '"default_namespace": "<ns>"}; an unmapped bucket keeps its name')
     pl.set_defaults(func=cmd_plan)
 
     mg = sub.add_parser("migrate", help="write translated artifacts and a report locally; contacts nothing")
@@ -250,10 +346,22 @@ def build_parser() -> argparse.ArgumentParser:
                          "creation failed); they are still never overwritten")
     pb.set_defaults(func=cmd_publish)
 
+    ex = sub.add_parser("export", help="large tables: export to Parquet in GCS and copy to OCI; a dry run until --apply")
+    ex.add_argument("out_dir", help="the directory `migrate` wrote")
+    ex.add_argument("--apply", action="store_true", help="actually export and copy; without it nothing is sent")
+    ex.set_defaults(func=cmd_export)
+
+    tr = sub.add_parser("transfer", help="copy the Cloud Storage buckets to OCI; a dry run until --apply")
+    tr.add_argument("out_dir", help="the directory `migrate` wrote")
+    tr.add_argument("--apply", action="store_true", help="actually copy; without it nothing is sent")
+    tr.add_argument("--bucket", action="append", metavar="GCS_BUCKET",
+                    help="only this bucket (repeat for more); default: every bucket in the migration")
+    tr.set_defaults(func=cmd_transfer)
+
     rn = sub.add_parser("run", help="start a published job on AIDP and follow it to the end")
     _aidp_args(rn)
-    rn.add_argument("--job", default="gcp_aidp_migration",
-                    help="which of the migration's jobs (default: gcp_aidp_migration, the full copy)")
+    rn.add_argument("--job", default=MIGRATION_JOB,
+                    help=f"which of the migration's jobs (default: {MIGRATION_JOB}, the full copy)")
     rn.add_argument("--wait", type=int, default=6 * 3600, help="seconds to follow the run (default: 6 hours)")
     rn.set_defaults(func=cmd_run)
     return p

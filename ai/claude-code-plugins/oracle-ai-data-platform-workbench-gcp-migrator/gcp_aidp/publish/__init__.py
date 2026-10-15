@@ -9,7 +9,8 @@ The rules:
   * A prefix per person, required with `--apply`: it names the workspace
     folder and the front of every job name.
   * Read the workspace, and check the cluster key, before sending anything.
-  * Notebooks first, jobs second. Jobs are created unscheduled.
+  * Notebooks first, jobs second. A job is created unscheduled, or with its source
+    schedule PAUSED: nothing runs until someone turns it on in AIDP.
 
 What is published is what `migrate` recorded in report.json (`notebooks`,
 `jobs`), never a glob of the directory.
@@ -28,6 +29,7 @@ from gcp_aidp.publish.aidp_client import AidpClient, AidpError, AidpUnavailable
 
 DEFAULT_WORKSPACE_ROOT = "/Workspace"
 JOB_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+RUN_RETRIES, RUN_RETRY_SECONDS = 6, 10  # about a minute
 TASK_TIMEOUT_SECONDS = 12 * 3600  # per task; one dataset's copy can run for hours
 FINAL = {"SUCCESS", "FAILED", "UPSTREAM_FAILED", "CANCELED", "SKIPPED", "TIMEDOUT", "INTERNAL_ERROR"}
 
@@ -65,16 +67,19 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
     folder = "/".join([workspace_root.rstrip("/")] + ([prefix] if prefix else []))
 
     notebooks, remote_of = [], {}
-    for rel in report["notebooks"]:
+    uploads = [(rel, "notebook") for rel in report["notebooks"]] + [(rel, "file") for rel in report.get("files", [])]
+    for rel, kind in uploads:
         local = (out_dir / rel).resolve()
         if out_dir.resolve() not in local.parents or not local.is_file():
-            raise PublishError(f"report.json lists notebook {rel!r}, which is not a file inside {out_dir}; "
+            raise PublishError(f"report.json lists {kind} {rel!r}, which is not a file inside {out_dir}; "
                                "re-run `migrate`")
         remote = f"{folder}/{local.name}"  # flat: one folder per prefix
         if remote in remote_of.values():
-            raise PublishError(f"two notebooks would land on {remote}")
+            raise PublishError(f"two files would land on {remote}")
         remote_of[rel] = remote
-        notebooks.append({"local": str(local), "remote": remote})
+        notebooks.append({"local": str(local), "remote": remote, "kind": kind})
+        if kind == "notebook" and rel.startswith("notebooks/") and not rel.startswith("notebooks/jobs/"):
+            notebooks[-1]["reports_dir"] = f"{folder}/reports"  # opened by hand, it reports where the job does
 
     jobs, blocked = [], []
     for job in report["jobs"]:
@@ -89,20 +94,32 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
         tasks = []
         for t in job["tasks"]:
             parameters = list(t.get("parameters") or [])
-            if not t["notebook"].startswith("notebooks/jobs/"):  # the data-plane notebooks keep their reports here
-                parameters.append({"name": "reports_dir", "value": f"{folder}/reports"})
-            task = {"type": "NOTEBOOK_TASK", "taskKey": t["taskKey"], "runIf": "ALL_SUCCESS", "maxRetries": 0,
-                    "notebookPath": remote_of[t["notebook"]], "source": "WORKSPACE",
+            task = {"taskKey": t["taskKey"], "runIf": "ALL_SUCCESS", "maxRetries": 0, "source": "WORKSPACE",
                     "timeoutSeconds": TASK_TIMEOUT_SECONDS, "cluster": {"clusterKey": cluster_key}}
+            if "python_file" in t:
+                # Live on AIDP: commandLineArguments is pasted as `sys.argv = <value>`, so it must be a
+                # Python list, and AIDP adds no script name: argv[0] is passed as Dataproc sets it.
+                path = remote_of[t["python_file"]]
+                task.update(type="PYTHON_TASK", filePath=path,
+                            commandLineArguments=repr([path, *t.get("arguments", [])]))
+            else:
+                if t["notebook"].startswith("notebooks/") and not t["notebook"].startswith("notebooks/jobs/"):
+                    # the data-plane notebooks keep their reports here
+                    parameters.append({"name": "reports_dir", "value": f"{folder}/reports"})
+                task.update(type="NOTEBOOK_TASK", notebookPath=remote_of[t["notebook"]])
             if parameters:
                 task["parameters"] = parameters
             if t.get("dependsOn"):
                 task["dependsOn"] = [{"taskKey": k} for k in t["dependsOn"]]
             tasks.append(task)
-        jobs.append({"name": name, "definition": {
-            "name": name, "description": f"{job.get('description', '')} Created by gcp-aidp publish, "
-                                         "unscheduled. Not execution-verified.".strip(),
-            "maxConcurrentRuns": 1, "tasks": tasks}})
+        definition = {"name": name, "description": f"{job.get('description', '')} Created by gcp-aidp publish, "
+                                                  f"{'schedule paused' if job.get('schedule') else 'unscheduled'}. "
+                                                  "Not execution-verified.".strip(),
+                      "maxConcurrentRuns": 1, "tasks": tasks}
+        if job.get("schedule"):  # live on AIDP: a PAUSED schedule is kept as sent and starts no run
+            definition["schedule"] = {"quartzCronExpression": job["schedule"]["quartzCronExpression"],
+                                      "timezoneId": job["schedule"]["timezoneId"], "pauseStatus": "PAUSED"}
+        jobs.append({"name": name, "definition": definition})
 
     names = Counter(j["name"] for j in jobs)
     for dup in sorted(n for n, c in names.items() if c > 1):  # never pick a winner
@@ -142,7 +159,13 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
             upload.update(status="skipped", reason="already exists (publish never overwrites)")
         else:
             try:
-                client.put_notebook(upload["remote"], Path(upload["local"]).read_text(encoding="utf-8"))
+                if upload.get("kind") == "file":
+                    client.put_file(upload["remote"], upload["local"])
+                else:
+                    text = Path(upload["local"]).read_text(encoding="utf-8")
+                    if upload.get("reports_dir"):
+                        text = with_reports_dir(text, upload["reports_dir"])
+                    client.put_notebook(upload["remote"], text)
                 upload["status"] = "uploaded"
             except (AidpError, AidpUnavailable, OSError) as exc:
                 upload.update(status="error", reason=str(exc))
@@ -151,11 +174,12 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
     usable = {"uploaded", "skipped"} if reuse_existing else {"uploaded"}
     unusable = {u["remote"] for u in planned["notebooks"] if u["status"] not in usable}
     for job in planned["jobs"]:
-        missing = sorted({t["notebookPath"] for t in job["definition"]["tasks"]} & unusable)
+        used = {t.get("notebookPath") or t.get("filePath") for t in job["definition"]["tasks"]}
+        missing = sorted(used & unusable)  # a script someone else left there is refused, like a notebook
         if job["name"] in existing:
             job.update(status="skipped", reason="a job of this name already exists (publish never overwrites)")
         elif missing:
-            job.update(status="refused", reason=f"notebooks not uploaded by this run: {missing} (if they are this "
+            job.update(status="refused", reason=f"files not uploaded by this run: {missing} (if they are this "
                                                 "migration's, re-run with --reuse-existing-notebooks)")
         else:
             try:
@@ -165,6 +189,39 @@ def publish(out_dir, *, workspace_key=None, cluster_key=None, prefix="", workspa
         log(f"  {job['status']:<9}job {job['name']}" + (f" ({job['key']})" if job.get("key") else "")
             + (f": {job['reason']}" if job.get("reason") else ""))
     return planned
+
+
+_EXCEPTION = re.compile(r"([A-Za-z0-9_.]*(?:Exception|Error)): ([^\n\\]{1,240})")
+_WRAPPERS = ("[Command ", "An error occurred while calling")  # AIDP's and Py4J's: they only wrap the cause
+
+
+def with_reports_dir(text: str, reports_dir: str) -> str:
+    """A data-plane notebook whose `reports-dir` defaults to its publish folder's reports, so a
+    notebook run by hand reads and writes the same reports as the job's run."""
+    nb = json.loads(text)
+    line = f"    'reports-dir': {reports_dir!r},  # this publish's reports, as the job passes\n"
+    for cell in nb["cells"]:
+        source = "".join(cell["source"])
+        if "'reports-dir': None," in source:
+            lines = source.splitlines(keepends=True)
+            cell["source"] = [line if ln.lstrip().startswith("'reports-dir': None,") else ln for ln in lines]
+    return json.dumps(nb, indent=1)
+
+
+def failure_cause(text: str) -> str:
+    """The exception that failed a task, past AIDP's and Py4J's wrappers; "" if none is named."""
+    text = (text or "").replace("\\n", "\n").replace("\\t", "\t")  # escaped in JSON: `\nAnalysisException`
+    causes = [(name.rsplit(".", 1)[-1], msg.strip()) for name, msg in _EXCEPTION.findall(text)
+              if not msg.strip().startswith(_WRAPPERS)]
+    return f"{causes[-1][0]}: {causes[-1][1]}" if causes else ""
+
+
+def clip_trace(text: str, keep: int = 1000) -> str:
+    """Both ends of a long error: Spark names the cause at the top of a Java trace, Python at the
+    bottom of a traceback."""
+    if len(text) <= 2 * keep:
+        return text
+    return f"{text[:keep]}\n  ... ({len(text) - 2 * keep} characters left out) ...\n{text[-keep:]}"
 
 
 def readable_failure(output_text: str) -> str:
@@ -197,6 +254,27 @@ def readable_failure(output_text: str) -> str:
     return "\n".join(found)
 
 
+def export_warning(out_dir: Path, spec: dict) -> str:
+    """Why the export-route tables may not be on OCI yet, "" if `export --apply` put them all there.
+    A warning, not a refusal: files copied another way are fine, and 00_diagnose checks them."""
+    tables = [f"{t['dataset']}.{t['name']}" for t in spec["tables"]]
+    done = _read_json(out_dir / "exports" / "export_report.json") or {}
+    if not done:
+        return (f"{len(tables)} table(s) load from export files, and `gcp-aidp export --apply` has not run here "
+                f"(no exports/export_report.json): {', '.join(tables)}")
+    missing = [k for k in tables if done.get(k, {}).get("export") not in ("exported", "already_exported")
+               or done[k].get("copy_failures")]
+    return (f"the last `gcp-aidp export --apply` did not put these on OCI: {', '.join(missing)}; their copy "
+            "fails until it does") if missing else ""
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_id=None, profile=None, auth=None,
         wait=6 * 3600, poll=15, log=print, client=None, sleep=time.sleep) -> dict:
     """Start one run of a published job and follow it to the end.
@@ -208,13 +286,25 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
     local = next((j for j in report["jobs"] if j["name"] == job), None)
     if local is None:
         raise PublishError(f"this migration has no job {job!r}; its jobs: {[j['name'] for j in report['jobs']]}")
+    if job == MIGRATION_JOB and report.get("export"):
+        warning = export_warning(Path(out_dir), report["export"])
+        if warning:
+            log(f"warning: {warning}")
     name = f"{prefix}_{job}" if prefix else job
     client = client or _client(workspace_key, instance_id, profile, auth)
     try:
         key = next((j.get("key") for j in client.list_jobs() if j.get("name") == name and j.get("key")), None)
         if key is None:
             raise PublishError(f"no job {name!r} in the workspace; run `publish --apply` first")
-        run_key = client.run_job(key)
+        for attempt in range(RUN_RETRIES + 1):
+            try:
+                run_key = client.run_job(key)
+                break
+            except AidpError as exc:  # live on AIDP: a job created seconds ago can 404 until its permissions apply
+                if attempt == RUN_RETRIES or "NotAuthorizedOrNotFound" not in str(exc):
+                    raise
+                log(f"job {name} not ready yet ({exc}); retrying in {RUN_RETRY_SECONDS}s")
+                sleep(RUN_RETRY_SECONDS)
         log(f"started {name} ({key}): run {run_key}")
         seen, tasks = {}, []
         for _ in range(max(1, int(wait / poll)) + 1):
@@ -232,9 +322,11 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
             return {"run": run_key, "tasks": tasks, "finished": False, "ok": False}
         for task_key, status, message, task_run in tasks:
             if status not in ("SUCCESS", "UPSTREAM_FAILED", "SKIPPED"):
-                detail = readable_failure(client.task_output(task_run)) if task_run else ""
-                first = ((message or "").strip().splitlines() or [""])[0]
-                log(f"\n{task_key} {status}: {first}\n{detail[-2000:]}".rstrip())
+                output = client.task_output(task_run) if task_run else ""
+                detail = readable_failure(output)
+                cause = failure_cause(message or "") or failure_cause(output)
+                first = cause or ((message or "").strip().splitlines() or [""])[0]
+                log(f"\n{task_key} {status}: {first}\n{clip_trace(detail)}".rstrip())
     except (AidpError, AidpUnavailable) as exc:
         raise PublishError(str(exc)) from exc
     ok = all(s == "SUCCESS" for _, s, _, _ in tasks)

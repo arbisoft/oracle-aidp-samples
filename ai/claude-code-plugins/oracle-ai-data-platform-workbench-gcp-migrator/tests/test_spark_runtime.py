@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
-from gcp_aidp.translate.googlesql_to_spark import translate
+from gcp_aidp.translate.googlesql_to_spark import Context, translate
 
 DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text())
 ORDER = ("schemas", "tables", "materialized_views", "views", "saved_queries", "scheduled_queries", "functions")
@@ -72,8 +72,9 @@ class SparkRuntime(unittest.TestCase):
                 continue
             error = None
             for stmt in _statements((self.out / r["output_path"]).read_text(), self.catalog):
-                try:
-                    self.spark.sql(stmt).collect()
+                try:  # a routine's parameters (G25) bound to NULL: the SQL is checked, not the values
+                    params = dict.fromkeys(re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", stmt)) or None
+                    self.spark.sql(stmt, args=params).collect()
                 except Exception as exc:  # noqa: BLE001 - any Spark failure is the outcome
                     error = (str(exc).strip().splitlines() or [type(exc).__name__])[0][:200]
                     break
@@ -87,9 +88,34 @@ class SparkRuntime(unittest.TestCase):
         # The flagged SQL function really does not parse: the flag is not a false alarm.
         self.assertTrue(outcomes["bigquery.routine.sales.net_price"][1])
         print(f"\n{len(must_run)} artifacts ran on Spark; flagged ones that failed:")
-        for aid, (r, err) in sorted(outcomes.items()):
+        for aid, (_, err) in sorted(outcomes.items()):
             if err and aid not in must_run:
                 print(f"  {aid}: {err}")
+
+    def test_dataform_tasks_run_on_spark(self):
+        for r in self.report["results"]:  # the tables the tasks read, created first
+            if r.get("output_path", "").split("/")[0] in ("schemas", "tables") and r["status"] != "blocked":
+                for stmt in _statements((self.out / r["output_path"]).read_text(), self.catalog):
+                    self.spark.sql(stmt).collect()
+        ran = 0
+        for r in self.report["results"]:
+            if r["kind"] != "dataform_repository" or "job" not in r:
+                continue
+            self.assertTrue(all(f["severity"] in ("rewrite", "caveat", "info") for f in r["findings"]))
+            for task in r["job"]["tasks"]:  # in dependency order
+                for stmt in task["statements"]:
+                    self.spark.sql(stmt.replace(f"`{self.catalog}`.", "`spark_catalog`.")).collect()
+                    ran += 1
+        self.assertGreater(ran, 0)
+
+    def test_G27_DATE_TRUNC_gives_bigquerys_dates(self):
+        # BigQuery: DATE_TRUNC(DATE '2026-02-18', MONTH|QUARTER|YEAR|ISOWEEK|DAY), a Wednesday.
+        ctx = Context(column_types={"d": {"DATE"}})
+        got = []
+        for part in ("MONTH", "QUARTER", "YEAR", "ISOWEEK", "DAY"):
+            sql = translate(f"SELECT DATE_TRUNC(d, {part}) AS x FROM (SELECT DATE '2026-02-18' AS d)", ctx).sql
+            got.append(str(self.spark.sql(sql).first().x))
+        self.assertEqual(got, ["2026-02-01", "2026-01-01", "2026-01-01", "2026-02-16", "2026-02-18"])
 
     def test_G15_QUALIFY_keeps_the_same_rows(self):
         self.spark.sql("CREATE OR REPLACE TEMP VIEW q AS SELECT * FROM VALUES (1, 10, 5), (2, 10, 7), "

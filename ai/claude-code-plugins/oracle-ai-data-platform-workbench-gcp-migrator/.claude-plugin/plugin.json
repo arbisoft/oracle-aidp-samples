@@ -1,7 +1,7 @@
 {
   "name": "oracle-ai-data-platform-workbench-gcp-migrator",
-  "version": "0.1.0",
-  "description": "Migrate a Google Cloud data stack (BigQuery, Cloud Storage, scheduled queries; Dataproc, Composer and Dataform inventoried) to Oracle AI Data Platform: inventory, plan, translate (deterministic-first), verify, and publish.",
+  "version": "0.2.0",
+  "description": "Migrate a Google Cloud data stack (BigQuery, Cloud Storage, scheduled queries, Dataproc PySpark and Spark SQL jobs, BigQuery Studio notebooks, Dataform repositories) to Oracle AI Data Platform: inventory, plan, translate (deterministic-first), verify, export large tables through Parquet, copy buckets to OCI, publish and run.",
   "author": {
     "name": "Oracle AI Data Platform",
     "url": "https://github.com/oracle-samples/oracle-aidp-samples"

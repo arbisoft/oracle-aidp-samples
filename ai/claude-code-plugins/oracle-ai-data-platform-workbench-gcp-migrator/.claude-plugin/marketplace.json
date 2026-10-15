@@ -10,7 +10,7 @@
       "name": "oracle-ai-data-platform-workbench-gcp-migrator",
       "source": "./",
       "displayName": "Oracle AIDP Migrator for Google Cloud",
-      "description": "Migrate a Google Cloud data stack (BigQuery/Cloud Storage) to Oracle AIDP."
+      "description": "Migrate a Google Cloud data stack (BigQuery, Cloud Storage, Dataproc jobs, BigQuery Studio notebooks) to Oracle AIDP."
     }
   ]
 }

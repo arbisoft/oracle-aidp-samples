@@ -4,7 +4,7 @@ One verdict per planned table and view. With `counts`, each verified table
 is recounted, so a table changed since its copy shows as COUNT_DRIFT.
 Problem verdicts make the stage exit 1.
 """
-from gcp_aidp.dataplane.common import *  # noqa: F403 - inlined above in the notebook
+from gcp_aidp.dataplane.common import *  # inlined above in the notebook
 
 PROBLEM_VERDICTS = ("STRUCTURE_FAILED", "STRUCTURE_TYPE_DRIFT", "COPY_FAILED", "MISSING_DESPITE_REPORT",
                     "COUNT_DRIFT", "VIEW_FAILED", "VIEW_MISSING_DESPITE_REPORT", "EXTERNAL_FAILED")
@@ -59,8 +59,7 @@ def main(spark, params: dict, plan: dict) -> list[str]:
                    "failed": "EXTERNAL_FAILED"}.get(
             rec.get("status"), "EXTERNAL_NOT_CREATED_YET")
         rows.append({"object": key, "kind": "external_table", "verdict": verdict,
-                     "detail": rec.get("reason", "" if rec else "run 01_structure with external-tables=True "
-                                                               "after the transfer job")})
+                     "detail": rec.get("reason", "" if rec else "run 01_structure")})
     for v in plan["views"]:
         key = f"{v['dataset']}.{v['name']}"
         rec = structure.get("views", {}).get(key, {})
@@ -83,8 +82,8 @@ def main(spark, params: dict, plan: dict) -> list[str]:
           "| Verdict | Count |", "|---|---|"] + [f"| {k} | {v} |" for k, v in sorted(counts.items())]
     md += ["", "| Object | Kind | Verdict | Detail |", "|---|---|---|---|"]
     md += [f"| `{r['object']}` | {r['kind']} | {r['verdict']} | {str(r['detail']).replace('|', '/')} |" for r in rows]
-    md += ["", "Each table was copied at its own moment: a source that kept changing during the copy is "
-           "consistent per table, not across tables."]
+    md += ["", ("Each table was copied at its own moment: a source that kept changing during the copy is "
+                "consistent per table, not across tables.")]
     (rdir / "MIGRATION_REPORT.md").write_text("\n".join(md) + "\n")
 
     for r in rows:

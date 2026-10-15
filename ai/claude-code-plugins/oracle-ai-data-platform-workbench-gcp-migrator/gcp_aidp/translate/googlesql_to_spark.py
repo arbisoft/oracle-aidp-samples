@@ -69,14 +69,6 @@ class Result:
             return "needs_manual_review"
         return "ok"
 
-    @property
-    def changes(self) -> int:
-        return sum(f.severity in ("rewrite", "caveat") for f in self.findings)
-
-    @property
-    def flags(self) -> int:
-        return sum(f.severity in ("caveat", "flag", "block") for f in self.findings)
-
 
 @dataclass
 class Context:
@@ -84,8 +76,11 @@ class Context:
     project: str = ""
     relations: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
     functions: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
+    columns: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)  # a target's column names
+    column_types: dict[str, set[str]] = field(default_factory=dict)  # column name (lower) → its types in the plan
     buckets: dict[str, str] = field(default_factory=dict)
     namespace: str = "<your-oci-namespace>"
+    geography: str = "block"  # the plan's --geography: "wkt" carries GEOGRAPHY as WKT text
 
 
 # ── rule tables ───────────────────────────────────────────────────────────────
@@ -93,7 +88,9 @@ class Context:
 _SCRIPTING = {"DECLARE", "BEGIN", "EXECUTE", "SET", "IF", "LOOP", "WHILE", "REPEAT", "FOR",
               "CALL", "RAISE", "RETURN", "LEAVE", "CONTINUE", "BREAK", "ITERATE", "ASSERT",
               "EXPORT", "LOAD"}
-_PSEUDO_COLUMNS = {"_PARTITIONTIME", "_PARTITIONDATE", "_TABLE_SUFFIX"}
+# An ingestion-time partitioned table's pseudo-columns are carried as columns of the same
+# names (D03_INGESTION_TIME); _TABLE_SUFFIX belongs to wildcard tables, which are not.
+_CARRIED_PSEUDO_COLUMNS = {"_PARTITIONTIME", "_PARTITIONDATE"}
 _TRUNC_PARTS = {"MICROSECOND", "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY",
                 "MONTH", "QUARTER", "YEAR", "ISOWEEK"}
 # FORMAT_DATE specifiers proven to match Spark's datetime patterns, and the
@@ -103,8 +100,8 @@ _DATE_LITERALS = set("-/:., _")
 
 # Left in place: Spark has the name or a near equivalent, but not the meaning.
 _FLAGGED_CALLS = {
-    "SAFE_CAST": ("G02_SAFE_CAST", "try_cast parses strings differently: Spark reads 'yes' and '1' as TRUE "
-                  "and '0x1A' as NULL, where BigQuery gives NULL, NULL and 26"),
+    "SAFE_CAST": ("G02_SAFE_CAST", ("try_cast parses strings differently: Spark reads 'yes' and '1' as TRUE "
+                                    "and '0x1A' as NULL, where BigQuery gives NULL, NULL and 26")),
     "GENERATE_ARRAY": ("G05_GENERATE_ARRAY", "sequence(5, 1) counts down; GENERATE_ARRAY(5, 1) is empty"),
     "PARSE_DATE": ("G08_PARSE_DATE", "to_date is strict about digit counts where PARSE_DATE is lenient"),
     "ARRAY_LENGTH": ("G09_ARRAY_LENGTH", "size(NULL) is -1 on Spark 3.5; ARRAY_LENGTH(NULL) is NULL"),
@@ -195,7 +192,7 @@ class _Sql:
         return "".join(t.text for t in self.toks)
 
 
-def _blockers(s: _Sql) -> list[Finding]:
+def _blockers(s: _Sql, wkt: bool = False) -> list[Finding]:
     out = []
     for t in s.toks:
         if t.kind == "punct" and t.text in "'\"`":
@@ -221,13 +218,17 @@ def _blockers(s: _Sql) -> list[Finding]:
         out.append(Finding("G17_SCRIPTING", "block", f"scripting statement {s.word(statements[0][0])}"))
     for j in range(len(s.sig)):
         w, t = s.word(j), s.t(j)
-        if w in _PSEUDO_COLUMNS:
-            out.append(Finding("G16_PSEUDO_COLUMN", "block", f"{w} has no Delta equivalent"))
+        if w == "_TABLE_SUFFIX":
+            out.append(Finding("G16_PSEUDO_COLUMN", "block", "_TABLE_SUFFIX: wildcard tables are not carried"))
+        elif w in _CARRIED_PSEUDO_COLUMNS:
+            out.append(Finding("G16_PSEUDO_COLUMN", "flag", f"{w} is carried as a column of the same name on an "
+                               "ingestion-time partitioned table (D03_INGESTION_TIME), so it reads as written; "
+                               "rows written on AIDP must set it"))
         elif t.kind == "ident" and "*" in t.text:
             out.append(Finding("G16_PSEUDO_COLUMN", "block", f"wildcard table {t.text}"))
         elif w in ("ML", "AI") and s.is_punct(j + 1, ".") and s.is_punct(j + 3, "("):
             out.append(Finding("G18_ML_AI_GEO", "block", f"{w}.{s.word(j + 2)}: BigQuery ML / AI function"))
-        elif w.startswith("ST_") and s.is_punct(j + 1, "("):
+        elif w.startswith("ST_") and s.is_punct(j + 1, "(") and not (wkt and w == "ST_GEOGPOINT"):
             out.append(Finding("G18_ML_AI_GEO", "block", f"{w}: geography function"))
     return list(dict.fromkeys(out))
 
@@ -325,7 +326,7 @@ def _qualify_one(s: _Sql, q: int) -> tuple[str | None, Finding]:
     refs = {norm(s.t(k)) for k in range(q + 1, end) if s.t(k).kind in ("word", "ident")
             and not s.is_punct(k - 1, ".") and not s.is_punct(k + 1, "(")}
     if refs & aliases:
-        return blocked(f"its window condition uses the select alias {sorted(refs & aliases)[0]}")
+        return blocked(f"its window condition uses the select alias {min(refs & aliases)}")
     new = (f"SELECT {'DISTINCT ' if distinct else ''}_qualify_row.* FROM (SELECT struct({', '.join(items)}) "
            f"AS _qualify_row, ({cond}) AS _qualify_keep {s.text(frm, q)}) AS _qualified WHERE _qualify_keep")
     s.replace(sel, end, new)
@@ -411,7 +412,7 @@ def _cast_types(s: _Sql, out: list[Finding]) -> None:
             # A word followed by a word is a STRUCT field name (`STRUCT<x INT64>`), not a type.
             if not w or w in ("ARRAY", "STRUCT") or s.word(k + 1):
                 continue
-            target, rule, severity, detail = map_type_name(w)
+            target, _rule, severity, detail = map_type_name(w)
             if s.is_punct(k + 1, "(") and w in ("NUMERIC", "BIGNUMERIC"):
                 target, severity = "DECIMAL", "map" if w == "NUMERIC" else "flag"
             if severity == "block" or target is None:
@@ -422,7 +423,31 @@ def _cast_types(s: _Sql, out: list[Finding]) -> None:
                 out.append(Finding("G19_CAST_TYPE", sev, f"CAST AS {w} → {target}" + (f": {detail}" if detail else "")))
 
 
-def _functions(s: _Sql, out: list[Finding]) -> set[int]:
+_COORDINATE = re.compile(r"-?\s*(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _coordinate(text: str) -> float | None:
+    """A numeric literal, perhaps negative, else None."""
+    return float(text.replace(" ", "")) if _COORDINATE.fullmatch(text.strip()) else None
+
+
+def _wkt_number(v: float) -> str:
+    """As ST_ASTEXT writes it: shortest round-trip digits, no trailing `.0`."""
+    return repr(v).removesuffix(".0")
+
+
+_DATE_TRUNC_UNITS = {"DAY": None, "ISOWEEK": "WEEK", "MONTH": "MM", "QUARTER": "QUARTER", "YEAR": "YEAR"}
+
+
+def _column(s: _Sql, a: int, b: int) -> str:
+    """The column a span names (`c`, `t.c`, `` `t`.`c` ``), else ""."""
+    if not all((s.t(k).kind in ("word", "ident")) if (k - a) % 2 == 0 else s.is_punct(k, ".") for k in range(a, b)) \
+            or (b - a) % 2 == 0:
+        return ""
+    return s.t(b - 1).text.strip("`")
+
+
+def _functions(s: _Sql, out: list[Finding], ctx: Context | None = None) -> set[int]:
     """Function rewrites and flags. Returns indices already reported (exempt from the gate)."""
     seen: set[int] = set()
     # Innermost first: an outer rewrite copies its arguments' text, so an inner
@@ -432,7 +457,17 @@ def _functions(s: _Sql, out: list[Finding]) -> set[int]:
         if close is None:
             continue
         args = s.args(j + 1, close)
-        if name == "COUNTIF":
+        if name == "ST_GEOGPOINT":  # reached only with --geography wkt
+            point = [_coordinate(s.text(*a)) for a in args]
+            if len(point) == 2 and None not in point and -180 < point[0] < 180 and -90 < point[1] < 90:
+                wkt = f"'POINT({_wkt_number(point[0])} {_wkt_number(point[1])})'"
+                s.replace(j, close + 1, wkt)
+                out.append(Finding("G26_GEOGPOINT_WKT", "rewrite", f"ST_GEOGPOINT → {wkt}: a GEOGRAPHY is carried as "
+                                   "its WKT text (--geography wkt), the text ST_ASTEXT gives"))
+            else:
+                out.append(Finding("G18_ML_AI_GEO", "block", "ST_GEOGPOINT: only constant longitude and latitude "
+                                   "become WKT text; from columns, the number formatting differs"))
+        elif name == "COUNTIF":
             s.t(j).text = "count_if"
             out.append(Finding("G04_COUNTIF", "rewrite", "COUNTIF → count_if"))
         elif name == "SAFE_DIVIDE":
@@ -469,6 +504,21 @@ def _functions(s: _Sql, out: list[Finding]) -> set[int]:
                                    "1000-9999; before that Spark zero-pads ('0005') and BigQuery does not ('5')"))
             else:
                 out.append(Finding("G08_FORMAT_DATE", "flag", "FORMAT_DATE pattern outside the proven set"))
+        elif name == "DATE_TRUNC":
+            part = s.word(args[1][0]) if len(args) == 2 and args[1][1] - args[1][0] == 1 else ""
+            col = _column(s, *args[0]) if args else ""
+            # Exact only on a DATE column: Spark's trunc returns a DATE, as BigQuery does. WEEK
+            # starts on Sunday in BigQuery and Monday in Spark; a TIMESTAMP would change type.
+            types = (ctx.column_types.get(col.lower()) if ctx and col else None) or set()
+            if part in _DATE_TRUNC_UNITS and types == {"DATE"}:
+                expr, unit = s.text(*args[0]), _DATE_TRUNC_UNITS[part]
+                s.replace(j, close + 1, expr if unit is None else f"trunc({expr}, '{unit}')")
+                out.append(Finding("G27_DATE_TRUNC", "rewrite", f"DATE_TRUNC({col}, {part}) on a DATE column → "
+                                   + (col if unit is None else f"trunc({col}, '{unit}')")))
+            else:
+                rule, why = _FLAGGED_CALLS[name]
+                out.append(Finding(rule, "flag", f"{name}: {why}" + (f" ({part} is not exact)" if part == "WEEK" else
+                                   "" if types == {"DATE"} else " (only a DATE column is rewritten)")))
         elif name in _FLAGGED_CALLS:
             rule, why = _FLAGGED_CALLS[name]
             out.append(Finding(rule, "flag", f"{name}: {why}"))
@@ -533,7 +583,7 @@ def _gate(s: _Sql, exempt: set[int], out: list[Finding]) -> None:
 
 def translate(sql: str, ctx: Context | None = None) -> Result:
     ctx = ctx or Context()
-    blocks = _blockers(_Sql(sql))
+    blocks = _blockers(_Sql(sql), ctx.geography == "wkt")
     rewritten, out = _qualify(sql) if not blocks else (sql, [])
     blocks += [f for f in out if f.severity == "block"]
     if blocks:
@@ -542,6 +592,69 @@ def translate(sql: str, ctx: Context | None = None) -> Result:
     _literals_and_comments(s, ctx, out)
     exempt = _references(s, ctx, out)
     _cast_types(s, out)
-    exempt |= _functions(s, out)
+    exempt |= _functions(s, out, ctx)
     _gate(s, exempt, out)
     return Result(sql, s.render(), list(dict.fromkeys(out)))
+
+
+def names_and_paths(sql: str, ctx: Context | None = None) -> Result:
+    """Spark SQL that is already Spark's dialect: only table names (G01) and gs:// paths (G21) change.
+
+    For Dataproc's Spark SQL jobs and `spark.sql(...)` strings. None of the
+    GoogleSQL rules apply: `#`, CAST type names and function names are Spark's
+    already. A statement with an unterminated quote is returned unchanged, blocked.
+    """
+    ctx = ctx or Context()
+    s = _Sql(sql)
+    if any(t.kind == "punct" and t.text in "'\"`" for t in s.toks):
+        return Result(sql, sql, [Finding("G98_UNBALANCED", "block", "unterminated quote")])
+    out: list[Finding] = []
+    for t in s.toks:
+        if t.kind == "string" and "gs://" in t.text:
+            t.text, done, missing = rewrite_text(t.text, ctx.buckets, ctx.namespace)
+            out += [Finding("G21_GCS_PATH", "rewrite", f"{p} → oci://") for p in done]
+            out += [Finding("G21_GCS_PATH", "flag", f"{p}: bucket not in the bucket map") for p in missing]
+    _references(s, ctx, out)
+    return Result(sql, s.render(), list(dict.fromkeys(out)))
+
+
+def bind_parameters(sql: str, names: list[str], columns: set[str] = frozenset()) -> tuple[str, list[Finding]]:
+    """A routine's parameters, which its body references by bare name, as Spark named parameter
+    markers (`:name`), bound by `spark.sql(sql, args=...)`. Blocked, never guessed: a name that
+    is also a column of a table the body reads (which one BigQuery reads is not carried), or an
+    alias or SQL keyword."""
+    wanted = {n.lower(): n for n in names}
+    s, used, out = _Sql(sql), [], []
+    for low, name in wanted.items():
+        if low in {c.lower() for c in columns}:
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"parameter {name} is also a column of a table the "
+                                                                 "body reads; rename the parameter in BigQuery"))
+        elif low in SPARK_KEYWORDS:
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"parameter {name} is a Spark SQL keyword"))
+    for j in range(len(s.sig)):
+        t = s.t(j)
+        if t.kind != "word" or t.text.lower() not in wanted or s.is_punct(j - 1, ".") or s.is_punct(j + 1, "."):
+            continue
+        if s.is_punct(j + 1, "(") or s.word(j - 1) == "AS":
+            out.append(Finding("G25_ROUTINE_PARAMETER", "block", f"{t.text} is used as a parameter and as a name"))
+            continue
+        name = wanted[t.text.lower()]
+        t.text = f":{name}"
+        used.append(name)
+    out += [Finding("G25_ROUTINE_PARAMETER", "rewrite", f"parameter {n} → :{n}, a Spark named parameter")
+            for n in dict.fromkeys(used)]
+    return s.render(), out
+
+
+def statements(sql: str) -> list[str]:
+    """`;`-separated statements, split outside strings, comments and parentheses; empty ones dropped."""
+    s = _Sql(sql)
+    out, start, depth = [], 0, 0
+    for i, t in enumerate(s.toks):
+        if t.kind == "punct":
+            depth += (t.text == "(") - (t.text == ")")
+            if t.text == ";" and depth == 0:
+                out.append("".join(x.text for x in s.toks[start:i]))
+                start = i + 1
+    out.append("".join(x.text for x in s.toks[start:]))
+    return [st.strip() for st in out if _Sql(st).sig]
