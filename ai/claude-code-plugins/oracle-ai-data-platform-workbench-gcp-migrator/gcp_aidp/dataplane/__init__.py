@@ -13,6 +13,7 @@ by its extension, and a job's NOTEBOOK_TASK runs an `.ipynb`.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from gcp_aidp._copy import rows_file
@@ -172,9 +173,24 @@ def write_notebooks(dp: dict, out_dir: Path) -> list[str]:
 
 MIGRATION_JOB = "gcp_aidp_migration"
 CHECK_JOB = "check_notebooks"
+CHECK_WRITES_JOB = "check_notebooks_writes"
 # Run on demand in BigQuery, so migrated without a job; the check job runs each once. A
 # procedure changes data, so it is left to a person.
 _CHECKED = ("bq_saved_query", "bq_notebook", "bq_table_valued_function", "bq_scalar_function")
+# A check must never change data: a notebook whose code could write is left out. Conservative on
+# purpose: `.replace(` or a variable named `created` also leaves a notebook out; it is then run by hand.
+_WRITES = re.compile(r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|COPY|LOAD)\b"
+                     r"|\.write\b|\bsaveAsTable\b|\binsertInto\b|\.save\(|\bsubprocess\b|\bos\.system\b",
+                     re.IGNORECASE)
+
+
+def _may_write(notebook: Path) -> bool:
+    """True unless every code cell plainly only reads."""
+    try:
+        cells = json.loads(notebook.read_text(encoding="utf-8"))["cells"]
+    except (OSError, ValueError, KeyError):
+        return True
+    return any(_WRITES.search("".join(c.get("source") or "")) for c in cells if c.get("cell_type") == "code")
 
 
 def sql_notebook(title: str, statements: list[str], plan_id: str, *, show_last: bool = False) -> dict:
@@ -317,18 +333,31 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
     migration = {"name": MIGRATION_JOB, "tasks": chain,
                  "description": f"Copy BigQuery project {dp['project']} into catalog {dp['catalog']} "
                                 f"(plan {dp['plan_id']})."}
-    checks, taken = [], set()
+    checks, writes, taken = [], [], set()
     for r in results:
-        if r.get("kind") in _CHECKED and r.get("notebook") and r.get("status") in ("ok", "needs_manual_review"):
-            key = base = job_name("check_" + Path(r["notebook"]).stem)
-            n = 1
-            while key.casefold() in taken:
-                n += 1
-                key = f"{base}_{n}"
-            taken.add(key.casefold())
-            checks.append({"taskKey": key, "notebook": r["notebook"], "parameters": []})
+        if not (r.get("notebook") and r.get("status") in ("ok", "needs_manual_review")):
+            continue
+        if r.get("kind") in _CHECKED and not _may_write(out_dir / r["notebook"]):
+            into = checks
+        elif r.get("kind") in (*_CHECKED, "bq_procedure"):
+            into = writes
+        else:
+            continue
+        key = base = job_name("check_" + Path(r["notebook"]).stem)
+        n = 1
+        while key.casefold() in taken:
+            n += 1
+            key = f"{base}_{n}"
+        taken.add(key.casefold())
+        into.append({"taskKey": key, "notebook": r["notebook"], "parameters": []})
     check = [{"name": CHECK_JOB, "tasks": checks,
-              "description": "Runs each migrated notebook once (saved queries, BigQuery Studio notebooks, SQL and "
-                             "table functions) to prove it works on AIDP; procedures are left out, as they change "
-                             "data. Start it with `gcp-aidp run --job check_notebooks`."}] if checks else []
+              "description": "Runs each migrated notebook that only reads once (saved queries, BigQuery Studio "
+                             "notebooks, SQL and table functions) to prove it works on AIDP. Never scheduled: start "
+                             "it with `gcp-aidp run --job check_notebooks`. Notebooks that change data, or might, "
+                             f"are in {CHECK_WRITES_JOB} instead."}] if checks else []
+    check += [{"name": CHECK_WRITES_JOB, "tasks": writes,
+               "description": "CHANGES DATA. Runs once each migrated procedure, and each notebook whose code could "
+                              "write (" + ", ".join(sorted(Path(t["notebook"]).stem for t in writes)) + "). Never "
+                              "scheduled: start it deliberately with `gcp-aidp run --job check_notebooks_writes`, "
+                              "best against a test catalog first."}] if writes else []
     return [migration] + own + check

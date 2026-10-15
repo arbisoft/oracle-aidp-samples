@@ -18,8 +18,9 @@ Dataform repositories migrate. Built on 0.2.1, below.
 - `check_notebooks`: a job `publish` creates, never scheduled, with one task per migrated
   notebook that BigQuery runs on demand (saved queries, BigQuery Studio notebooks, SQL
   and table functions). `run --job check_notebooks` runs each once and reports every one
-  that fails, so a migration with many notebooks is checked from the terminal.
-  Procedures are left out: they change data.
+  that fails, so a migration with many notebooks is checked from the terminal. Only
+  notebooks that read are in it; procedures, and notebooks whose code could write, are in
+  `check_notebooks_writes`, which changes data and is run on purpose.
 - Dataform (0.3): each repository is planned as `MIGRATE` and becomes one
   unscheduled AIDP job, with one task per compiled action and Dataform's
   dependencies as `dependsOn`. `inventory` reads each repository's release and

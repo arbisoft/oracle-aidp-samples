@@ -69,12 +69,36 @@ class Demo(unittest.TestCase):
         kinds = {r["notebook"]: r["kind"] for r in self.report["results"] if r.get("notebook")}
         checked = {kinds[t["notebook"]] for t in check["tasks"]}
         self.assertTrue({"bq_saved_query", "bq_notebook"} <= checked)
-        self.assertNotIn("bq_procedure", checked)  # it changes data: a person runs it
+        self.assertNotIn("bq_procedure", checked)  # it changes data: only in check_notebooks_writes
         self.assertFalse(any(t.get("dependsOn") for t in check["tasks"]))  # each runs on its own; one failing stops none
         self.assertNotIn("schedule", check)
         defn = next(j["definition"] for j in plan_publish(self.out, prefix="p", cluster_key="ck")["jobs"]
                     if j["name"] == "p_check_notebooks")
         self.assertFalse(any("parameters" in t for t in defn["tasks"]))  # reports_dir is the data-plane notebooks'
+
+    def test_a_notebook_that_could_change_data_is_never_checked(self):
+        from gcp_aidp.dataplane import write_jobs
+
+        def nb(code):
+            return json.dumps({"cells": [{"cell_type": "code", "source": code}]})
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            sources = {"reads": 'df = spark.sql("""SELECT * FROM t""").toPandas()',
+                       "inserts": 'spark.sql("""INSERT INTO t SELECT 1""")',
+                       "writes": 'spark.table("t").write.mode("append").saveAsTable("u")',
+                       "deletes": 'spark.sql("delete from t where x = 1")'}
+            results = []
+            for name, code in sources.items():
+                (out / f"{name}.ipynb").write_text(nb(code))
+                results.append({"kind": "bq_saved_query", "status": "ok", "notebook": f"{name}.ipynb"})
+            dp = {"plan_id": "p", "project": "p", "catalog": "c", "tables": []}
+            check = next(j for j in write_jobs(dp, results, out) if j["name"] == "check_notebooks")
+            writes = next(j for j in write_jobs(dp, results, out) if j["name"] == "check_notebooks_writes")
+        self.assertEqual([t["notebook"] for t in check["tasks"]], ["reads.ipynb"])
+        # The ones that could write are checked only on purpose, in their own job that says so.
+        self.assertEqual(sorted(t["notebook"] for t in writes["tasks"]), ["deletes.ipynb", "inserts.ipynb", "writes.ipynb"])
+        self.assertTrue(writes["description"].startswith("CHANGES DATA."))
+        self.assertNotIn("schedule", writes)
 
     def test_a_saved_query_is_published_as_a_notebook_that_shows_its_result(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}

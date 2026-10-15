@@ -31,8 +31,9 @@ different flags to make it green.
 materialized view's refresh job, a Dataform repository's job, or `check_notebooks`.
 `MIGRATION_REPORT.md` exists only after the migration job.
 
-`--job check_notebooks` runs every migrated notebook that BigQuery runs on demand (saved
-queries, BigQuery Studio notebooks, SQL and table functions) once, each as its own task,
-and lists the ones that fail with their error. Procedures are left out: they change data,
-so the user runs them by hand. Suggest it after the migration job, to prove the notebooks
-work on the migrated data.
+`--job check_notebooks` runs once, each as its own task, every migrated notebook that
+BigQuery runs on demand (saved queries, BigQuery Studio notebooks, SQL and table functions)
+and that only reads, and lists the ones that fail with their error. Suggest it after the
+migration job. Procedures, and notebooks whose code could write (`INSERT`, `DELETE`,
+`CREATE`, `.write`, ...), are in `check_notebooks_writes` instead: it changes data, so run
+it only when the user asks, and say so first.

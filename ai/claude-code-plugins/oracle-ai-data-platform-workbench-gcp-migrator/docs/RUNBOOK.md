@@ -323,9 +323,12 @@ gcp-aidp run migrated --job check_notebooks   # then runs every migrated noteboo
 
 Saved queries, BigQuery Studio notebooks and SQL and table functions run on demand in
 BigQuery, so they are migrated as notebooks with no job of their own. `publish` also creates
-`<prefix>_check_notebooks`, one task per such notebook and never scheduled: run it after
-the copy, and it reports each notebook that fails on the migrated data. Procedures are
-not in it: they change data, so run each one by hand.
+`<prefix>_check_notebooks`, one task per such notebook that only reads, never scheduled: run
+it after the copy, and it reports each notebook that fails on the migrated data. A check
+must not change data, so procedures, and notebooks whose code could write (`INSERT`,
+`DELETE`, `CREATE`, `.write`, ...; the test is deliberately cautious), go in a second job,
+`<prefix>_check_notebooks_writes`. Run that one on purpose, best against a test catalog
+first.
 
 `publish` uploads the notebooks to `/Workspace/<prefix>/` and creates the jobs,
 unscheduled or with their source schedule PAUSED; it never overwrites. It needs [Setup, step 3](#3-this-machine). The CLI
