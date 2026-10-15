@@ -1,0 +1,400 @@
+"""Live inventory against canned Google Cloud API responses (no network)."""
+from __future__ import annotations
+
+import base64
+import copy
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from gcp_aidp.gcp_client import READ_ONLY_SCOPE, GcpClient, GcpError
+from gcp_aidp.inventory.manifest import (
+    ALL_SOURCES,
+    BROAD_SCOPE_SOURCES,
+    build_manifest,
+)
+from gcp_aidp.migrate import migrate
+from gcp_aidp.plan import build_plan
+
+P = "proj-test"
+BQ = f"https://bigquery.googleapis.com/bigquery/v2/projects/{P}"
+DS = f"{BQ}/datasets/migration_test"
+
+
+def _table(name, type_, **extra):
+    return {"tableReference": {"tableId": name}, "type": type_, **extra}
+
+
+RESPONSES = {
+    f"{BQ}/datasets": {"datasets": [{"datasetReference": {"datasetId": "migration_test"}}]},
+    DS: {"location": "US", "description": "seed", "access": [
+        {"role": "OWNER", "specialGroup": "projectOwners"},
+        {"role": "READER", "groupByEmail": "analysts@example.com"},
+        {"view": {"projectId": P, "datasetId": "other", "tableId": "v"}}]},
+    f"{DS}/tables": {"tables": [{"tableReference": {"tableId": t}} for t in
+                                ("orders", "v_simple", "v_legacy", "mv_daily", "ext_files")],
+                     "nextPageToken": "page2"},
+    f"{DS}/tables?pageToken=page2": {"tables": [{"tableReference": {"tableId": "type_zoo"}}]},
+    f"{DS}/tables/orders": _table(
+        "orders", "TABLE", numRows="125000", numBytes="9000000",
+        schema={"fields": [{"name": "order_id", "type": "INTEGER", "mode": "REQUIRED"},
+                           {"name": "order_date", "type": "DATE"},
+                           {"name": "user_id", "type": "INTEGER",
+                            "policyTags": {"names": ["projects/proj/taxonomies/1/policyTags/pii"]}}]},
+        timePartitioning={"type": "DAY", "field": "order_date"}, clustering={"fields": ["user_id"]},
+        expirationTime="1893456000000"),
+    f"{DS}/tables/type_zoo": _table("type_zoo", "TABLE", numRows="1", schema={"fields": [
+        {"name": "n", "type": "NUMERIC", "precision": "10", "scale": "2"}]},
+        rangePartitioning={"field": "n", "range": {"start": "0", "end": "10", "interval": "1"}}),
+    f"{DS}/tables/v_simple": _table("v_simple", "VIEW", view={"query": "SELECT 1 AS x"}),
+    f"{DS}/tables/v_legacy": _table("v_legacy", "VIEW", view={"query": "SELECT x FROM [proj:ds.t]",
+                                                              "useLegacySql": True}),
+    f"{DS}/tables/mv_daily": _table("mv_daily", "MATERIALIZED_VIEW",
+                                    materializedView={"query": "SELECT 1 AS x", "refreshIntervalMs": "1800000"}),
+    f"{DS}/tables/ext_files": _table("ext_files", "EXTERNAL", externalDataConfiguration={
+        "sourceFormat": "PARQUET", "sourceUris": ["gs://landing-bucket/x/*.parquet"], "autodetect": True}),
+    f"{DS}/tables/orders/rowAccessPolicies": {"rowAccessPolicies": [
+        {"rowAccessPolicyReference": {"policyId": "us_only"}, "filterPredicate": "country = 'US'"}]},
+    f"{DS}/tables/type_zoo/rowAccessPolicies": {},
+    f"{DS}/routines": {"routines": [{"routineReference": {"routineId": "net_price"}},
+                                    {"routineReference": {"routineId": "parse_utm"}}]},
+    f"{DS}/routines/net_price": {"routineType": "SCALAR_FUNCTION", "language": "SQL", "definitionBody": "p * 2",
+                                 "arguments": [{"name": "p", "dataType": {"typeKind": "FLOAT64"}}],
+                                 "returnType": {"typeKind": "FLOAT64"}},
+    f"{DS}/routines/parse_utm": {"routineType": "SCALAR_FUNCTION", "language": "JAVASCRIPT",
+                                 "definitionBody": "return 1;",
+                                 "arguments": [{"name": "a", "dataType": {"typeKind": "ARRAY",
+                                                                         "arrayElementType": {"typeKind": "STRING"}}}]},
+    f"{DS}/models": {"models": [{"modelReference": {"modelId": "churn"}, "modelType": "LOGISTIC_REGRESSION"}]},
+    f"https://bigquerydatatransfer.googleapis.com/v1/projects/{P}/locations/us/transferConfigs?dataSourceIds=scheduled_query":
+        {"transferConfigs": [{"name": f"projects/{P}/locations/us/transferConfigs/abc123",
+                              "displayName": "Nightly refresh", "schedule": "every 24 hours",
+                              "params": {"query": "SELECT 1"}, "destinationDatasetId": "migration_test"}]},
+    f"https://storage.googleapis.com/storage/v1/b?project={P}":
+        {"items": [{"name": "landing-bucket", "location": "US", "storageClass": "STANDARD"}]},
+}
+DISABLED = ("dataproc.googleapis.com",)
+REFUSED = ("dataform.googleapis.com",)
+
+
+class FakeClient(GcpClient):
+    """Serves RESPONSES. Like the real client, it can only GET."""
+
+    def __init__(self):
+        super().__init__(P)
+        self.calls: list[str] = []
+
+    def get(self, url, params=None):
+        key = url + ("?" + "&".join(f"{k}={v}" for k, v in sorted(params.items())) if params else "")
+        self.calls.append(key)
+        if any(host in url for host in DISABLED):
+            raise GcpError("HTTP 403 SERVICE_DISABLED", status=403, reason="SERVICE_DISABLED")
+        if any(host in url for host in REFUSED):
+            raise GcpError("HTTP 403 PERMISSION_DENIED: dataform.repositories.list", status=403,
+                           reason="PERMISSION_DENIED")
+        if key not in RESPONSES:
+            raise GcpError(f"HTTP 404 notFound: {key}", status=404, reason="notFound")
+        return RESPONSES[key]
+
+
+class RefusingClient(FakeClient):
+    """Two datasets; the service account may not read the second."""
+
+    def get(self, url, params=None):
+        if url == f"{BQ}/datasets":
+            return {"datasets": [{"datasetReference": {"datasetId": d}} for d in ("migration_test", "restricted")]}
+        if "/datasets/restricted" in url:
+            raise GcpError("HTTP 403 accessDenied", status=403, reason="accessDenied")
+        return super().get(url, params)
+
+
+class OneRefusedDataset(unittest.TestCase):
+    def test_costs_that_dataset_not_the_whole_scan(self):
+        bq = build_manifest(RefusingClient(), ("bigquery",))["sources"]["bigquery"]
+        self.assertNotIn("error", bq["summary"])
+        self.assertIn("orders", [t["name"] for t in bq["items"]["tables"]])
+        self.assertIn("dataset restricted", bq["summary"]["not_scanned"])
+
+
+DP = f"https://dataproc.googleapis.com/v1/projects/{P}"
+OBJ = "https://storage.googleapis.com/storage/v1/b/landing/o/"
+NIGHTLY_PY = "import sys\nspark.read.json(f'gs://landing/in/{sys.argv[1]}')\n"
+DATAPROC_RESPONSES = {
+    f"{DP}/regions/us-central1/clusters": {"clusters": [{
+        "clusterName": "etl", "status": {"state": "RUNNING"},
+        "config": {"softwareConfig": {"imageVersion": "2.2-debian12", "properties": {"spark:spark.executor.memory": "8g"}},
+                   "masterConfig": {"machineTypeUri": "https://www.googleapis.com/compute/v1/projects/proj/zones/us-central1-a/machineTypes/n2-standard-4"},
+                   "workerConfig": {"numInstances": 4, "machineTypeUri": "zones/us-central1-a/machineTypes/n2-standard-8"},
+                   "initializationActions": [{"executableFile": "gs://landing/init.sh"}]}}]},
+    # Three runs of one nightly job (a new date each run), one Spark SQL query list, one JAR job.
+    f"{DP}/regions/us-central1/jobs": {"jobs": [
+        {"reference": {"jobId": f"nightly-{d}"}, "placement": {"clusterName": "etl"},
+         "status": {"state": "DONE", "stateStartTime": f"2026-10-0{d}T02:00:00Z"},
+         "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py", "args": [f"2026-10-0{d}"]}}
+        for d in (3, 1, 2)] + [
+        {"reference": {"jobId": "sql-1"}, "placement": {"clusterName": "etl"}, "status": {"state": "DONE"},
+         "sparkSqlJob": {"queryList": {"queries": ["SELECT 1"]}, "scriptVariables": {"d": "x"}}},
+        {"reference": {"jobId": "jar-1"}, "placement": {"clusterName": "etl"}, "status": {"state": "ERROR"},
+         "sparkJob": {"mainJarFileUri": "gs://landing/jobs/export.jar", "args": ["--all"]}}]},
+    f"{DP}/locations/us-central1/batches": {"batches": [
+        {"name": f"projects/{P}/locations/us-central1/batches/b-1", "state": "SUCCEEDED",
+         "createTime": "2026-10-05T00:00:00Z", "runtimeConfig": {"version": "2.2"},
+         "pysparkBatch": {"mainPythonFileUri": "gs://landing/jobs/huge.py"}}]},
+    f"{DP}/regions/us-central1/workflowTemplates": {"templates": [
+        {"id": "month-end", "parameters": [{"name": "MONTH"}],
+         "placement": {"managedCluster": {"clusterName": "ephemeral",
+                                          "config": {"workerConfig": {"numInstances": 2}}}},
+         "jobs": [{"stepId": "extract", "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py"}},
+                  {"stepId": "close", "prerequisiteStepIds": ["extract"],
+                   "sparkJob": {"mainClass": "com.x.Close", "jarFileUris": ["gs://landing/close.jar"]}}]}]},
+    OBJ + "jobs%2Fnightly.py": {"size": str(len(NIGHTLY_PY))},
+    OBJ + "jobs%2Fnightly.py?alt=media": NIGHTLY_PY,
+    OBJ + "jobs%2Fhuge.py": {"size": "5000000"},
+    f"https://cloudscheduler.googleapis.com/v1/projects/{P}/locations/us-central1/jobs": {"jobs": [
+        {"name": f"projects/{P}/locations/us-central1/jobs/month-end-trigger", "schedule": "0 6 1 * *",
+         "timeZone": "America/New_York", "state": "ENABLED", "httpTarget": {
+             "uri": f"{DP}/regions/us-central1/workflowTemplates/month-end:instantiate?alt=json",
+             "httpMethod": "POST"}},
+        {"name": f"projects/{P}/locations/us-central1/jobs/nightly", "schedule": "0 2 * * *", "state": "PAUSED",
+         "httpTarget": {"uri": f"{DP}/regions/us-central1/jobs:submit", "body": base64.b64encode(json.dumps(
+             {"job": {"placement": {"clusterName": "etl"},
+                      "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/nightly.py"}}}).encode()).decode()}},
+        {"name": f"projects/{P}/locations/us-central1/jobs/ping", "schedule": "* * * * *",
+         "httpTarget": {"uri": "https://example.com/ping"}}]},
+}
+
+
+class DataprocClient(FakeClient):
+    """Serves the Dataproc and Cloud Storage responses above; GET only."""
+
+    def get(self, url, params=None):
+        key = url + ("?" + "&".join(f"{k}={v}" for k, v in sorted(params.items())) if params else "")
+        self.calls.append(key)
+        if key not in DATAPROC_RESPONSES:
+            raise GcpError(f"HTTP 404 notFound: {key}", status=404, reason="notFound")
+        return DATAPROC_RESPONSES[key]
+
+    def get_text(self, url, params=None):
+        return self.get(url, params)
+
+
+class DataprocInventory(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from gcp_aidp.inventory import dataproc
+        cls.client = DataprocClient()
+        cls.dp = dataproc.scan(cls.client, regions=("us-central1",))["items"]
+
+    def test_runs_become_one_definition_with_the_newest_settings(self):
+        nightly = next(j for j in self.dp["jobs"] if j["job_type"] == "pyspark")
+        self.assertEqual(nightly["id"], "us-central1/etl/nightly.py")
+        self.assertEqual((nightly["runs"], nightly["last_run_id"], nightly["args"]), (3, "nightly-3", ["2026-10-03"]))
+        self.assertTrue(nightly["args_vary"])
+        self.assertEqual(len(self.dp["jobs"]), 3)  # nightly, the SQL query list, the JAR job
+
+    def test_code_is_read_for_what_migrate_translates(self):
+        by_type = {j["job_type"]: j for j in self.dp["jobs"]}
+        self.assertEqual(by_type["pyspark"]["code"], NIGHTLY_PY)
+        self.assertNotIn("code", by_type["spark"])  # a JAR is recorded, not read
+        self.assertEqual(by_type["spark_sql"]["queries"], ["SELECT 1"])
+        self.assertEqual(by_type["spark_sql"]["variables"], {"d": "x"})
+        huge = self.dp["batches"][0]
+        self.assertIn("over the 1000000-byte limit", huge["code_not_read"])
+
+    def test_batches_templates_and_clusters(self):
+        batch = self.dp["batches"][0]
+        self.assertEqual((batch["id"], batch["runtime_version"]), ("us-central1/serverless/huge.py", "2.2"))
+        t = self.dp["workflow_templates"][0]
+        self.assertEqual([(s["step_id"], s["prerequisites"]) for s in t["steps"]], [("extract", []), ("close", ["extract"])])
+        self.assertEqual(t["steps"][0]["code"], NIGHTLY_PY)
+        self.assertEqual((t["cluster"], t["parameters"], t["managed_cluster"]["worker_count"]), ("ephemeral", ["MONTH"], 2))
+        c = self.dp["clusters"][0]
+        self.assertEqual((c["machine_type"], c["master_machine_type"], c["worker_count"]), ("n2-standard-8", "n2-standard-4", 4))
+        self.assertEqual(c["init_actions"], ["gs://landing/init.sh"])
+
+    def test_scheduler_jobs_that_start_dataproc(self):
+        by_name = {s["name"]: s for s in self.dp["schedules"]}
+        self.assertEqual(set(by_name), {"month-end-trigger", "nightly"})  # the plain HTTP ping is not Dataproc's
+        self.assertEqual(by_name["month-end-trigger"]["target"],
+                         {"kind": "workflow_template", "region": "us-central1", "id": "month-end"})
+        self.assertEqual((by_name["month-end-trigger"]["time_zone"], by_name["nightly"]["time_zone"]),
+                         ("America/New_York", "UTC"))
+        self.assertEqual(by_name["nightly"]["target"], {"kind": "job", "region": "us-central1", "job_type": "pyspark",
+                                                        "main_file": "gs://landing/jobs/nightly.py", "cluster": "etl"})
+
+    def test_the_newest_run_is_the_last_submitted(self):
+        # Live, 2026-10-09: the run submitted second was killed early, so its last state change
+        # came before the first run's; its arguments are still the newest.
+        from gcp_aidp.inventory import dataproc
+        runs = [{"reference": {"jobId": "first"}, "placement": {"clusterName": "c"},
+                 "status": {"state": "DONE", "stateStartTime": "2026-10-09T07:10:00Z"},
+                 "statusHistory": [{"state": "PENDING", "stateStartTime": "2026-10-09T07:00:00Z"}],
+                 "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/j.jar.py", "args": ["2026-10-01"]}},
+                {"reference": {"jobId": "second"}, "placement": {"clusterName": "c"},
+                 "status": {"state": "ERROR", "stateStartTime": "2026-10-09T07:05:00Z"},
+                 "statusHistory": [{"state": "PENDING", "stateStartTime": "2026-10-09T07:01:00Z"}],
+                 "pysparkJob": {"mainPythonFileUri": "gs://landing/jobs/j.jar.py", "args": ["2026-10-02"]}}]
+        client = DataprocClient()
+        client.get = lambda url, params=None: (
+            {"jobs": runs} if url.endswith("/jobs") else {"clusters": []} if url.endswith("/clusters")
+            else {"batches": []} if url.endswith("/batches") else {"templates": []} if url.endswith("Templates")
+            else (_ for _ in ()).throw(GcpError("HTTP 404", status=404)))
+        job = dataproc.scan(client, regions=("us-central1",))["items"]["jobs"][0]
+        self.assertEqual((job["last_run_id"], job["args"], job["last_state"]), ("second", ["2026-10-02"], "ERROR"))
+
+    def test_metadata_and_object_reads_only(self):
+        hosts = ("https://dataproc.googleapis.com/", "https://cloudscheduler.googleapis.com/", OBJ)
+        self.assertTrue(all(c.startswith(hosts) for c in self.client.calls))
+
+    def test_plan_lists_every_definition(self):
+        from gcp_aidp.inventory.manifest import build_manifest
+        m = build_manifest(DataprocClient(), ("dataproc",), scan_services=True, service_client=DataprocClient())
+        ids = {a["id"] for a in build_plan(m)["assets"]}
+        self.assertTrue({"dataproc.job.us-central1/etl/nightly.py", "dataproc.batch.us-central1/serverless/huge.py",
+                         "dataproc.workflow_template.month-end", "dataproc.cluster.etl"} <= ids)
+
+
+class LiveInventory(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = FakeClient()
+        cls.manifest = build_manifest(cls.client, ALL_SOURCES, scan_services=True, service_client=cls.client)
+        cls.bq = cls.manifest["sources"]["bigquery"]
+
+    def test_every_seeded_object_is_listed(self):
+        it = self.bq["items"]
+        self.assertEqual([t["name"] for t in it["tables"]], ["orders", "type_zoo"])  # second page followed
+        self.assertEqual([v["name"] for v in it["views"]], ["v_simple", "v_legacy"])
+        self.assertEqual(it["materialized_views"][0]["refresh_interval_minutes"], 30)
+        self.assertEqual(it["external_tables"][0]["source_uris"], ["gs://landing-bucket/x/*.parquet"])
+        self.assertTrue(it["external_tables"][0]["autodetect"])
+        self.assertNotIn("csv_options", it["external_tables"][0])  # Parquet: none
+        self.assertEqual({r["name"]: r["language"] for r in it["routines"]},
+                         {"net_price": "SQL", "parse_utm": "JAVASCRIPT"})
+        self.assertEqual(it["routines"][1]["arguments"][0]["type"], "ARRAY<STRING>")
+        self.assertEqual(it["models"][0]["name"], "churn")
+        self.assertEqual(it["scheduled_queries"][0]["id"], "abc123")
+
+    def test_table_metadata(self):
+        orders = self.bq["items"]["tables"][0]
+        self.assertEqual((orders["num_rows"], orders["partitioning"], orders["clustering"]),
+                         (125000, {"type": "DAY", "field": "order_date"}, ["user_id"]))
+        self.assertEqual(self.bq["items"]["tables"][1]["partitioning"]["type"], "RANGE")
+
+    def test_access_rules(self):
+        kinds = sorted(a["kind"] for a in self.bq["items"]["access_policies"])
+        self.assertEqual(kinds, ["column_policy_tag", "dataset_iam", "dataset_iam", "dataset_iam",
+                                 "row_access_policy"])
+
+    def test_gaps_are_recorded_not_hidden(self):
+        self.assertIn("saved_queries", self.bq["summary"]["not_scanned"])
+        self.assertIn("notebooks", self.bq["summary"]["not_scanned"])
+        sources = self.manifest["sources"]
+        self.assertTrue(sources["dataproc"]["summary"]["api_disabled"])
+        self.assertEqual(sources["dataproc"]["items"],
+                         {"clusters": [], "jobs": [], "batches": [], "workflow_templates": [], "schedules": []})
+        self.assertIn("repositories", sources["dataform"]["summary"]["not_scanned"])  # refused: unknown, not "0"
+        self.assertNotIn("repositories", sources["dataform"]["summary"])
+        self.assertEqual(sources["gcs"]["items"]["buckets"][0]["name"], "landing-bucket")
+
+    def test_metadata_only(self):
+        """No BigQuery call runs a query or reads rows: no jobs, queries or tabledata endpoint."""
+        bigquery_calls = [c for c in self.client.calls if "bigquery.googleapis.com" in c]
+        self.assertGreater(len(bigquery_calls), 10)
+        for call in bigquery_calls:
+            self.assertNotRegex(call, r"/(jobs|queries|data)(\?|/|$)")
+        self.assertEqual(READ_ONLY_SCOPE, "https://www.googleapis.com/auth/cloud-platform.read-only")
+        self.assertFalse(any(hasattr(GcpClient, m) for m in ("post", "put", "patch", "delete")))
+
+    def test_plan_flags_the_gaps_and_migrate_blocks_legacy_sql(self):
+        plan = build_plan(self.manifest)
+        self.assertIn("bigquery.saved_queries", plan["scan_errors"])
+        self.assertIn("dataform.repositories", plan["scan_errors"])
+        with tempfile.TemporaryDirectory() as tmp:
+            report = migrate(plan, out_dir=Path(tmp))
+        by_id = {r["asset_id"]: r for r in report["results"]}
+        legacy = by_id["bigquery.view.migration_test.v_legacy"]
+        self.assertEqual((legacy["status"], legacy["findings"][0]["rule"]), ("blocked", "G97_LEGACY_SQL"))
+        self.assertEqual(by_id["bigquery.view.migration_test.v_simple"]["status"], "ok")
+
+    def test_services_need_the_flag(self):
+        client = FakeClient()
+        m = build_manifest(client, ALL_SOURCES)
+        for source in BROAD_SCOPE_SOURCES:
+            self.assertIn("--scan-services", m["sources"][source]["summary"]["not_scanned"]["all"])
+        self.assertFalse(any(host in call for call in client.calls
+                             for host in ("dataproc", "dataform", "composer", "dataflow", "aiplatform")))
+        self.assertIn("dataproc.all", build_plan(m)["scan_errors"])
+
+    def test_scan_services_uses_a_separate_broader_token(self):
+        from gcp_aidp.gcp_client import CLOUD_PLATFORM_SCOPE
+
+        seen = []
+
+        class Recorder(FakeClient):
+            def __init__(self, project, scope):
+                super().__init__()
+                seen.append(scope)
+
+        from unittest import mock
+        with mock.patch("gcp_aidp.gcp_client.GcpClient", Recorder):
+            build_manifest(FakeClient(), ("dataproc",), scan_services=True)
+        self.assertEqual(seen, [CLOUD_PLATFORM_SCOPE])
+
+    def test_a_default_region_says_what_it_did_not_scan(self):
+        # A project whose jobs live elsewhere must not read as "no jobs".
+        default = build_manifest(FakeClient(), ("dataproc",), scan_services=True, service_client=FakeClient())
+        self.assertIn("us-central1 only", default["sources"]["dataproc"]["summary"]["warnings"][0])
+        chosen = build_manifest(FakeClient(), ("dataproc",), regions=("us-east4",), scan_services=True,
+                                service_client=FakeClient())
+        self.assertNotIn("warnings", chosen["sources"]["dataproc"]["summary"])
+
+    def test_saved_queries_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Top products.sql").write_text("SELECT 1")
+            m = build_manifest(FakeClient(), ("bigquery",), saved_queries_dir=tmp)
+        bq = m["sources"]["bigquery"]
+        self.assertEqual(bq["items"]["saved_queries"], [{"name": "Top products", "query": "SELECT 1"}])
+        self.assertNotIn("saved_queries", bq["summary"]["not_scanned"])
+
+
+class OldManifests(unittest.TestCase):
+    def test_an_inventory_from_before_0_3_still_plans(self):
+        """Composer, Dataflow and Vertex AI were listed until 0.3; a manifest that still has them plans."""
+        m = copy.deepcopy(json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text()))
+        m["sources"]["composer"] = {"summary": {"environments": 1}, "items": {"environments": [{"name": "e"}]}}
+        m["sources"]["dataflow"] = {"summary": {"jobs": 1}, "items": {"jobs": [{"id": "j", "name": "n"}]}}
+        m["sources"]["vertex"] = {"summary": {"models": 0}, "items": {"models": []}}
+        self.assertFalse(any(a["id"].split(".")[0] in ("composer", "dataflow", "vertex")
+                             for a in build_plan(m)["assets"]))
+
+
+class Retry(unittest.TestCase):
+    def test_a_timed_out_get_is_tried_once_more(self):
+        try:
+            import requests
+        except ImportError:
+            self.skipTest("needs requests (pip install -e '.[gcp]')")
+
+        class Session:
+            def __init__(self, failures):
+                self.failures, self.calls = failures, 0
+
+            def get(self, url, params=None, timeout=None):
+                self.calls += 1
+                if self.calls <= self.failures:
+                    raise requests.ReadTimeout("read timed out")
+                return type("R", (), {"status_code": 200, "content": b"{}", "json": lambda s: {"ok": 1}})()
+
+        client = GcpClient(P)
+        client._session = Session(1)
+        self.assertEqual((client.get("u"), client._session.calls), ({"ok": 1}, 2))
+        client._session = Session(2)
+        with self.assertRaises(requests.ReadTimeout):
+            client.get("u")
+        self.assertEqual(client._session.calls, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
