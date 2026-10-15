@@ -8,14 +8,24 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from gcp_aidp.dataplane import MIGRATION_JOB, assertion_notebook, sql_notebook, write_jobs
+from gcp_aidp.dataplane import (
+    MIGRATION_JOB,
+    assertion_notebook,
+    sql_notebook,
+    write_jobs,
+)
 from gcp_aidp.gcp_client import GcpClient, GcpError
 from gcp_aidp.inventory import dataform as inventory
 from gcp_aidp.inventory.manifest import build_manifest
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan, write_plan_markdown
 from gcp_aidp.publish import plan_publish, publish
-from gcp_aidp.translate.dataform import find_cycle, register_outputs, schedule_text, translate_repository
+from gcp_aidp.translate.dataform import (
+    find_cycle,
+    register_outputs,
+    schedule_text,
+    translate_repository,
+)
 from gcp_aidp.translate.googlesql_to_spark import Context
 
 DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text())
@@ -95,7 +105,7 @@ def _scan(**over):
 
 class Inventory(unittest.TestCase):
     def test_actions_of_the_release_compilation_result_with_only_the_fields_we_use(self):
-        out, client = _scan()
+        out, _client = _scan()
         repo = out["items"]["repositories"][0]
         self.assertEqual((repo["name"], repo["region"]), ("r1", "us-central1"))
         self.assertNotIn("not_scanned", out["summary"])
@@ -308,7 +318,7 @@ class Rules(unittest.TestCase):
             self.assertEqual((job["tasks"], ok), ([], False))
 
     def test_DF10_CYCLE_blocks(self):
-        job, findings, ok = run(table("a", deps=["b"]), table("b", deps=["c"]), table("c", deps=["a"]))
+        _job, findings, ok = run(table("a", deps=["b"]), table("b", deps=["c"]), table("c", deps=["a"]))
         self.assertIn("DF10_CYCLE", rules(findings, "block"))
         self.assertIn("s.a → s.b → s.c → s.a", next(f["detail"] for f in findings if f["rule"] == "DF10_CYCLE"))
         self.assertFalse(ok)
@@ -328,18 +338,18 @@ class Rules(unittest.TestCase):
     def test_DF11_CROSS_PROJECT_flags(self):
         action = table("t")
         action["target"]["database"] = "other-project"
-        job, findings, ok = run(action)
+        _job, findings, ok = run(action)
         self.assertIn("DF11_CROSS_PROJECT", rules(findings, "flag"))
         self.assertFalse(ok)
 
     def test_DF12_DEPENDENCY_OUTSIDE_is_info_and_a_declaration_is_not_outside(self):
-        job, findings, ok = run(table("t", deps=["elsewhere", "src"]), declaration("src"))
+        _job, findings, ok = run(table("t", deps=["elsewhere", "src"]), declaration("src"))
         outside = [f for f in findings if f["rule"] == "DF12_DEPENDENCY_OUTSIDE"]
         self.assertEqual([(f["severity"], "s.elsewhere" in f["detail"]) for f in outside], [("info", True)])
         self.assertTrue(ok)
 
     def test_DF13_LAYOUT_is_recorded_when_partitioning_is_not_carried(self):
-        job, findings, ok = run(table("t", partitionExpression="DATE(ts)", clusterExpressions=["id"]))
+        _job, findings, ok = run(table("t", partitionExpression="DATE(ts)", clusterExpressions=["id"]))
         self.assertIn("DF13_LAYOUT", rules(findings, "info"))
         self.assertTrue(ok)
 
@@ -350,7 +360,7 @@ class Rules(unittest.TestCase):
         self.assertEqual((job["tasks"], ok), ([], False))
 
     def test_DF15_NO_TASKS_is_info_for_an_empty_repository(self):
-        job, findings, ok = run()
+        _job, findings, ok = run()
         self.assertEqual({(f["rule"], f["severity"]) for f in findings}, {("DF15_NO_TASKS", "info")})
         self.assertFalse(ok)
 
@@ -530,10 +540,10 @@ class Migrate(unittest.TestCase):
 
         spark = Rows([("2026-10-01", 2)])
         with self.assertRaisesRegex(RuntimeError, "assertion failed"):
-            exec(code, {"spark": spark})
+            exec(code, {"spark": spark})  # noqa: S102 - runs the generated assertion task
         self.assertIn("index_row_count > 1", spark.query)
         with redirect_stdout(io.StringIO()):
-            exec(code, {"spark": Rows([])})  # no rows: the task passes
+            exec(code, {"spark": Rows([])})  # noqa: S102 - no rows: the task passes
 
     def test_verify_labels_the_results(self):
         from gcp_aidp.verify import verify

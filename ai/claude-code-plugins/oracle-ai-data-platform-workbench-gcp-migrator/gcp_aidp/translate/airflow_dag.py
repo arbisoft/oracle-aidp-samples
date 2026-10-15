@@ -91,9 +91,9 @@ class _Parser:
                 for a in node.names:
                     self.imports[a.asname or a.name] = f"{base}.{a.name}"
         for node in tree.body:
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                if isinstance(node.value, ast.Dict):
-                    self.dicts[node.targets[0].id] = node.value
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                    and isinstance(node.value, ast.Dict):
+                self.dicts[node.targets[0].id] = node.value
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and \
                     self.dotted(node.value.func) in _DAG:

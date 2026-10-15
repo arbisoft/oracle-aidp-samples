@@ -1,6 +1,7 @@
 """GcpClient.get_text against a fake session (no network)."""
 from __future__ import annotations
 
+import importlib.util
 import unittest
 
 from gcp_aidp.gcp_client import GcpClient, GcpError
@@ -31,6 +32,7 @@ def _client(response) -> tuple[GcpClient, _Session]:
     return client, client._session
 
 
+@unittest.skipIf(importlib.util.find_spec("requests") is None, "needs requests (pip install -e .)")
 class GetText(unittest.TestCase):
     def test_returns_the_raw_body_and_sends_a_get_with_the_params(self):
         client, session = _client(_Response(200, "import airflow\nwith DAG('x'):\n    pass\n"))

@@ -15,7 +15,7 @@ from gcp_aidp.inventory._common import GCS
 from gcp_aidp.inventory.manifest import build_manifest
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan, summarize_plan, write_plan_markdown
-from gcp_aidp.publish import plan_publish, publish
+from gcp_aidp.publish import publish
 from gcp_aidp.translate.airflow_dag import translate_dag
 from gcp_aidp.translate.googlesql_to_spark import Context
 
@@ -62,7 +62,7 @@ class Inventory(unittest.TestCase):
         return client, inventory.scan(client, regions=("us-central1",))
 
     def test_python_files_are_read_and_the_skip_rules_apply(self):
-        client, out = self.scan(
+        _client, out = self.scan(
             _objects("dags/", "dags/a.py", "dags/airflow_monitoring.py", "dags/__pycache__/b.py", "dags/readme.txt",
                      "dags/sub dir/helper.py"),
             {"dags%2Fa.py": "A = 1\n", "dags%2Fsub%20dir%2Fhelper.py": "H = 2\n"})
@@ -124,7 +124,7 @@ CTX = Context(project=P, relations={("sales", "orders"): ("cat", "sales", "order
 
 
 def bq(task_id="q", sql="SELECT 1 AS x", extra="", config=None):
-    config = config or '{"query": {"query": %r, "useLegacySql": False}}' % sql
+    config = config or f'{{"query": {{"query": {sql!r}, "useLegacySql": False}}}}'
     return f"BigQueryInsertJobOperator(task_id={task_id!r}, configuration={config}{extra})"
 
 
@@ -256,7 +256,7 @@ class Rules(unittest.TestCase):
         code = (IMPORTS + "default_args = {'owner': 'me', 'email': ['a@b'], 'retries': 3, 'retry_delay': 5,\n"
                 "    'email_on_failure': True, 'email_on_retry': False}\n"
                 "with DAG('d', default_args=default_args) as dag:\n    EmptyOperator(task_id='a', retries=1)\n")
-        job, findings, ok = run(code)
+        _job, findings, ok = run(code)
         self.assertTrue(ok)
         self.assertEqual(rules(findings, "info"), {"C04_SCHEDULE", "C05_DEFAULT_ARGS", "C06_RETRIES"})
         self.assertTrue(any("retries" in f["detail"] and "runs once" in f["detail"] for f in findings if f["rule"] == "C06_RETRIES"))
@@ -353,7 +353,7 @@ class Rules(unittest.TestCase):
     def test_C93_PARSE_ERROR_blocks_and_nothing_is_run(self):
         job, findings, ok = run("from airflow import DAG\nwith DAG('d'\n    x = 1\n")
         self.assertEqual((rules(findings, "block"), ok, job["tasks"]), ({"C93_PARSE_ERROR"}, False, []))
-        self.assertIn("line 3", findings[0]["detail"])
+        self.assertRegex(findings[0]["detail"], r"line \d")  # which line differs across Python versions
         self.assertEqual(rules(run("x = 1\x00")[1], "block"), {"C93_PARSE_ERROR"})  # a null byte does not raise
 
     def test_the_code_is_never_imported_executed_or_evaluated(self):
@@ -361,7 +361,7 @@ class Rules(unittest.TestCase):
         marker.unlink(missing_ok=True)
         code = (f"import airflow_does_not_exist\nopen({str(marker)!r}, 'w').write('x')\n"
                 "raise SystemExit('executed')\n" + dag("a = EmptyOperator(task_id='a')"))
-        job, findings, ok = run(code)
+        _job, _findings, ok = run(code)
         self.assertFalse(marker.exists())
         self.assertNotIn("airflow", sys.modules)
         self.assertNotIn("airflow_does_not_exist", sys.modules)
@@ -400,7 +400,7 @@ class Rules(unittest.TestCase):
         for name, code in cases.items():
             _, findings = flagged(code, "C95_TASK_ARGUMENT")
             self.assertIn("C95_TASK_ARGUMENT", rules(findings, "flag"), name)
-        job, _, ok = run(dag("EmptyOperator(task_id='a', trigger_rule='all_success', owner='me')"))
+        _job, _, ok = run(dag("EmptyOperator(task_id='a', trigger_rule='all_success', owner='me')"))
         self.assertTrue(ok)  # the default trigger rule and a recorded argument are fine
 
     def test_C96_MULTIPLE_DAGS_flags(self):
@@ -410,7 +410,7 @@ class Rules(unittest.TestCase):
 
     def test_C97_CYCLE_blocks(self):
         body = "a = EmptyOperator(task_id='a')\nb = EmptyOperator(task_id='b')\nc = EmptyOperator(task_id='c')\na >> b >> c >> a"
-        job, findings = flagged(dag(body), "C97_CYCLE")
+        _job, findings = flagged(dag(body), "C97_CYCLE")
         self.assertIn("C97_CYCLE", rules(findings, "block"))
         self.assertIn("a → c → b → a", next(f["detail"] for f in findings if f["rule"] == "C97_CYCLE"))
         flagged(dag("a = EmptyOperator(task_id='a')\na >> a"), "C97_CYCLE")
@@ -418,11 +418,11 @@ class Rules(unittest.TestCase):
     def test_C98_BIGQUERY_CONFIG_only_a_plain_query_job_is_translated(self):
         q = '"query": {"query": "SELECT 1", "useLegacySql": False}'
         cases = {
-            "destinationTable": '{%s, "destinationTable": {"tableId": "t"}}' % q,
+            "destinationTable": f'{{{q}, "destinationTable": {{"tableId": "t"}}}}',
             "writeDisposition": '{"query": {"query": "SELECT 1", "writeDisposition": "WRITE_TRUNCATE"}}',
             "createDisposition": '{"query": {"query": "SELECT 1", "createDisposition": "CREATE_IF_NEEDED"}}',
             "parameters": '{"query": {"query": "SELECT 1", "queryParameters": []}}',
-            "labels": '{%s, "labels": {"a": "b"}}' % q,
+            "labels": f'{{{q}, "labels": {{"a": "b"}}}}',
             "load job": '{"load": {"sourceUris": ["gs://b/x"]}}',
             "extract job": '{"extract": {"destinationUris": ["gs://b/x"]}}',
             "copy job": '{"copy": {}}',
@@ -435,7 +435,7 @@ class Rules(unittest.TestCase):
         flagged(dag("BigQueryInsertJobOperator(task_id='q')"), "C98_BIGQUERY_CONFIG")
 
     def test_C99_NOT_SCANNED_blocks_a_file_that_could_not_be_read(self):
-        job, findings, ok = run("", code_not_scanned="HTTP 403 denied", file="gs://b/x.py")
+        _job, findings, ok = run("", code_not_scanned="HTTP 403 denied", file="gs://b/x.py")
         self.assertEqual((rules(findings, "block"), ok), ({"C99_NOT_SCANNED"}, False))
         self.assertIn("HTTP 403 denied", findings[0]["detail"])
         self.assertIn("gs://b/x.py", findings[0]["detail"])
@@ -447,7 +447,7 @@ class Rules(unittest.TestCase):
 
     def test_no_partial_job_one_flagged_task_stops_the_whole_job(self):
         body = ("good = " + bq("good", "SELECT 1") + "\nbad = BashOperator(task_id='bad')\ngood >> bad\n")
-        job, findings, ok = run(dag(body, IMPORTS + "from airflow.operators.bash import BashOperator\n"))
+        job, _findings, ok = run(dag(body, IMPORTS + "from airflow.operators.bash import BashOperator\n"))
         self.assertFalse(ok)
         self.assertEqual([t["taskKey"] for t in job["tasks"]], ["good", "bad"])  # reported, but never created
         self.assertEqual(job["actions"][0]["statements"], ["SELECT 1"])  # what was translated stays for review
@@ -532,6 +532,7 @@ class Planning(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("mcp"), "install the mcp extra to enable the MCP tool test")
     def test_mcp_tool_passes_dags_on(self):
         from unittest import mock
+
         from gcp_aidp import mcp_server
         with mock.patch.object(mcp_server, "_run", return_value="ok") as run_:
             mcp_server.plan("inv.json", dags="a,b")

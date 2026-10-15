@@ -553,8 +553,8 @@ def _dataform(it: dict[str, list[dict]]) -> list[dict]:
     """One job per repository; its schedules are recorded in the notes and never applied."""
     out = []
     for r in it["repositories"]:
-        notes = [f"source schedule: {schedule_text(r)}; recorded in the job description, not applied: "
-                 "the job is created unscheduled",
+        notes = [(f"source schedule: {schedule_text(r)}; recorded in the job description, not applied: "
+                 "the job is created unscheduled"),
                  f"{len(r.get('actions') or [])} compiled action(s), one task each"]
         if r.get("actions_not_scanned"):
             notes.append(f"actions not scanned: {r['actions_not_scanned']}")

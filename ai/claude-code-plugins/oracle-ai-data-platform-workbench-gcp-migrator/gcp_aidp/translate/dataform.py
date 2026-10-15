@@ -39,11 +39,11 @@ def _dfs(graph: dict[str, list[str]]) -> tuple[list[str], list[str]]:
     state: dict[str, int] = {}  # 1 on the stack, 2 done
     order: list[str] = []
     cycle: list[str] = []
-    for root in graph:
+    for root, targets in graph.items():
         if root in state:
             continue
         state[root] = 1
-        path, stack = [root], [(root, iter(graph[root]))]
+        path, stack = [root], [(root, iter(targets))]
         while stack:
             node, edges = stack[-1]
             for nxt in edges:
