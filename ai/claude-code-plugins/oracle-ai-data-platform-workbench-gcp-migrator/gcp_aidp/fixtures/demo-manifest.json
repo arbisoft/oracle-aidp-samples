@@ -6,9 +6,7 @@
     "bigquery",
     "gcs",
     "dataproc",
-    "dataform",
-    "dataflow",
-    "vertex"
+    "dataform"
   ],
   "sources": {
     "bigquery": {
@@ -2156,61 +2154,6 @@
                 }
               }
             ]
-          }
-        ]
-      }
-    },
-    "dataflow": {
-      "summary": {
-        "jobs": 3
-      },
-      "items": {
-        "jobs": [
-          {
-            "id": "2026-09-01_02_00_00-111",
-            "name": "pubsub-orders-to-bq",
-            "job_type": "JOB_TYPE_STREAMING"
-          },
-          {
-            "id": "2026-09-01_03_00_00-222",
-            "name": "gcs-cdn-logs-to-bq",
-            "job_type": "JOB_TYPE_BATCH"
-          },
-          {
-            "id": "2026-09-01_04_00_00-333",
-            "name": "crm-sync",
-            "job_type": "JOB_TYPE_BATCH"
-          }
-        ]
-      }
-    },
-    "vertex": {
-      "summary": {
-        "models": 2,
-        "endpoints": 1,
-        "pipelines": 1
-      },
-      "items": {
-        "models": [
-          {
-            "name": "propensity-xgb",
-            "id": "vm-001"
-          },
-          {
-            "name": "reco-two-tower",
-            "id": "vm-002"
-          }
-        ],
-        "endpoints": [
-          {
-            "name": "reco-online",
-            "id": "ve-001"
-          }
-        ],
-        "pipelines": [
-          {
-            "name": "propensity-training",
-            "id": "vp-001"
           }
         ]
       }

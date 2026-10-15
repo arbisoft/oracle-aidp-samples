@@ -41,7 +41,6 @@ EXPECTED = {
     "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
     "dataproc.job.us-central1/etl-nightly/gl-export.jar": "SKIP",    # reported: JAR_TASK unproven
     "dataproc.workflow_template.month-end-close": "REVIEW",  # its JAR step blocks it (P97)
-    "vertex.model.vm-001": "SKIP",
 }
 
 

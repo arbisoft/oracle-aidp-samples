@@ -35,10 +35,6 @@ EXPECTED = {
     "dataproc_workflow_template": ("MIGRATE", "0.2"),
     "dataform_repository": ("MIGRATE", "0.3"),
     "bq_pipeline": ("SKIP", "0.3"),
-    "dataflow_job": ("SKIP", "later"),
-    "vertex_model": ("SKIP", "later"),
-    "vertex_endpoint": ("SKIP", "later"),
-    "vertex_pipeline": ("SKIP", "later"),
 }
 
 

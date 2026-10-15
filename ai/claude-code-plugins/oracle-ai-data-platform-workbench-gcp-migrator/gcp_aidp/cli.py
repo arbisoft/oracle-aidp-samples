@@ -65,9 +65,8 @@ def cmd_inventory(args: argparse.Namespace) -> int:
         print(f"# project={client.project}  regions={','.join(regions)}  (read-only metadata calls)")
         log = lambda line: print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
         if args.scan_services:
-            print("# --scan-services: Dataproc (with its Cloud Scheduler jobs), Dataform (with BigQuery Studio "
-                  "notebooks), Dataflow and Vertex AI are listed with a cloud-platform token (GET calls only); "
-                  "Dataflow and Vertex AI are listed only, not migrated")
+            print("# --scan-services: Dataproc (with its Cloud Scheduler jobs) and Dataform (with BigQuery Studio "
+                  "notebooks) are listed with a cloud-platform token (GET calls only)")
         manifest = build_manifest(client, sources, regions=regions, saved_queries_dir=args.saved_queries_dir,
                                   notebooks_dir=args.notebooks_dir,
                                   scan_services=args.scan_services, log=log)
@@ -285,12 +284,12 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--project", help="GCP project id (default: $GCP_PROJECT)")
     inv.add_argument("--sources", help=f"comma-separated subset of {','.join(ALL_SOURCES)} (default: all)")
     inv.add_argument("--regions", default="us-central1",
-                     help="comma-separated regions for Dataproc, Dataform and Vertex AI (default: us-central1)")
+                     help="comma-separated regions for Dataproc and Dataform (default: us-central1)")
     inv.add_argument("--saved-queries-dir", help="a folder of saved queries exported as .sql files")
     inv.add_argument("--notebooks-dir", help="a folder of BigQuery Studio notebooks exported as .ipynb files")
     inv.add_argument("--scan-services", action="store_true",
                      help="also list Dataproc (with its Cloud Scheduler jobs), Dataform (with BigQuery "
-                          "Studio notebooks), Dataflow and Vertex AI; their APIs refuse a read-only token, so this "
+                          "Studio notebooks); their APIs refuse a read-only token, so this "
                           "asks for a cloud-platform token (still GET calls only)")
     inv.add_argument("--fixture", help="load a bundled fixture manifest instead of scanning (e.g. 'demo')")
     inv.add_argument("-o", "--output", help="manifest output path (default: ./inventory-<project>-<ts>.json)")

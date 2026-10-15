@@ -5,7 +5,7 @@ Deterministic, so a rebuild only changes the file when this script changes:
     python3 -m gcp_aidp.fixtures.build_demo_manifest
 
 The estate is larger than the `test-estate/` seed and includes services the
-seed cannot create for free (Dataproc, Dataform, Dataflow, Vertex AI),
+seed cannot create for free (Dataproc, Dataform),
 so `inventory`, `plan` and SKIP reporting are tested without paying for them.
 
 Column types use the names the BigQuery `tables.get` API returns (`INTEGER`,
@@ -502,19 +502,6 @@ DATAFORM = {"repositories": [
                        "dependencyTargets": [_t("marketing", "web_events")]}}]},
 ]}
 
-DATAFLOW = {"jobs": [
-    {"id": "2026-09-01_02_00_00-111", "name": "pubsub-orders-to-bq", "job_type": "JOB_TYPE_STREAMING"},
-    {"id": "2026-09-01_03_00_00-222", "name": "gcs-cdn-logs-to-bq", "job_type": "JOB_TYPE_BATCH"},
-    {"id": "2026-09-01_04_00_00-333", "name": "crm-sync", "job_type": "JOB_TYPE_BATCH"},
-]}
-
-VERTEX = {
-    "models": [{"name": "propensity-xgb", "id": "vm-001"}, {"name": "reco-two-tower", "id": "vm-002"}],
-    "endpoints": [{"name": "reco-online", "id": "ve-001"}],
-    "pipelines": [{"name": "propensity-training", "id": "vp-001"}],
-}
-
-
 def build() -> dict:
     tables = _tables()
     bq_items = {
@@ -529,14 +516,12 @@ def build() -> dict:
         "scanned_at": "2026-10-01T09:00:00Z",
         "customer_persona": "Northwind Retail — sample/fixture, no real data",
         "sources_scanned": ["bigquery", "gcs", "dataproc",
-                            "dataform", "dataflow", "vertex"],
+                            "dataform"],
         "sources": {
             "bigquery": {"summary": {k: len(v) for k, v in bq_items.items()}, "items": bq_items},
             "gcs": {"summary": {"buckets": len(GCS_BUCKETS)}, "items": {"buckets": GCS_BUCKETS}},
             "dataproc": {"summary": {k: len(v) for k, v in DATAPROC.items()}, "items": DATAPROC},
             "dataform": {"summary": {k: len(v) for k, v in DATAFORM.items()}, "items": DATAFORM},
-            "dataflow": {"summary": {k: len(v) for k, v in DATAFLOW.items()}, "items": DATAFLOW},
-            "vertex": {"summary": {k: len(v) for k, v in VERTEX.items()}, "items": VERTEX},
         },
     }
 

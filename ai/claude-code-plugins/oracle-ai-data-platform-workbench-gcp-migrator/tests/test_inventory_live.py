@@ -13,7 +13,6 @@ from gcp_aidp.inventory.manifest import (
     ALL_SOURCES,
     BROAD_SCOPE_SOURCES,
     build_manifest,
-    summarize,
 )
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
@@ -75,8 +74,8 @@ RESPONSES = {
     f"https://storage.googleapis.com/storage/v1/b?project={P}":
         {"items": [{"name": "landing-bucket", "location": "US", "storageClass": "STANDARD"}]},
 }
-DISABLED = ("dataproc.googleapis.com", "dataform.googleapis.com", "aiplatform.googleapis.com")
-REFUSED = ("dataflow.googleapis.com",)
+DISABLED = ("dataproc.googleapis.com",)
+REFUSED = ("dataform.googleapis.com",)
 
 
 class FakeClient(GcpClient):
@@ -92,7 +91,7 @@ class FakeClient(GcpClient):
         if any(host in url for host in DISABLED):
             raise GcpError("HTTP 403 SERVICE_DISABLED", status=403, reason="SERVICE_DISABLED")
         if any(host in url for host in REFUSED):
-            raise GcpError("HTTP 403 PERMISSION_DENIED: dataflow.jobs.list", status=403,
+            raise GcpError("HTTP 403 PERMISSION_DENIED: dataform.repositories.list", status=403,
                            reason="PERMISSION_DENIED")
         if key not in RESPONSES:
             raise GcpError(f"HTTP 404 notFound: {key}", status=404, reason="notFound")
@@ -295,8 +294,8 @@ class LiveInventory(unittest.TestCase):
         self.assertTrue(sources["dataproc"]["summary"]["api_disabled"])
         self.assertEqual(sources["dataproc"]["items"],
                          {"clusters": [], "jobs": [], "batches": [], "workflow_templates": [], "schedules": []})
-        self.assertIn("jobs", sources["dataflow"]["summary"]["not_scanned"])  # refused: unknown, not "0"
-        self.assertNotIn("jobs", {k for k, v in sources["dataflow"]["summary"].items() if isinstance(v, int)})
+        self.assertIn("repositories", sources["dataform"]["summary"]["not_scanned"])  # refused: unknown, not "0"
+        self.assertNotIn("repositories", sources["dataform"]["summary"])
         self.assertEqual(sources["gcs"]["items"]["buckets"][0]["name"], "landing-bucket")
 
     def test_metadata_only(self):
@@ -311,7 +310,7 @@ class LiveInventory(unittest.TestCase):
     def test_plan_flags_the_gaps_and_migrate_blocks_legacy_sql(self):
         plan = build_plan(self.manifest)
         self.assertIn("bigquery.saved_queries", plan["scan_errors"])
-        self.assertIn("dataflow.jobs", plan["scan_errors"])
+        self.assertIn("dataform.repositories", plan["scan_errors"])
         with tempfile.TemporaryDirectory() as tmp:
             report = migrate(plan, out_dir=Path(tmp))
         by_id = {r["asset_id"]: r for r in report["results"]}
@@ -325,7 +324,7 @@ class LiveInventory(unittest.TestCase):
         for source in BROAD_SCOPE_SOURCES:
             self.assertIn("--scan-services", m["sources"][source]["summary"]["not_scanned"]["all"])
         self.assertFalse(any(host in call for call in client.calls
-                             for host in ("dataproc", "composer", "dataform", "dataflow", "aiplatform")))  # composer: never called
+                             for host in ("dataproc", "dataform", "composer", "dataflow", "aiplatform")))
         self.assertIn("dataproc.all", build_plan(m)["scan_errors"])
 
     def test_scan_services_uses_a_separate_broader_token(self):
@@ -340,7 +339,7 @@ class LiveInventory(unittest.TestCase):
 
         from unittest import mock
         with mock.patch("gcp_aidp.gcp_client.GcpClient", Recorder):
-            build_manifest(FakeClient(), ("dataflow",), scan_services=True)
+            build_manifest(FakeClient(), ("dataproc",), scan_services=True)
         self.assertEqual(seen, [CLOUD_PLATFORM_SCOPE])
 
     def test_saved_queries_dir(self):
@@ -352,19 +351,15 @@ class LiveInventory(unittest.TestCase):
         self.assertNotIn("saved_queries", bq["summary"]["not_scanned"])
 
 
-class Summary(unittest.TestCase):
-    def test_sources_only_listed_say_so(self):
-        m = {"sources": {"dataform": {"summary": {"repositories": 1}},
-                         "dataflow": {"summary": {"jobs": 0, "api_disabled": True}}}}
-        lines = summarize(m).splitlines()
-        self.assertNotIn("listed only", next(x for x in lines if "dataform" in x))
-        self.assertTrue(next(x for x in lines if "dataflow" in x).endswith("(listed only: not migrated)"))
-
+class OldManifests(unittest.TestCase):
     def test_an_inventory_from_before_0_3_still_plans(self):
-        """Composer was inventoried until 0.3; a manifest that still has it is planned without it."""
+        """Composer, Dataflow and Vertex AI were listed until 0.3; a manifest that still has them plans."""
         m = copy.deepcopy(json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text()))
         m["sources"]["composer"] = {"summary": {"environments": 1}, "items": {"environments": [{"name": "e"}]}}
-        self.assertFalse(any(a["id"].startswith("composer.") for a in build_plan(m)["assets"]))
+        m["sources"]["dataflow"] = {"summary": {"jobs": 1}, "items": {"jobs": [{"id": "j", "name": "n"}]}}
+        m["sources"]["vertex"] = {"summary": {"models": 0}, "items": {"models": []}}
+        self.assertFalse(any(a["id"].split(".")[0] in ("composer", "dataflow", "vertex")
+                             for a in build_plan(m)["assets"]))
 
 
 class Retry(unittest.TestCase):

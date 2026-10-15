@@ -51,8 +51,6 @@ _REQUIRED = {
     "dataproc": {"clusters": ("name",), "jobs": ("id",), "batches": ("id",), "workflow_templates": ("id",),
                  "schedules": ("name", "schedule")},
     "dataform": {"repositories": ("name",)},
-    "dataflow": {"jobs": ("id", "name")},
-    "vertex": {"models": ("id", "name"), "endpoints": ("id", "name"), "pipelines": ("id", "name")},
 }
 assert set(_REQUIRED) == set(ALL_SOURCES)
 
@@ -88,6 +86,10 @@ def job_name(name: str) -> str:
     return slug if re.match(r"[A-Za-z]", slug) else f"q_{slug}"
 
 
+# Sources the inventory listed before 0.3 without migrating them; an old manifest's are ignored.
+_RETIRED = ("composer", "dataflow", "vertex")
+
+
 def _validated_items(manifest: dict) -> tuple[dict[str, dict[str, list[dict]]], dict[str, str]]:
     """(items per source per collection, scan error per source)."""
     if not isinstance(manifest, dict):
@@ -95,7 +97,7 @@ def _validated_items(manifest: dict) -> tuple[dict[str, dict[str, list[dict]]], 
     sources = manifest.get("sources")
     if not isinstance(sources, dict):
         raise ValueError("manifest field 'sources' must be a JSON object")
-    sources = {k: v for k, v in sources.items() if k != "composer"}  # inventoried before 0.3; not planned
+    sources = {k: v for k, v in sources.items() if k not in _RETIRED}
     unknown = sorted(set(sources) - set(ALL_SOURCES))
     if unknown:
         raise ValueError("unsupported manifest source(s): " + ", ".join(unknown))
@@ -532,23 +534,6 @@ def _dataproc(it: dict[str, list[dict]]) -> list[dict]:
 _SINGULAR = {"batches": "batch", "repositories": "repository", "workflow_templates": "workflow_template"}
 
 
-def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
-    """Sources not migrated in this version: one SKIP row per asset."""
-    spec = {  # collection: (source type, target type, version, kind, id field, name field)
-        "dataflow": {"jobs": ("dataflow_job", "none", "later", "code", "id", "name")},
-        "vertex": {"models": ("vertex_model", "none", "later", "code", "id", "name"),
-                   "endpoints": ("vertex_endpoint", "none", "later", "code", "id", "name"),
-                   "pipelines": ("vertex_pipeline", "none", "later", "code", "id", "name")},
-    }[source]
-    out = []
-    for collection, (stype, ttype, version, kind, id_f, name_f) in spec.items():
-        for row in it[collection]:
-            out.append(_skip(f"{source}.{_SINGULAR.get(collection, collection[:-1])}.{row[id_f]}",
-                             kind, version,
-                             {**row, "type": stype}, ttype, row[name_f]))
-    return out
-
-
 def _dataform(it: dict[str, list[dict]]) -> list[dict]:
     """One job per repository; its schedules are recorded in the notes and never applied."""
     out = []
@@ -682,8 +667,6 @@ def build_plan(manifest: dict, *, oci_namespace: str = OCI_NAMESPACE_DEFAULT,
             assets += _dataproc(items[source])
         elif source == "dataform":
             assets += _dataform(items[source])
-        else:
-            assets += _later(source, items[source])
 
     if datasets is not None:
         datasets = _scope_to_datasets(assets, items, datasets)

@@ -101,8 +101,8 @@ gcp-aidp plan $WORK/inv.json --catalog gcp_migration_test --datasets migration_t
 ```
 
 Every call is a metadata `GET` with a read-only token: nothing is queried and
-nothing is billed. Add `--scan-services` to also list Dataproc,
-Dataform, Dataflow and Vertex AI (their APIs refuse a read-only token, so this
+nothing is billed. Add `--scan-services` to also list Dataproc and
+Dataform (their APIs refuse a read-only token, so this
 asks for a broader one; the calls are still GETs). In the sandbox they report
 "API not enabled: none". `$WORK/inv.json` should list:
 

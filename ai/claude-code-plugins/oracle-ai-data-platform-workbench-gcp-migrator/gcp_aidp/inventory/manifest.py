@@ -9,9 +9,9 @@ from gcp_aidp._atomic import write_text_atomic
 
 # Every source the migrator knows about, migrated or not. A source that is
 # only inventoried still appears here so the plan never understates the estate.
-ALL_SOURCES = ("bigquery", "gcs", "dataproc", "dataform", "dataflow", "vertex")
+ALL_SOURCES = ("bigquery", "gcs", "dataproc", "dataform")
 # These APIs refuse a read-only token, so they are scanned only with --scan-services.
-BROAD_SCOPE_SOURCES = ("dataproc", "dataform", "dataflow", "vertex")
+BROAD_SCOPE_SOURCES = ("dataproc", "dataform")
 NEEDS_SCAN_SERVICES = ("this API refuses a read-only token; re-run with --scan-services "
                        "(and give the service account a viewer role for it) to list it")
 
@@ -28,14 +28,12 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
     from gcp_aidp.gcp_client import CLOUD_PLATFORM_SCOPE, GcpClient
     from gcp_aidp.inventory import (
         bigquery,
-        dataflow,
         dataform,
         dataproc,
         gcs,
-        vertex,
     )
 
-    scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "dataform": dataform.scan, "dataflow": dataflow.scan, "vertex": vertex.scan}
+    scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "dataform": dataform.scan}
     data = {}
     for source in sources:
         if source in BROAD_SCOPE_SOURCES and not scan_services:
@@ -109,10 +107,6 @@ def write_manifest(manifest: dict, out_path: str | Path) -> Path:
     return write_text_atomic(out_path, json.dumps(manifest, indent=2, default=str))
 
 
-# Listed so the plan shows what is left to move by hand; nothing from them is migrated.
-LISTED_ONLY = ("dataflow", "vertex")
-
-
 def summarize(manifest: dict) -> str:
     """One-screen summary string for the user."""
     lines = [
@@ -126,8 +120,7 @@ def summarize(manifest: dict) -> str:
             lines.append(f"  {src:10s}  ERROR: {s['error']}")
             continue
         counts = ", ".join(f"{k}={v}" for k, v in s.items() if isinstance(v, int) and not isinstance(v, bool))
-        lines.append(f"  {src:10s}  {counts}" + ("  (API not enabled: none)" if s.get("api_disabled") else "")
-                     + ("  (listed only: not migrated)" if src in LISTED_ONLY else ""))
+        lines.append(f"  {src:10s}  {counts}" + ("  (API not enabled: none)" if s.get("api_disabled") else ""))
         for what, why in (s.get("not_scanned") or {}).items():
             lines.append(f"  {'':10s}  ! {what} not scanned: {why}")
         for w in s.get("warnings") or []:

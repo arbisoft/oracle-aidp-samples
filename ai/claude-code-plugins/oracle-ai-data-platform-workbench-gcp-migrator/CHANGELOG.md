@@ -8,10 +8,11 @@ All notable changes to this project are documented here. Format loosely follows
 Dataform repositories migrate. Built on 0.2.1, below.
 
 ### Removed
-- Composer is no longer inventoried. Real DAGs mostly use operators, templates and
-  sensors that do not translate exactly, so Composer is left out until it can be done
-  well. An inventory from an earlier version that holds a `composer` section is still
-  planned; that section is ignored.
+- Composer, Dataflow and Vertex AI are no longer inventoried. They were listed and
+  planned as SKIP without being migrated; the inventory now covers only what the plugin
+  migrates. Composer DAGs mostly use operators, templates and sensors that do not
+  translate exactly, and Dataflow and Vertex AI are custom code. An inventory from an
+  earlier version that holds those sections still plans; they are ignored.
 
 ### Added
 - Dataform (0.3): each repository is planned as `MIGRATE` and becomes one
