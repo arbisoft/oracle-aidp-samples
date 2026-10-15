@@ -171,6 +171,12 @@ class EveryRuleHasATest(unittest.TestCase):
         guide = Path(__file__).parents[1].joinpath("references", "review-guide.md").read_text()
         self.assertEqual(sorted(r for r in review if f"`{r}`" not in guide), [])
 
+    def test_every_rule_in_code_is_in_a_rule_reference(self):
+        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py") if "fixtures" not in str(p))
+        refs = "".join(p.read_text() for p in (ROOT / "references").glob("*.md") if p.name != "review-guide.md")
+        rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|DF|GS|M|J|P|N|X)\d\d(?:_[A-Z0-9]+)+")
+        self.assertEqual(sorted(r for r in set(rule.findall(code)) if f"`{r}`" not in refs), [])
+
     def test_rule_ids_in_code_appear_in_tests(self):
         rule = re.compile(r"(?<![A-Z0-9])(?:TY|G|D|DF|C|GS|M|J|P|N)\d\d(?:_[A-Z0-9]+)+")
         code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))

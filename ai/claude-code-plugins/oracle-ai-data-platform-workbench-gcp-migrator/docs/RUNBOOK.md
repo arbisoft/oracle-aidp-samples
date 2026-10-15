@@ -209,7 +209,9 @@ Every call is a metadata `GET` made with a `cloud-platform.read-only` token, so
 Google refuses any write. Dataproc and Dataform refuse a
 read-only token, so they are listed only with `--scan-services`. That flag asks for a
 `cloud-platform` token for those services only, which also covers the Cloud Scheduler
-jobs read with Dataproc and the BigQuery Studio notebooks read through Dataform; read-only
+jobs read with Dataproc and the BigQuery Studio notebooks read through Dataform. Dataproc
+and Dataform are regional: they are scanned in `--regions` (default `us-central1`, with a
+warning that no other region was scanned), so list every region your jobs run in. Read-only
 then rests on the client sending GETs only and on the service account's viewer roles. Without it, they are recorded as *not scanned*. For Dataproc, the scan
 also reads the `.py` or `.sql` file each PySpark and Spark SQL job runs from Cloud
 Storage (an object read, at most 1 MB), so it can be translated; JARs are recorded, not

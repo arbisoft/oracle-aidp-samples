@@ -342,6 +342,14 @@ class LiveInventory(unittest.TestCase):
             build_manifest(FakeClient(), ("dataproc",), scan_services=True)
         self.assertEqual(seen, [CLOUD_PLATFORM_SCOPE])
 
+    def test_a_default_region_says_what_it_did_not_scan(self):
+        # A project whose jobs live elsewhere must not read as "no jobs".
+        default = build_manifest(FakeClient(), ("dataproc",), scan_services=True, service_client=FakeClient())
+        self.assertIn("us-central1 only", default["sources"]["dataproc"]["summary"]["warnings"][0])
+        chosen = build_manifest(FakeClient(), ("dataproc",), regions=("us-east4",), scan_services=True,
+                                service_client=FakeClient())
+        self.assertNotIn("warnings", chosen["sources"]["dataproc"]["summary"])
+
     def test_saved_queries_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "Top products.sql").write_text("SELECT 1")

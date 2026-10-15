@@ -73,4 +73,18 @@ column it would carry.
 | `J03_SCHEDULE` | scheduled query | an AIDP job with the schedule as Quartz (UTC), created PAUSED; see [`schedule-translation.md`](schedule-translation.md) |
 | `J01_UNSCHEDULED` | scheduled query | the schedule does not translate exactly: the job is created unscheduled, flagged |
 
-Every statement is `CREATE ... IF NOT EXISTS`: nothing replaces an existing object.
+Every object the plugin defines itself is created with `CREATE ... IF NOT EXISTS`: nothing
+replaces an existing one. Two kinds of statement keep the source's own meaning: a
+procedure's statements (a `CREATE OR REPLACE TABLE` in it stays one, `D08`), and a Dataform
+table, which its job refreshes with `INSERT OVERWRITE` (`DF01`).
+
+## Cloud Storage (`gcp_aidp/migrate/runner.py`)
+
+| Rule | When | Result | Type |
+|---|---|---|---|
+| `GS01_BUCKET_MAP` | an external table's files are in a bucket the plan maps | `gs://bucket/path` → `oci://<oci bucket>@<namespace>/path`, from `--bucket-mapping` (an unmapped bucket keeps its name) | rewrite |
+| `GS01_BUCKET_MAP` | the bucket is not in the plan | the table is not created | flag |
+| `GS02_LOCATION` | the source URI has a wildcard pattern (`*.parquet`) | the `LOCATION` is the folder: Spark reads every file in it | caveat |
+| `GS02_LOCATION` | more than one source URI, or a wildcard in a folder name (`gs://b/*/x.csv`) | not created: a Spark table has one `LOCATION` folder | block |
+| `GS03_TRANSFER` | a bucket in the plan | a transfer spec; `gcp-aidp transfer --apply` copies it (read-only on Cloud Storage, never deletes) | rewrite |
+| `GS03_TRANSFER` | no OCI namespace | set `OCI_NAMESPACE` or `plan --namespace`, then plan and migrate again | flag |

@@ -13,7 +13,7 @@ from pathlib import Path
 from gcp_aidp import __version__
 from gcp_aidp._env import load_dotenv
 from gcp_aidp.dataplane import MIGRATION_JOB
-from gcp_aidp.inventory.manifest import ALL_SOURCES
+from gcp_aidp.inventory.manifest import ALL_SOURCES, DEFAULT_REGIONS
 
 _FIXTURE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -61,8 +61,9 @@ def cmd_inventory(args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001 - reported, never echoing a credential
             print(f"error: cannot authenticate to Google Cloud: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 2
-        regions = tuple(r.strip() for r in args.regions.split(",") if r.strip())
-        print(f"# project={client.project}  regions={','.join(regions)}  (read-only metadata calls)")
+        regions = tuple(r.strip() for r in args.regions.split(",") if r.strip()) if args.regions else None
+        print(f"# project={client.project}  regions={','.join(regions or DEFAULT_REGIONS)}"
+              f"{'' if regions else ' (default)'}  (read-only metadata calls)")
         log = lambda line: print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
         if args.scan_services:
             print("# --scan-services: Dataproc (with its Cloud Scheduler jobs) and Dataform (with BigQuery Studio "
@@ -283,8 +284,9 @@ def build_parser() -> argparse.ArgumentParser:
     inv = sub.add_parser("inventory", help="scan Google Cloud (read-only, metadata only) and emit a manifest")
     inv.add_argument("--project", help="GCP project id (default: $GCP_PROJECT)")
     inv.add_argument("--sources", help=f"comma-separated subset of {','.join(ALL_SOURCES)} (default: all)")
-    inv.add_argument("--regions", default="us-central1",
-                     help="comma-separated regions for Dataproc and Dataform (default: us-central1)")
+    inv.add_argument("--regions",
+                     help="comma-separated regions for Dataproc and Dataform (default: us-central1, with a "
+                          "warning that other regions were not scanned)")
     inv.add_argument("--saved-queries-dir", help="a folder of saved queries exported as .sql files")
     inv.add_argument("--notebooks-dir", help="a folder of BigQuery Studio notebooks exported as .ipynb files")
     inv.add_argument("--scan-services", action="store_true",

@@ -11,6 +11,8 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
 ```
 - `--project`: default `$GCP_PROJECT`. Auth: `GOOGLE_APPLICATION_CREDENTIALS`.
 - `--sources`: subset of `bigquery,gcs,dataproc,dataform`.
+- `--regions`: where Dataproc and Dataform are scanned (default `us-central1`). Without it the
+  inventory warns that other regions were not scanned; ask the user where their jobs run.
 - `--saved-queries-dir`: saved queries exported as `.sql` files, when `--scan-services` cannot read them
   through Dataform.
 - BigQuery Studio notebooks: read through the Dataform API with `--scan-services` (the service

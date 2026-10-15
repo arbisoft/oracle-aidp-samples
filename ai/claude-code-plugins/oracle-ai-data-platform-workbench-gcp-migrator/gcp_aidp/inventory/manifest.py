@@ -16,7 +16,10 @@ NEEDS_SCAN_SERVICES = ("this API refuses a read-only token; re-run with --scan-s
                        "(and give the service account a viewer role for it) to list it")
 
 
-def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
+DEFAULT_REGIONS = ("us-central1",)
+
+
+def build_manifest(client, sources=ALL_SOURCES, *, regions=None,
                    saved_queries_dir: str | None = None, notebooks_dir: str | None = None,
                    scan_services: bool = False,
                    service_client=None, log=None) -> dict:
@@ -33,6 +36,7 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
         gcs,
     )
 
+    defaulted, regions = regions is None, tuple(regions or DEFAULT_REGIONS)
     scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "dataform": dataform.scan}
     data = {}
     for source in sources:
@@ -53,6 +57,10 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
                 if service_client is None:
                     service_client = GcpClient(client.project, scope=CLOUD_PLATFORM_SCOPE)
                 data[source] = scanners[source](service_client, regions=regions)
+                if defaulted:  # nothing says where a project's jobs live: an empty answer must not read as "none"
+                    data[source]["summary"].setdefault("warnings", []).append(
+                        f"scanned in {', '.join(regions)} only (the default); resources in other regions are "
+                        "not listed: pass --regions")
             else:
                 data[source] = scanners[source](client, regions=regions)
         except Exception as exc:  # noqa: BLE001 - recorded in the manifest; the plan shows it at the top

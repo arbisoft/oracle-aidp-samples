@@ -22,6 +22,11 @@ from the `EXPORT DATA` job (`exportDataStatistics.rowCount`), which `export` wri
 the folder on OCI (`…/<table>.rows.json`); `00_diagnose` and the copy read that instead of
 the connector.
 
+| Rule | When | Result | Type |
+|---|---|---|---|
+| `X01_EXPORT_ROUTE` | a table routed to the export (by size, or because the connector cannot read it) | `export --apply` writes Parquet to the staging bucket and copies it to OCI; the copy job loads the files and checks the count | flag: a step to run before the copy job |
+| `X02_NEEDS_EXPORT` | the connector cannot read a column and no `--export-bucket` was given | the table is not copied; listed under *Needs a decision* | block |
+
 ## The steps
 
 ```bash
