@@ -13,10 +13,10 @@ result comes from named rules, and anything it cannot translate safely is flagge
 blocked with the reason, never guessed. The plugin's skills, commands and MCP server are
 optional layers that guide the workflow and help with setup and review.
 
-> **Status:** **v0.2.0**, with 0.2.1 in progress (see [`CHANGELOG.md`](./CHANGELOG.md)).
-> What has run against real systems and what is tested offline only, per area:
-> [`TESTING.md`](./TESTING.md#what-has-run-live-02). 0.3 adds Dataform repositories;
-> BigQuery pipelines are next.
+> **Status:** **v0.2.0** released; 0.2.1 and 0.3 (Dataform repositories) unreleased, see
+> [`CHANGELOG.md`](./CHANGELOG.md). What has run against real systems and what is tested
+> offline only, per area: [`TESTING.md`](./TESTING.md#what-has-run-live-03). BigQuery
+> pipelines are next.
 
 ---
 
