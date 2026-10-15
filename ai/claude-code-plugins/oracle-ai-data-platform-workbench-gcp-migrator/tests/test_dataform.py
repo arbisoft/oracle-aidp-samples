@@ -252,6 +252,7 @@ class Rules(unittest.TestCase):
         job, findings, ok = run(table("t", "SELECT id FROM `proj-123456.s.src`"), declaration("src"), ctx=ctx)
         (task,) = job["tasks"]
         self.assertEqual(task["statements"], [
+            "CREATE SCHEMA IF NOT EXISTS `cat`.`s`",
             "CREATE TABLE IF NOT EXISTS `cat`.`s`.`t` USING DELTA AS\nSELECT id FROM `cat`.`s`.`src`",
             "INSERT OVERWRITE TABLE `cat`.`s`.`t`\nSELECT id FROM `cat`.`s`.`src`"])
         self.assertIn(("DF01_TABLE", "rewrite"), {(f["rule"], f["severity"]) for f in findings})
@@ -262,7 +263,9 @@ class Rules(unittest.TestCase):
 
     def test_DF02_VIEW_reuses_create_view(self):
         job, findings, ok = run(view("v", "SELECT 1 AS x"))
-        self.assertEqual(job["tasks"][0]["statements"], ["CREATE VIEW IF NOT EXISTS `cat`.`s`.`v` AS\nSELECT 1 AS x"])
+        # The schema first: a Dataform schema need not be a migrated dataset.
+        self.assertEqual(job["tasks"][0]["statements"], ["CREATE SCHEMA IF NOT EXISTS `cat`.`s`",
+                                                         "CREATE VIEW IF NOT EXISTS `cat`.`s`.`v` AS\nSELECT 1 AS x"])
         self.assertIn("DF02_VIEW", rules(findings, "rewrite"))
         self.assertTrue(ok)
 
@@ -377,7 +380,7 @@ class Rules(unittest.TestCase):
         job, findings, ok = run(table("t"), view("v", "SELECT x FROM `proj-123456.s.t`", deps=["t"]))
         self.assertIn("G01_REFERENCE", rules(findings, "rewrite"))
         self.assertNotIn("G01_REFERENCE", rules(findings, "flag"))
-        self.assertIn("FROM `cat`.`s`.`t`", job["tasks"][1]["statements"][0])
+        self.assertIn("FROM `cat`.`s`.`t`", job["tasks"][1]["statements"][1])
         self.assertTrue(ok)
         # a name that no action creates is still flagged, as before
         _, findings, ok = run(view("v", "SELECT x FROM `proj-123456.s.nobody`"))
@@ -410,7 +413,7 @@ class DependsOn(unittest.TestCase):
 
     def test_the_target_is_the_plan_catalog_with_the_dataform_schema_and_name(self):
         job, _, _ = run(table("t"))
-        self.assertIn("`cat`.`s`.`t`", job["tasks"][0]["statements"][0])
+        self.assertIn("`cat`.`s`.`t`", job["tasks"][0]["statements"][1])
 
 
 # ── planning ──────────────────────────────────────────────────────────────────

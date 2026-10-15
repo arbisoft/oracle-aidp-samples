@@ -151,12 +151,14 @@ def _translate_action(a: dict, ctx: Context, catalog: str) -> dict:
                                                         "is not translated"))
         if not flagged:
             sql = run(body.get("selectQuery", ""))
+            # A Dataform schema need not be a migrated dataset (it is created when the workflow runs).
+            schema = [ddl.create_schema(catalog, target["schema"])] if target["schema"] else []
             if sql is not None and rtype == "TABLE":
-                rec.update(what="table", statements=list(ddl.materialized_view(target, sql)))
+                rec.update(what="table", statements=schema + list(ddl.materialized_view(target, sql)))
                 fs.append(_f("DF01_TABLE", "rewrite", f"{label}: CREATE TABLE IF NOT EXISTS ... AS, then "
                                                        "INSERT OVERWRITE"))
             elif sql is not None:
-                rec.update(what="view", statements=[ddl.create_view(target, sql)])
+                rec.update(what="view", statements=[*schema, ddl.create_view(target, sql)])
                 fs.append(_f("DF02_VIEW", "rewrite", f"{label}: CREATE VIEW IF NOT EXISTS"))
             if sql is not None and (body.get("partitionExpression") or body.get("clusterExpressions")):
                 fs.append(_f("DF13_LAYOUT", "info", f"{label}: partitionExpression and clusterExpressions are "

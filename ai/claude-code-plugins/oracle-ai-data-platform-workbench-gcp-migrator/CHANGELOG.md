@@ -20,7 +20,8 @@ translate exactly, so it is left out until it can be done well.
   assertions are translated; incremental tables, operations, notebooks and
   other relation types are flagged. If any action is flagged or blocked, no job
   is created for the repository. Schedules are recorded in the job description
-  and never applied.
+  and never applied. Each table and view task first creates its schema, which need not
+  be a migrated dataset (seen live: Dataform's default `dataform` schema).
 - `plan --dataform-repos a,b`: migrate only those Dataform repositories; the
   others stay in the plan as SKIP. Also on the MCP `plan` tool.
 - `migrate` writes one `dataform/<repository>.sql` per repository, and
