@@ -10,7 +10,7 @@ from pathlib import Path
 
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
-from gcp_aidp.publish import PublishError, plan_publish, publish, run
+from gcp_aidp.publish import PublishError, clip_trace, plan_publish, publish, run
 from gcp_aidp.publish.aidp_client import AidpError
 
 DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text())
@@ -126,6 +126,14 @@ class Publish(unittest.TestCase):
         with self.assertRaises(PublishError):
             run(self.out, prefix="ana", client=refused, sleep=lambda s: None, log=lambda m: None)
         self.assertEqual(len(refused.started), 1)  # any other error is not retried
+
+    def test_a_long_error_keeps_both_ends(self):
+        java = "org.apache.spark.sql.AnalysisException: [SCHEMA_NOT_FOUND] x\n" + "\tat frame\n" * 400 + "last line"
+        clipped = clip_trace(java)
+        self.assertTrue(clipped.startswith("org.apache.spark.sql.AnalysisException: [SCHEMA_NOT_FOUND]"))  # Spark: top
+        self.assertTrue(clipped.endswith("last line"))  # Python tracebacks end with the cause
+        self.assertIn("characters left out", clipped)
+        self.assertEqual(clip_trace("short"), "short")
 
     def test_run_follows_the_job_to_the_end(self):
         n = len(json.loads((self.out / "report.json").read_text())["jobs"][0]["tasks"])

@@ -214,6 +214,14 @@ def failure_cause(text: str) -> str:
     return f"{causes[-1][0]}: {causes[-1][1]}" if causes else ""
 
 
+def clip_trace(text: str, keep: int = 1000) -> str:
+    """Both ends of a long error: Spark names the cause at the top of a Java trace, Python at the
+    bottom of a traceback."""
+    if len(text) <= 2 * keep:
+        return text
+    return f"{text[:keep]}\n  ... ({len(text) - 2 * keep} characters left out) ...\n{text[-keep:]}"
+
+
 def readable_failure(output_text: str) -> str:
     """The error text in a task's output (errorTrace, or a cell's ename/evalue), "" if none."""
     try:
@@ -316,7 +324,7 @@ def run(out_dir, *, workspace_key=None, prefix="", job=MIGRATION_JOB, instance_i
                 detail = readable_failure(output)
                 cause = failure_cause(message or "") or failure_cause(output)
                 first = cause or ((message or "").strip().splitlines() or [""])[0]
-                log(f"\n{task_key} {status}: {first}\n{detail[-2000:]}".rstrip())
+                log(f"\n{task_key} {status}: {first}\n{clip_trace(detail)}".rstrip())
     except (AidpError, AidpUnavailable) as exc:
         raise PublishError(str(exc)) from exc
     ok = all(s == "SUCCESS" for _, s, _, _ in tasks)
