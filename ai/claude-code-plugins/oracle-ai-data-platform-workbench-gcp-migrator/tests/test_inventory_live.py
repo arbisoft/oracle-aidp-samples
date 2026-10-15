@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import tempfile
 import unittest
@@ -73,11 +74,9 @@ RESPONSES = {
                               "params": {"query": "SELECT 1"}, "destinationDatasetId": "migration_test"}]},
     f"https://storage.googleapis.com/storage/v1/b?project={P}":
         {"items": [{"name": "landing-bucket", "location": "US", "storageClass": "STANDARD"}]},
-    f"https://dataflow.googleapis.com/v1b3/projects/{P}/jobs:aggregated":
-        {"jobs": [{"id": "j1", "name": "stream", "type": "JOB_TYPE_STREAMING", "location": "us-central1"}]},
 }
 DISABLED = ("dataproc.googleapis.com", "dataform.googleapis.com", "aiplatform.googleapis.com")
-REFUSED = ("composer.googleapis.com",)
+REFUSED = ("dataflow.googleapis.com",)
 
 
 class FakeClient(GcpClient):
@@ -93,7 +92,7 @@ class FakeClient(GcpClient):
         if any(host in url for host in DISABLED):
             raise GcpError("HTTP 403 SERVICE_DISABLED", status=403, reason="SERVICE_DISABLED")
         if any(host in url for host in REFUSED):
-            raise GcpError("HTTP 403 PERMISSION_DENIED: composer.environments.list", status=403,
+            raise GcpError("HTTP 403 PERMISSION_DENIED: dataflow.jobs.list", status=403,
                            reason="PERMISSION_DENIED")
         if key not in RESPONSES:
             raise GcpError(f"HTTP 404 notFound: {key}", status=404, reason="notFound")
@@ -296,10 +295,8 @@ class LiveInventory(unittest.TestCase):
         self.assertTrue(sources["dataproc"]["summary"]["api_disabled"])
         self.assertEqual(sources["dataproc"]["items"],
                          {"clusters": [], "jobs": [], "batches": [], "workflow_templates": [], "schedules": []})
-        self.assertIn("environments", sources["composer"]["summary"]["not_scanned"])
-        # DAGs are found through the environments, so they are not "0": they are unknown.
-        self.assertEqual(sources["composer"]["summary"]["not_scanned"]["dags"], "environments were not scanned")
-        self.assertNotIn("dags", sources["composer"]["summary"])
+        self.assertIn("jobs", sources["dataflow"]["summary"]["not_scanned"])  # refused: unknown, not "0"
+        self.assertNotIn("jobs", {k for k, v in sources["dataflow"]["summary"].items() if isinstance(v, int)})
         self.assertEqual(sources["gcs"]["items"]["buckets"][0]["name"], "landing-bucket")
 
     def test_metadata_only(self):
@@ -314,7 +311,7 @@ class LiveInventory(unittest.TestCase):
     def test_plan_flags_the_gaps_and_migrate_blocks_legacy_sql(self):
         plan = build_plan(self.manifest)
         self.assertIn("bigquery.saved_queries", plan["scan_errors"])
-        self.assertIn("composer.environments", plan["scan_errors"])
+        self.assertIn("dataflow.jobs", plan["scan_errors"])
         with tempfile.TemporaryDirectory() as tmp:
             report = migrate(plan, out_dir=Path(tmp))
         by_id = {r["asset_id"]: r for r in report["results"]}
@@ -328,7 +325,7 @@ class LiveInventory(unittest.TestCase):
         for source in BROAD_SCOPE_SOURCES:
             self.assertIn("--scan-services", m["sources"][source]["summary"]["not_scanned"]["all"])
         self.assertFalse(any(host in call for call in client.calls
-                             for host in ("dataproc", "composer", "dataform", "dataflow", "aiplatform")))
+                             for host in ("dataproc", "composer", "dataform", "dataflow", "aiplatform")))  # composer: never called
         self.assertIn("dataproc.all", build_plan(m)["scan_errors"])
 
     def test_scan_services_uses_a_separate_broader_token(self):
@@ -358,10 +355,16 @@ class LiveInventory(unittest.TestCase):
 class Summary(unittest.TestCase):
     def test_sources_only_listed_say_so(self):
         m = {"sources": {"dataform": {"summary": {"repositories": 1}},
-                         "composer": {"summary": {"environments": 0, "dags": 0, "api_disabled": True}}}}
+                         "dataflow": {"summary": {"jobs": 0, "api_disabled": True}}}}
         lines = summarize(m).splitlines()
         self.assertNotIn("listed only", next(x for x in lines if "dataform" in x))
-        self.assertTrue(next(x for x in lines if "composer" in x).endswith("(listed only: not migrated)"))
+        self.assertTrue(next(x for x in lines if "dataflow" in x).endswith("(listed only: not migrated)"))
+
+    def test_an_inventory_from_before_0_3_still_plans(self):
+        """Composer was inventoried until 0.3; a manifest that still has it is planned without it."""
+        m = copy.deepcopy(json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text()))
+        m["sources"]["composer"] = {"summary": {"environments": 1}, "items": {"environments": [{"name": "e"}]}}
+        self.assertFalse(any(a["id"].startswith("composer.") for a in build_plan(m)["assets"]))
 
 
 class Retry(unittest.TestCase):

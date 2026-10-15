@@ -33,8 +33,6 @@ EXPECTED = {
     "dataproc_cluster": ("REPORT", "0.2"),
     "dataproc_batch": ("MIGRATE", "0.2"),
     "dataproc_workflow_template": ("MIGRATE", "0.2"),
-    "composer_environment": ("SKIP", "later"),
-    "composer_dag": ("SKIP", "later"),
     "dataform_repository": ("MIGRATE", "0.3"),
     "bq_pipeline": ("SKIP", "0.3"),
     "dataflow_job": ("SKIP", "later"),

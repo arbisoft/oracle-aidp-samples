@@ -65,10 +65,10 @@ def inventory(
         project: GCP project id (default: $GCP_PROJECT; ignored if fixture is set).
         fixture: use a bundled fixture (e.g. "demo") instead of live Google Cloud.
         sources: comma-separated subset of the sources to scan (default: all).
-        regions: comma-separated regions for Dataproc, Composer, Dataform and Vertex AI.
+        regions: comma-separated regions for Dataproc, Dataform and Vertex AI.
         saved_queries_dir: a folder of saved queries exported as .sql files.
         notebooks_dir: a folder of BigQuery Studio notebooks exported as .ipynb files.
-        scan_services: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI
+        scan_services: also list Dataproc, Dataform, Dataflow and Vertex AI
             (asks for a cloud-platform token; still GET calls only).
         output: manifest output path.
     """

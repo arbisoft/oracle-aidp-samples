@@ -206,7 +206,7 @@ gcp-aidp inventory --project <project> [--regions us-central1] [--saved-queries-
 ```
 
 Every call is a metadata `GET` made with a `cloud-platform.read-only` token, so
-Google refuses any write. Dataproc, Composer, Dataform, Dataflow and Vertex AI refuse a
+Google refuses any write. Dataproc, Dataform, Dataflow and Vertex AI refuse a
 read-only token, so they are listed only with `--scan-services`. That flag asks for a
 `cloud-platform` token for those services only, which also covers the Cloud Scheduler
 jobs read with Dataproc and the BigQuery Studio notebooks read through Dataform; read-only
@@ -232,7 +232,7 @@ Every asset gets a plan row with one of three actions:
 |---|---|
 | `MIGRATE` | migrated in this version |
 | `REPORT` | inventoried and reported with an effort band; not translated (JavaScript functions, BigQuery ML models, access rules) |
-| `SKIP` | planned for a later version, with the reason (Composer, Dataflow and Vertex AI), a notebook listed but not exported, or outside `--datasets` or `--dataform-repos` |
+| `SKIP` | planned for a later version, with the reason (Dataflow and Vertex AI), a notebook listed but not exported, or outside `--datasets` or `--dataform-repos` |
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate

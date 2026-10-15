@@ -6,7 +6,6 @@
     "bigquery",
     "gcs",
     "dataproc",
-    "composer",
     "dataform",
     "dataflow",
     "vertex"
@@ -1752,7 +1751,7 @@
             "storage_class": "STANDARD"
           },
           {
-            "name": "northwind-composer-dags",
+            "name": "northwind-orchestration",
             "location": "US-CENTRAL1",
             "storage_class": "STANDARD"
           }
@@ -1991,47 +1990,6 @@
               "region": "us-central1",
               "id": "legacy-rollup"
             }
-          }
-        ]
-      }
-    },
-    "composer": {
-      "summary": {
-        "environments": 1,
-        "dags": 6
-      },
-      "items": {
-        "environments": [
-          {
-            "name": "northwind-orchestration",
-            "region": "us-central1",
-            "image_version": "composer-2.9.7-airflow-2.9.3"
-          }
-        ],
-        "dags": [
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "daily_sales_load"
-          },
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "marketing_attribution"
-          },
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "finance_month_end"
-          },
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "logs_compaction"
-          },
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "ml_feature_refresh"
-          },
-          {
-            "environment": "northwind-orchestration",
-            "dag_id": "data_quality_checks"
           }
         ]
       }

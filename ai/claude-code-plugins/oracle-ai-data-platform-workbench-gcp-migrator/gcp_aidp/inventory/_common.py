@@ -13,18 +13,12 @@ from gcp_aidp.gcp_client import GcpError
 GCS = "https://storage.googleapis.com/storage/v1"
 
 
-def _scan(collections: dict[str, Callable[[], list[dict]]], depends: dict[str, str] | None = None) -> dict:
-    """Run each collection's fetch. A collection listed in `depends` is only as
-    scanned as its parent: Composer DAGs are found through the environments."""
+def _scan(collections: dict[str, Callable[[], list[dict]]]) -> dict:
+    """Run each collection's fetch."""
     items: dict[str, list[dict]] = {}
     not_scanned: dict[str, str] = {}
     disabled = False
     for name, fetch in collections.items():
-        parent = (depends or {}).get(name)
-        if parent in not_scanned:
-            items[name] = []
-            not_scanned[name] = f"{parent} were not scanned"
-            continue
         try:
             items[name] = fetch()
         except GcpError as exc:

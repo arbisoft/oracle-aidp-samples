@@ -40,7 +40,7 @@ optional layers that guide the workflow and help with setup and review.
 | BigQuery Studio notebook | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
 | Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | AIDP jobs: a Python task, a SQL notebook, or one job per template; a Cloud Scheduler schedule that starts one is carried, PAUSED |
 | Dataform repository | → | one unscheduled AIDP job, a task per compiled action, with Dataform's dependencies as `dependsOn`; tables, views and assertions only, see `references/dataform-translation.md` |
-| Composer, Dataflow, Vertex AI | → | inventoried, planned for a later version |
+| Dataflow, Vertex AI | → | inventoried, planned for a later version |
 
 ### The flow
 

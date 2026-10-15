@@ -50,7 +50,6 @@ _REQUIRED = {
     "gcs": {"buckets": ("name",)},
     "dataproc": {"clusters": ("name",), "jobs": ("id",), "batches": ("id",), "workflow_templates": ("id",),
                  "schedules": ("name", "schedule")},
-    "composer": {"environments": ("name",), "dags": ("environment", "dag_id")},
     "dataform": {"repositories": ("name",)},
     "dataflow": {"jobs": ("id", "name")},
     "vertex": {"models": ("id", "name"), "endpoints": ("id", "name"), "pipelines": ("id", "name")},
@@ -96,6 +95,7 @@ def _validated_items(manifest: dict) -> tuple[dict[str, dict[str, list[dict]]], 
     sources = manifest.get("sources")
     if not isinstance(sources, dict):
         raise ValueError("manifest field 'sources' must be a JSON object")
+    sources = {k: v for k, v in sources.items() if k != "composer"}  # inventoried before 0.3; not planned
     unknown = sorted(set(sources) - set(ALL_SOURCES))
     if unknown:
         raise ValueError("unsupported manifest source(s): " + ", ".join(unknown))
@@ -535,8 +535,6 @@ _SINGULAR = {"batches": "batch", "repositories": "repository", "workflow_templat
 def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
     """Sources not migrated in this version: one SKIP row per asset."""
     spec = {  # collection: (source type, target type, version, kind, id field, name field)
-        "composer": {"environments": ("composer_environment", "aidp_workflow", "later", "setup", "name", "name"),
-                     "dags": ("composer_dag", "aidp_workflow", "later", "code+setup", "dag_id", "dag_id")},
         "dataflow": {"jobs": ("dataflow_job", "none", "later", "code", "id", "name")},
         "vertex": {"models": ("vertex_model", "none", "later", "code", "id", "name"),
                    "endpoints": ("vertex_endpoint", "none", "later", "code", "id", "name"),
@@ -545,8 +543,7 @@ def _later(source: str, it: dict[str, list[dict]]) -> list[dict]:
     out = []
     for collection, (stype, ttype, version, kind, id_f, name_f) in spec.items():
         for row in it[collection]:
-            prefix = f"{row['environment']}." if collection == "dags" else ""
-            out.append(_skip(f"{source}.{_SINGULAR.get(collection, collection[:-1])}.{prefix}{row[id_f]}",
+            out.append(_skip(f"{source}.{_SINGULAR.get(collection, collection[:-1])}.{row[id_f]}",
                              kind, version,
                              {**row, "type": stype}, ttype, row[name_f]))
     return out

@@ -10,13 +10,13 @@ gcp-aidp inventory [--project ID] [--sources bigquery,gcs,...] [--regions us-cen
                    [--saved-queries-dir DIR] [--scan-services] [--fixture demo] [-o inv.json]
 ```
 - `--project`: default `$GCP_PROJECT`. Auth: `GOOGLE_APPLICATION_CREDENTIALS`.
-- `--sources`: subset of `bigquery,gcs,dataproc,composer,dataform,dataflow,vertex`.
+- `--sources`: subset of `bigquery,gcs,dataproc,dataform,dataflow,vertex`.
 - `--saved-queries-dir`: saved queries exported as `.sql` files, when `--scan-services` cannot read them
   through Dataform.
 - BigQuery Studio notebooks: read through the Dataform API with `--scan-services` (the service
   account needs Dataform Viewer), in every Dataform location. `--notebooks-dir` reads an
   export of `.ipynb` instead. Cell sources are kept, outputs dropped.
-- `--scan-services`: also list Dataproc, Composer, Dataform, Dataflow and Vertex AI, and the
+- `--scan-services`: also list Dataproc, Dataform, Dataflow and Vertex AI, and the
   Cloud Scheduler jobs that start Dataproc (Cloud Scheduler Viewer).
   Their APIs refuse a read-only token, so this uses a `cloud-platform` token for them
   alone (still GET calls only).

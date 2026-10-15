@@ -5,7 +5,7 @@ Deterministic, so a rebuild only changes the file when this script changes:
     python3 -m gcp_aidp.fixtures.build_demo_manifest
 
 The estate is larger than the `test-estate/` seed and includes services the
-seed cannot create for free (Dataproc, Composer, Dataform, Dataflow, Vertex AI),
+seed cannot create for free (Dataproc, Dataform, Dataflow, Vertex AI),
 so `inventory`, `plan` and SKIP reporting are tested without paying for them.
 
 Column types use the names the BigQuery `tables.get` API returns (`INTEGER`,
@@ -319,7 +319,7 @@ GCS_BUCKETS = [
     {"name": "northwind-landing", "location": "US", "storage_class": "STANDARD"},
     {"name": "northwind-logs-archive", "location": "US", "storage_class": "COLDLINE"},
     {"name": "northwind-ml-artifacts", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
-    {"name": "northwind-composer-dags", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
+    {"name": "northwind-orchestration", "location": "US-CENTRAL1", "storage_class": "STANDARD"},
 ]
 
 # Dataproc job definitions, as the inventory groups the run history: the newest run's
@@ -447,16 +447,6 @@ DATAPROC = {
     ],
 }
 
-COMPOSER = {
-    "environments": [{"name": "northwind-orchestration", "region": "us-central1",
-                      "image_version": "composer-2.9.7-airflow-2.9.3"}],
-    "dags": [
-        {"environment": "northwind-orchestration", "dag_id": dag}
-        for dag in ("daily_sales_load", "marketing_attribution", "finance_month_end",
-                    "logs_compaction", "ml_feature_refresh", "data_quality_checks")
-    ],
-}
-
 def _t(schema, name):
     return {"database": PROJECT, "schema": schema, "name": name}
 
@@ -538,13 +528,12 @@ def build() -> dict:
         "project_id": PROJECT,
         "scanned_at": "2026-10-01T09:00:00Z",
         "customer_persona": "Northwind Retail — sample/fixture, no real data",
-        "sources_scanned": ["bigquery", "gcs", "dataproc", "composer",
+        "sources_scanned": ["bigquery", "gcs", "dataproc",
                             "dataform", "dataflow", "vertex"],
         "sources": {
             "bigquery": {"summary": {k: len(v) for k, v in bq_items.items()}, "items": bq_items},
             "gcs": {"summary": {"buckets": len(GCS_BUCKETS)}, "items": {"buckets": GCS_BUCKETS}},
             "dataproc": {"summary": {k: len(v) for k, v in DATAPROC.items()}, "items": DATAPROC},
-            "composer": {"summary": {k: len(v) for k, v in COMPOSER.items()}, "items": COMPOSER},
             "dataform": {"summary": {k: len(v) for k, v in DATAFORM.items()}, "items": DATAFORM},
             "dataflow": {"summary": {k: len(v) for k, v in DATAFLOW.items()}, "items": DATAFLOW},
             "vertex": {"summary": {k: len(v) for k, v in VERTEX.items()}, "items": VERTEX},

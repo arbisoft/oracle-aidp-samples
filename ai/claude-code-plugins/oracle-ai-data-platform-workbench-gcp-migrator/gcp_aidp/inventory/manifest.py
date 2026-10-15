@@ -9,9 +9,9 @@ from gcp_aidp._atomic import write_text_atomic
 
 # Every source the migrator knows about, migrated or not. A source that is
 # only inventoried still appears here so the plan never understates the estate.
-ALL_SOURCES = ("bigquery", "gcs", "dataproc", "composer", "dataform", "dataflow", "vertex")
+ALL_SOURCES = ("bigquery", "gcs", "dataproc", "dataform", "dataflow", "vertex")
 # These APIs refuse a read-only token, so they are scanned only with --scan-services.
-BROAD_SCOPE_SOURCES = ("dataproc", "composer", "dataform", "dataflow", "vertex")
+BROAD_SCOPE_SOURCES = ("dataproc", "dataform", "dataflow", "vertex")
 NEEDS_SCAN_SERVICES = ("this API refuses a read-only token; re-run with --scan-services "
                        "(and give the service account a viewer role for it) to list it")
 
@@ -28,7 +28,6 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
     from gcp_aidp.gcp_client import CLOUD_PLATFORM_SCOPE, GcpClient
     from gcp_aidp.inventory import (
         bigquery,
-        composer,
         dataflow,
         dataform,
         dataproc,
@@ -36,8 +35,7 @@ def build_manifest(client, sources=ALL_SOURCES, *, regions=("us-central1",),
         vertex,
     )
 
-    scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "composer": composer.scan,
-                "dataform": dataform.scan, "dataflow": dataflow.scan, "vertex": vertex.scan}
+    scanners = {"bigquery": bigquery.scan, "gcs": gcs.scan, "dataproc": dataproc.scan, "dataform": dataform.scan, "dataflow": dataflow.scan, "vertex": vertex.scan}
     data = {}
     for source in sources:
         if source in BROAD_SCOPE_SOURCES and not scan_services:
@@ -112,7 +110,7 @@ def write_manifest(manifest: dict, out_path: str | Path) -> Path:
 
 
 # Listed so the plan shows what is left to move by hand; nothing from them is migrated.
-LISTED_ONLY = ("composer", "dataflow", "vertex")
+LISTED_ONLY = ("dataflow", "vertex")
 
 
 def summarize(manifest: dict) -> str:

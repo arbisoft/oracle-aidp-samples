@@ -36,7 +36,6 @@ EXPECTED = {
     "gcs.bucket.northwind-landing": "PASS",             # copied by `transfer`; nothing to set up
     "dataform.repository.northwind-transformations": "PASS",
     "dataform.repository.northwind-events-incremental": "REVIEW",  # DF04: incremental table, no job
-    "composer.environment.northwind-orchestration": "SKIP",
     "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
     "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
     "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged

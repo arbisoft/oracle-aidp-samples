@@ -5,9 +5,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [0.3.0] - unreleased
 
-Dataform repositories migrate. Built on 0.2.1, below. Composer stays inventoried and
-planned as SKIP (later): real DAGs mostly use operators and templates that do not
-translate exactly, so it is left out until it can be done well.
+Dataform repositories migrate. Built on 0.2.1, below.
+
+### Removed
+- Composer is no longer inventoried. Real DAGs mostly use operators, templates and
+  sensors that do not translate exactly, so Composer is left out until it can be done
+  well. An inventory from an earlier version that holds a `composer` section is still
+  planned; that section is ignored.
 
 ### Added
 - Dataform (0.3): each repository is planned as `MIGRATE` and becomes one

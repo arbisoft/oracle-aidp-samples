@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 READ_ONLY_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
-# Dataproc, Composer, Dataform, Dataflow and Vertex AI refuse a read-only token
+# Dataproc, Dataform, Dataflow and Vertex AI refuse a read-only token
 # (ACCESS_TOKEN_SCOPE_INSUFFICIENT). Only `--scan-services` asks for this scope,
 # and only for those services; read-only then rests on this class sending GETs
 # only and on the service account's viewer roles.

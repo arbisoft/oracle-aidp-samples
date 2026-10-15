@@ -9,7 +9,7 @@ other third party by the tool itself.
 
 | Verb | Contacts | Sends |
 |---|---|---|
-| `inventory` | Google Cloud APIs (BigQuery, Cloud Storage, and with `--scan-services` Dataproc, Dataform, Cloud Scheduler, Composer, Dataflow, Vertex AI) | `GET` requests only, signed with your key. It reads metadata, and the code files of Dataproc jobs and the content of BigQuery Studio notebooks. No query runs. |
+| `inventory` | Google Cloud APIs (BigQuery, Cloud Storage, and with `--scan-services` Dataproc, Dataform, Cloud Scheduler, Dataflow, Vertex AI) | `GET` requests only, signed with your key. It reads metadata, and the code files of Dataproc jobs and the content of BigQuery Studio notebooks. No query runs. |
 | `plan`, `migrate`, `verify` | nothing | nothing: they read and write local files only |
 | `export` (dry run) | nothing | nothing |
 | `export --apply` | BigQuery, Cloud Storage, OCI Object Storage | BigQuery jobs that export the planned tables into your staging bucket; then those files, from your bucket to your OCI bucket. Table data moves only between your own buckets |
