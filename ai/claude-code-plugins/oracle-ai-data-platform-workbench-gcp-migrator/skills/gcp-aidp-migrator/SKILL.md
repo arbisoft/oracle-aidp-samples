@@ -102,13 +102,14 @@ gcp-aidp run       migrated                               # runs the published m
 | Scheduled query (no destination) | → | an AIDP job, its schedule as Quartz and PAUSED (unscheduled if it does not translate exactly) |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | copied to Object Storage by `transfer` |
-| SQL UDF | → | flagged: Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN` |
+| SQL UDF | → | arithmetic over numbers: a notebook registering a Python UDF of the same name; any other body flagged (Spark 3.5 cannot parse `CREATE FUNCTION ... RETURN`) |
 | Dataproc PySpark job or batch | → | a job with a Python task running the translated script, its arguments as on Dataproc; a Cloud Scheduler schedule carried PAUSED |
 | Dataproc Spark SQL job | → | a job running its statements in a notebook |
 | Dataproc workflow template | → | one job: steps as tasks, prerequisites as `dependsOn` |
 | BigQuery Studio notebook (through Dataform with `--scan-services`, or exported `.ipynb` with `--notebooks-dir`) | → | an AIDP notebook: `%%bigquery` cells become `spark.sql(...).toPandas()` |
 | SQL table function | → | a notebook defining a Python function that returns a DataFrame, its arguments as Spark named parameters |
 | SQL procedure | → | a notebook: arguments in `PARAMS`, statements in order; procedural logic (`DECLARE`, `IF`, loops) blocked |
+| Dataform repository | → | one unscheduled job: a task per table, view and assertion, Dataform's dependencies as `dependsOn`, after one task that creates the schemas |
 
 Reported, not translated: JavaScript functions, BigQuery ML
 models, row access policies and policy tags, Dataproc clusters (with their sizing), and

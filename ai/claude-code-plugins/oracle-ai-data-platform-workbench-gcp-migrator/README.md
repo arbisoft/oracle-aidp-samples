@@ -34,6 +34,7 @@ optional layers that guide the workflow and help with setup and review.
 | Saved query | → | a Spark SQL file, and a notebook in the workspace that runs it and shows the result (no job) |
 | External table | → | `USING PARQUET/AVRO/ORC/CSV/JSON` over `oci://` |
 | Cloud Storage bucket | → | copied to OCI Object Storage by `transfer` (read-only on Google Cloud, never deletes) |
+| SQL function | → | arithmetic over numbers: a Python UDF of the same name; any other body flagged |
 | SQL table function | → | a notebook defining a Python function that runs its query with the arguments as Spark parameters and returns a DataFrame |
 | SQL procedure (statements only) | → | a notebook: arguments as parameters, statements in order; procedural logic (`DECLARE`, `IF`, loops) is blocked |
 | JavaScript functions, BigQuery ML, access policies | → | reported with an effort band, not translated |
