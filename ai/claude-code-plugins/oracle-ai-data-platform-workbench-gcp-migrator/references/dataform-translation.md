@@ -21,7 +21,10 @@ findings do not stop the job.
 Read-only `GET` calls on the Dataform v1 API, per region: the repositories, each
 one's release configs and workflow configs, and the compilation result to use. That
 is the first enabled release config's `releaseCompilationResult`, otherwise the
-newest compilation result by `createTime`. Its actions come from
+newest compilation result by `createTime`. With several enabled release configs
+(production and staging, say), the first is used and the inventory warns, naming them all:
+check it is the production one. A release config does not recompile when its branch moves:
+compile it again after a push, or the inventory reads the older code. Its actions come from
 `compilationResults.query`, following `nextPageToken`. The migrator never creates a
 compilation result and never starts a workflow.
 

@@ -125,6 +125,16 @@ class Inventory(unittest.TestCase):
         self.assertTrue(repo["compiled_from"].startswith("an enabled release config"))
         self.assertFalse(any(k in x for x in repo["actions"] for k in ("canonicalTarget", "relationDescriptor")))
 
+    def test_two_enabled_release_configs_say_which_one_is_migrated(self):
+        cr = f"{REPO}/compilationResults/c1"
+        both = {"releaseConfigs": [{"name": f"{REPO}/releaseConfigs/staging", "releaseCompilationResult": cr},
+                                   {"name": f"{REPO}/releaseConfigs/prod", "releaseCompilationResult": cr}]}
+        client = FakeDataform(_routes(**{f"{API}/{REPO}/releaseConfigs": both}))
+        out = inventory.scan(client, regions=("us-central1",))
+        repo = out["items"]["repositories"][0]
+        self.assertTrue(repo["compiled_from"].startswith("release config staging, the first of 2 enabled"))
+        self.assertIn("staging is migrated, check it is the production one", out["summary"]["warnings"][0])
+
     def test_schedules_are_recorded_as_text_and_the_disabled_release_config_is_skipped(self):
         repo = _scan()[0]["items"]["repositories"][0]
         self.assertEqual(repo["schedules"], [

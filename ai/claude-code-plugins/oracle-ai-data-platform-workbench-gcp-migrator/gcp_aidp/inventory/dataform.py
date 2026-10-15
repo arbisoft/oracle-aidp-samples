@@ -49,7 +49,8 @@ def _schedule(kind: str, c: dict) -> dict:
             "timeZone": c.get("timeZone", ""), "disabled": str(bool(c.get("disabled"))).lower()}
 
 
-def _repository(client: GcpClient, resource: str, region: str, not_scanned: dict[str, str]) -> dict:
+def _repository(client: GcpClient, resource: str, region: str, not_scanned: dict[str, str],
+                warnings: list[str]) -> dict:
     name = resource.rsplit("/", 1)[-1]
     item = {"name": name, "region": region, "schedules": [], "actions": []}
 
@@ -64,9 +65,14 @@ def _repository(client: GcpClient, resource: str, region: str, not_scanned: dict
     item["schedules"] = ([_schedule("release_config", c) for c in release]
                          + [_schedule("workflow_config", c) for c in workflow])
     try:
-        chosen = next((c["releaseCompilationResult"] for c in release
-                       if not c.get("disabled") and c.get("releaseCompilationResult")), None)
+        enabled = [c for c in release if not c.get("disabled") and c.get("releaseCompilationResult")]
+        chosen = enabled[0]["releaseCompilationResult"] if enabled else None
         item["compiled_from"] = "an enabled release config"
+        if len(enabled) > 1:  # e.g. production and staging: say which code is migrated
+            names = [c["name"].rsplit("/", 1)[-1] for c in enabled]
+            item["compiled_from"] = f"release config {names[0]}, the first of {len(enabled)} enabled"
+            warnings.append(f"{name}: {len(enabled)} enabled release configs ({', '.join(names)}); "
+                            f"{names[0]} is migrated, check it is the production one")
         if chosen is None:
             # ponytail: lists every compilation result to find the newest; fine until a repository holds thousands.
             results = client.pages(f"{API}/{resource}/compilationResults", "compilationResults")
@@ -92,10 +98,11 @@ def _repository(client: GcpClient, resource: str, region: str, not_scanned: dict
 
 def scan(client: GcpClient, *, regions=("us-central1",), **_) -> dict:
     not_scanned: dict[str, str] = {}
+    warnings: list[str] = []
 
     def repositories():
         return _per_region(regions, lambda r: [
-            _repository(client, x["name"], r, not_scanned)
+            _repository(client, x["name"], r, not_scanned, warnings)
             for x in client.pages(f"{API}/projects/{client.project}/locations/{r}/repositories", "repositories")
             # BigQuery Studio notebooks, saved queries and pipelines are Dataform repositories too;
             # the BigQuery source reads them, so they are not counted here.
@@ -103,4 +110,6 @@ def scan(client: GcpClient, *, regions=("us-central1",), **_) -> dict:
     out = _scan({"repositories": repositories})
     if not_scanned:
         out["summary"].setdefault("not_scanned", {}).update(not_scanned)
+    if warnings:
+        out["summary"].setdefault("warnings", []).extend(warnings)
     return out

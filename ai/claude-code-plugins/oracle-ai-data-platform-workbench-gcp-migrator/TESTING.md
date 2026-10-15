@@ -5,7 +5,7 @@ the bundled Northwind Retail fixture. The live passes at the end need a BigQuery
 project and an AIDP workspace.
 
 
-## What has run live (0.2)
+## What has run live (0.3)
 
 Live means run against a real system: a BigQuery sandbox project (no billing) and an
 AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
@@ -17,18 +17,20 @@ AIDP workspace on Spark 3.5.0. Offline means unit and fixture tests only.
 | `inventory`: Dataproc job definitions, serverless batches, workflow templates, cluster config, job code (`--scan-services`) | ✅ built | live on a billed project, two regions: two runs of one script grouped into one definition (newest arguments kept), a Spark SQL job, a workflow template's steps and order, job code read from Cloud Storage, cluster sizing |
 | `inventory` / `plan` / `migrate` / `publish`: BigQuery Studio notebooks, read through the Dataform API (`--scan-services`) or from `--notebooks-dir` | ✅ `%%bigquery` cells to `spark.sql` (`N01`–`N03`), Python cells through the Dataproc rules; translated notebooks uploaded, a notebook with a blocked cell kept local | live: a BigQuery Studio notebook with a SQL cell and a `%%bigquery` cell read through Dataform on a billed project (outputs dropped), translated, published and run on AIDP; an exported notebook through `--notebooks-dir` too |
 | `plan` / `migrate` / `publish`: Dataproc | ✅ PySpark and Spark SQL definitions, batches and workflow templates translated (`P01`–`P11`; `P11`, job Spark properties, offline only) and published as unscheduled AIDP jobs: PySpark as a Python task, Spark SQL as a notebook, templates with their step order; JAR, Hive and other engines and clusters reported | live on AIDP: synthetic and then real Dataproc jobs, inventoried from a live project, translated and run on the migrated tables with the expected counts; a write to a bucket not yet on OCI failed where the plan flagged it |
-| `inventory`: Dataform (`--scan-services`) | ✅ listed for SKIP reporting | offline only |
+| Dataform (0.3): `inventory` (`--scan-services`), `plan`, `migrate`, `publish`, `run` | ✅ tables, views and assertions as one job, `dependsOn` from Dataform's graph (`DF01`–`DF15`) | live on a billed project: a repository's release-config compilation read (7 actions and their dependencies), translated, published and run on AIDP: the table built, its view and 3 assertions passed. The first run showed two tasks creating one schema at once fail; schemas now come from one first task (re-run from a clean schema pending) |
 | `plan` | ✅ built | live, on the sandbox inventory |
-| GoogleSQL → Spark SQL translator | ✅ 28 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 3 translated views created on AIDP |
+| GoogleSQL → Spark SQL translator | ✅ 29 named rules | Spark side on local Spark 3.5.9; BigQuery side by zero-byte probes; 4 translated views created on AIDP, among them `QUALIFY`, `SAFE_DIVIDE`, `TIMESTAMP_TRUNC` and a constant `ST_GEOGPOINT` as WKT (its text checked against BigQuery's `ST_ASTEXT`) |
 | Type mapping and table layout | ✅ built | live: 7 tables created and read back against the plan |
 | Data copy notebooks (`00`–`03`) | ✅ built | live: 7 tables, 293,886 rows, counts matching |
 | Materialized view snapshot | ✅ built | live, inside the migration job; the refresh job on its own offline only |
-| Scheduled-query jobs | ✅ built | offline only (the sandbox has none) |
+| Scheduled-query jobs | ✅ built | live: a billed project's scheduled query published as a PAUSED job; not run |
+| SQL routines: procedures, SQL functions, table functions (`D06`–`D08`, `G25`) | ✅ built | live on AIDP: a procedure's `CREATE OR REPLACE TABLE ... USING DELTA` ran (its totals match the source table); an arithmetic SQL function registered as a Python UDF returned BigQuery's value. Table functions on local Spark only |
 | Schedules: scheduled queries and Cloud Scheduler jobs that start Dataproc, translated to Quartz and created PAUSED (`J01`, `J03`) | ✅ built | live for Cloud Scheduler: four scheduler jobs on a billed project inventoried, two carried onto published AIDP jobs and read back PAUSED as planned, one flagged, one reported; no run started. Scheduled queries offline only. Not yet checked that a schedule fires on time once turned on |
-| External tables, `transfer` (buckets → OCI) | ✅ built | `transfer` shares `export`'s copy, run live; `transfer` itself offline only |
-| Export route for large tables (`plan --export-over-gb`, `export`, the copy notebook loading Parquet) | ✅ built | live on a billed project: 7 tables (20 M rows, `JSON`, `TIME`, `BIGNUMERIC`, arrays, structs) exported by the same BigQuery jobs and copied to OCI, 5,629 files, which `export` then matched by MD5; the generated notebooks loaded them on local Spark 3.5 with the real BigQuery connector, all verified. Not yet: `export --apply` with an export account end to end, and the load on an AIDP cluster |
+| External tables, `transfer` (buckets → OCI) | ✅ built | live: `transfer --apply` copied the files, and `01_structure` created both external tables (Parquet and CSV) once they were on OCI |
+| Export route for large tables (`plan --export-over-gb`, `export`, the copy notebook loading Parquet) | ✅ built | live on a billed project: 7 tables (20 M rows, `JSON`, `TIME`, `BIGNUMERIC`, arrays, structs) exported by the same BigQuery jobs and copied to OCI, 5,629 files, which `export` then matched by MD5; the generated notebooks loaded them on local Spark 3.5 with the real BigQuery connector, all verified. Then end to end on AIDP: `export --apply` with the export account, 50 files (770 MB, MD5-checked) for a 20 M-row table, loaded and counted, and a table the connector cannot read (`INTERVAL`, `RANGE`, `BIGNUMERIC`, `GEOGRAPHY`) loaded and counted against the export's row count |
 | `verify` | ✅ built | offline (it reads the report only) |
-| `publish`, `run` | ✅ built | live: 5 notebooks and 2 unscheduled jobs created; every task of the migration job succeeded |
+| `publish`, `run` | ✅ built | live: 17 notebooks and scripts and 7 jobs created, schedules PAUSED; every task of the migration job succeeded; a job created seconds earlier needed `run`'s retry; a table a scheduled query kept appending to stopped the copy with the fix named |
+| Dataproc jobs on AIDP | ✅ built | live: a PySpark job (connector read → `spark.table`, its argument passed), a Spark SQL job and a two-step workflow template (steps in order) all ran on AIDP |
 | MCP server | ✅ built | offline (needs `mcp`) |
 | Live cell-by-cell execution and repair | 🚧 not built | |
 
