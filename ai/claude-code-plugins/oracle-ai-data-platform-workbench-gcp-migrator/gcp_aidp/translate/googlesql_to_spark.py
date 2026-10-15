@@ -77,6 +77,7 @@ class Context:
     relations: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
     functions: dict[tuple[str, str], tuple[str, str, str]] = field(default_factory=dict)
     columns: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)  # a target's column names
+    column_types: dict[str, set[str]] = field(default_factory=dict)  # column name (lower) → its types in the plan
     buckets: dict[str, str] = field(default_factory=dict)
     namespace: str = "<your-oci-namespace>"
     geography: str = "block"  # the plan's --geography: "wkt" carries GEOGRAPHY as WKT text
@@ -435,7 +436,18 @@ def _wkt_number(v: float) -> str:
     return repr(v).removesuffix(".0")
 
 
-def _functions(s: _Sql, out: list[Finding]) -> set[int]:
+_DATE_TRUNC_UNITS = {"DAY": None, "ISOWEEK": "WEEK", "MONTH": "MM", "QUARTER": "QUARTER", "YEAR": "YEAR"}
+
+
+def _column(s: _Sql, a: int, b: int) -> str:
+    """The column a span names (`c`, `t.c`, `` `t`.`c` ``), else ""."""
+    if not all((s.t(k).kind in ("word", "ident")) if (k - a) % 2 == 0 else s.is_punct(k, ".") for k in range(a, b)) \
+            or (b - a) % 2 == 0:
+        return ""
+    return s.t(b - 1).text.strip("`")
+
+
+def _functions(s: _Sql, out: list[Finding], ctx: Context | None = None) -> set[int]:
     """Function rewrites and flags. Returns indices already reported (exempt from the gate)."""
     seen: set[int] = set()
     # Innermost first: an outer rewrite copies its arguments' text, so an inner
@@ -492,6 +504,21 @@ def _functions(s: _Sql, out: list[Finding]) -> set[int]:
                                    "1000-9999; before that Spark zero-pads ('0005') and BigQuery does not ('5')"))
             else:
                 out.append(Finding("G08_FORMAT_DATE", "flag", "FORMAT_DATE pattern outside the proven set"))
+        elif name == "DATE_TRUNC":
+            part = s.word(args[1][0]) if len(args) == 2 and args[1][1] - args[1][0] == 1 else ""
+            col = _column(s, *args[0]) if args else ""
+            # Exact only on a DATE column: Spark's trunc returns a DATE, as BigQuery does. WEEK
+            # starts on Sunday in BigQuery and Monday in Spark; a TIMESTAMP would change type.
+            types = (ctx.column_types.get(col.lower()) if ctx and col else None) or set()
+            if part in _DATE_TRUNC_UNITS and types == {"DATE"}:
+                expr, unit = s.text(*args[0]), _DATE_TRUNC_UNITS[part]
+                s.replace(j, close + 1, expr if unit is None else f"trunc({expr}, '{unit}')")
+                out.append(Finding("G27_DATE_TRUNC", "rewrite", f"DATE_TRUNC({col}, {part}) on a DATE column → "
+                                   + (col if unit is None else f"trunc({col}, '{unit}')")))
+            else:
+                rule, why = _FLAGGED_CALLS[name]
+                out.append(Finding(rule, "flag", f"{name}: {why}" + (f" ({part} is not exact)" if part == "WEEK" else
+                                   "" if types == {"DATE"} else " (only a DATE column is rewritten)")))
         elif name in _FLAGGED_CALLS:
             rule, why = _FLAGGED_CALLS[name]
             out.append(Finding(rule, "flag", f"{name}: {why}"))
@@ -565,7 +592,7 @@ def translate(sql: str, ctx: Context | None = None) -> Result:
     _literals_and_comments(s, ctx, out)
     exempt = _references(s, ctx, out)
     _cast_types(s, out)
-    exempt |= _functions(s, out)
+    exempt |= _functions(s, out, ctx)
     _gate(s, exempt, out)
     return Result(sql, s.render(), list(dict.fromkeys(out)))
 

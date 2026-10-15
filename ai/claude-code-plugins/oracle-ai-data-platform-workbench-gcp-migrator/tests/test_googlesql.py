@@ -252,6 +252,26 @@ class Blocks(unittest.TestCase):
         self.blocked("SELECT ST_DISTANCE(a, b)", "G18_ML_AI_GEO")
         self.blocked("SELECT ST_GEOGPOINT(1, 2)", "G18_ML_AI_GEO")  # without --geography wkt
 
+    def test_G27_DATE_TRUNC(self):
+        typed = Context(**{**vars(CTX), "column_types": {"order_date": {"DATE"}, "created_at": {"TIMESTAMP"},
+                                                         "d": {"DATE", "TIMESTAMP"}}})
+        for sql, want in [("SELECT DATE_TRUNC(order_date, MONTH) FROM t", "SELECT trunc(order_date, 'MM') FROM t"),
+                          ("SELECT DATE_TRUNC(o.order_date, QUARTER) FROM t o", "SELECT trunc(o.order_date, 'QUARTER') FROM t o"),
+                          ("SELECT DATE_TRUNC(order_date, YEAR) FROM t", "SELECT trunc(order_date, 'YEAR') FROM t"),
+                          ("SELECT DATE_TRUNC(order_date, ISOWEEK) FROM t", "SELECT trunc(order_date, 'WEEK') FROM t"),
+                          ("SELECT DATE_TRUNC(order_date, DAY) FROM t", "SELECT order_date FROM t")]:
+            r = t(sql, typed)
+            self.assertEqual((r.sql, r.status), (want, "ok"), sql)
+            self.assertIn("G27_DATE_TRUNC", rules(r, "rewrite"))
+        # Never guessed: WEEK starts on another day, a TIMESTAMP changes type, a name that is not
+        # a DATE in every table, an expression, a column the plan does not know.
+        for sql in ("SELECT DATE_TRUNC(order_date, WEEK) FROM t", "SELECT DATE_TRUNC(created_at, MONTH) FROM t",
+                    "SELECT DATE_TRUNC(d, MONTH) FROM t", "SELECT DATE_TRUNC(DATE(created_at), MONTH) FROM t",
+                    "SELECT DATE_TRUNC(unknown, MONTH) FROM t"):
+            r = t(sql, typed)
+            self.assertIn("DATE_TRUNC(", r.sql, sql)
+            self.assertIn("G22_SAME_NAME", rules(r, "flag"), sql)
+
     def test_G26_GEOGPOINT_WKT(self):
         wkt = Context(**{**vars(CTX), "geography": "wkt"})
         r = t("SELECT ST_GEOGPOINT(-122.40, 37.8) AS p, ST_GEOGPOINT(1, -2) AS q", wkt)

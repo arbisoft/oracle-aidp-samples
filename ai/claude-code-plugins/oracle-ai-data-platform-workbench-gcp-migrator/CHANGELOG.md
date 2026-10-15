@@ -15,6 +15,10 @@ Dataform repositories migrate. Built on 0.2.1, below.
   earlier version that holds those sections still plans; they are ignored.
 
 ### Added
+- `DATE_TRUNC(col, MONTH|QUARTER|YEAR|ISOWEEK|DAY)` on a column that is a `DATE` in every
+  table of the plan becomes `trunc(col, ...)` (`G27_DATE_TRUNC`), which returns the same
+  `DATE`; `WEEK`, `TIMESTAMP` columns and expressions stay flagged (`G22`). Found by the
+  notebook check: a BigQuery Studio notebook using it failed on AIDP.
 - `check_notebooks`: a job `publish` creates, never scheduled, with one task per migrated
   notebook that BigQuery runs on demand (saved queries, BigQuery Studio notebooks, SQL
   and table functions). `run --job check_notebooks` runs each once and reports every one

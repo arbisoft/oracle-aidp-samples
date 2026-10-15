@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
-from gcp_aidp.translate.googlesql_to_spark import translate
+from gcp_aidp.translate.googlesql_to_spark import Context, translate
 
 DEMO = json.loads((Path(__file__).parents[1] / "gcp_aidp/fixtures/demo-manifest.json").read_text())
 ORDER = ("schemas", "tables", "materialized_views", "views", "saved_queries", "scheduled_queries", "functions")
@@ -107,6 +107,15 @@ class SparkRuntime(unittest.TestCase):
                     self.spark.sql(stmt.replace(f"`{self.catalog}`.", "`spark_catalog`.")).collect()
                     ran += 1
         self.assertGreater(ran, 0)
+
+    def test_G27_DATE_TRUNC_gives_bigquerys_dates(self):
+        # BigQuery: DATE_TRUNC(DATE '2026-02-18', MONTH|QUARTER|YEAR|ISOWEEK|DAY), a Wednesday.
+        ctx = Context(column_types={"d": {"DATE"}})
+        got = []
+        for part in ("MONTH", "QUARTER", "YEAR", "ISOWEEK", "DAY"):
+            sql = translate(f"SELECT DATE_TRUNC(d, {part}) AS x FROM (SELECT DATE '2026-02-18' AS d)", ctx).sql
+            got.append(str(self.spark.sql(sql).first().x))
+        self.assertEqual(got, ["2026-02-01", "2026-01-01", "2026-01-01", "2026-02-16", "2026-02-18"])
 
     def test_G15_QUALIFY_keeps_the_same_rows(self):
         self.spark.sql("CREATE OR REPLACE TEMP VIEW q AS SELECT * FROM VALUES (1, 10, 5), (2, 10, 7), "

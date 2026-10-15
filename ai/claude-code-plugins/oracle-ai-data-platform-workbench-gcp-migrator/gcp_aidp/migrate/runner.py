@@ -78,6 +78,8 @@ def context_from_plan(plan: dict) -> Context:
             ctx.functions[(src["dataset"], src["name"])] = (tgt["catalog"], tgt["schema"], tgt["name"])
         if src.get("type") == "bq_table" and tgt["type"] in _RELATIONS:
             ctx.columns[(tgt["catalog"], tgt["schema"], tgt["name"])] = {c["name"] for c in src.get("columns", [])}
+            for c in src.get("columns", []):
+                ctx.column_types.setdefault(c["name"].lower(), set()).add(str(c.get("type", "")).upper())
         elif tgt["type"] == "oci_bucket":
             ctx.buckets[src["name"]] = tgt["name"]
         elif src["type"] == "dataform_repository":
