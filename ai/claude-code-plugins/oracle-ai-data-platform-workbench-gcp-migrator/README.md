@@ -15,8 +15,8 @@ optional layers that guide the workflow and help with setup and review.
 
 > **Status:** **v0.2.0**, with 0.2.1 in progress (see [`CHANGELOG.md`](./CHANGELOG.md)).
 > What has run against real systems and what is tested offline only, per area:
-> [`TESTING.md`](./TESTING.md#what-has-run-live-02). 0.3 adds Dataform repositories
-> and Composer DAGs (offline-tested); BigQuery pipelines are next; Dataflow and Vertex AI later.
+> [`TESTING.md`](./TESTING.md#what-has-run-live-02). 0.3 adds Dataform repositories;
+> BigQuery pipelines are next; Composer, Dataflow and Vertex AI later.
 
 ---
 
@@ -40,9 +40,7 @@ optional layers that guide the workflow and help with setup and review.
 | BigQuery Studio notebook | → | an AIDP notebook: `%%bigquery` cells run as `spark.sql`, Python cells take the path and connector rules |
 | Dataproc PySpark and Spark SQL jobs, batches, workflow templates | → | AIDP jobs: a Python task, a SQL notebook, or one job per template; a Cloud Scheduler schedule that starts one is carried, PAUSED |
 | Dataform repository | → | one unscheduled AIDP job, a task per compiled action, with Dataform's dependencies as `dependsOn`; tables, views and assertions only, see `references/dataform-translation.md` |
-| Composer DAG file | → | one unscheduled AIDP job, a task per Airflow task, with upstream tasks as `dependsOn`; BigQuery query tasks and empty tasks only, see `references/airflow-translation.md` |
-| Composer environment | → | reported; Airflow itself is not migrated |
-| Dataflow, Vertex AI | → | inventoried, planned for a later version |
+| Composer, Dataflow, Vertex AI | → | inventoried, planned for a later version |
 
 ### The flow
 

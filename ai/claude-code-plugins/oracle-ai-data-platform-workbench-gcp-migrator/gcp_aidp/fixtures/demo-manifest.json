@@ -1998,57 +1998,40 @@
     "composer": {
       "summary": {
         "environments": 1,
-        "dags": 6,
-        "not_scanned": {
-          "code of northwind-orchestration/dags/ml_feature_refresh.py": "HTTP 403 PERMISSION_DENIED: storage.objects.get"
-        }
+        "dags": 6
       },
       "items": {
         "environments": [
           {
             "name": "northwind-orchestration",
             "region": "us-central1",
-            "image_version": "composer-2.9.7-airflow-2.9.3",
-            "dag_prefix": "gs://northwind-composer-dags/dags"
+            "image_version": "composer-2.9.7-airflow-2.9.3"
           }
         ],
         "dags": [
           {
             "environment": "northwind-orchestration",
-            "dag_id": "revenue_rollup",
-            "file": "gs://northwind-composer-dags/dags/revenue_rollup.py",
-            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.operators.empty import EmptyOperator\nfrom airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator\n\ndefault_args = {\"owner\": \"data-eng\", \"email\": [\"data-eng@northwind.example\"], \"retries\": 2}\n\nwith DAG(\n    dag_id=\"revenue_rollup\",\n    schedule=\"0 3 * * *\",\n    start_date=datetime(2026, 1, 1),\n    catchup=False,\n    max_active_runs=1,\n    default_args=default_args,\n) as dag:\n    start = EmptyOperator(task_id=\"start\")\n\n    load_daily = BigQueryInsertJobOperator(\n        task_id=\"load_daily_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.daily_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT order_date, 'orders', SUM(total), COUNT(*), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.orders`\n                    GROUP BY order_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    load_shipped = BigQueryInsertJobOperator(\n        task_id=\"load_shipped_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.weekly_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT order_date, 'shipped', SUM(total), COUNT(*), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.orders`\n                    WHERE status = 'SHIPPED'\n                    GROUP BY order_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    combine = BigQueryInsertJobOperator(\n        task_id=\"combine_revenue\",\n        configuration={\n            \"query\": {\n                \"query\": \"\"\"\n                    INSERT INTO `northwind-analytics-demo.sales.store_revenue`\n                        (report_date, dimension, metric_value, row_count, refreshed_at)\n                    SELECT report_date, 'combined', SUM(metric_value), SUM(row_count), CURRENT_TIMESTAMP()\n                    FROM `northwind-analytics-demo.sales.daily_revenue`\n                    GROUP BY report_date\n                \"\"\",\n                \"useLegacySql\": False,\n            }\n        },\n        location=\"US\",\n    )\n\n    start >> [load_daily, load_shipped] >> combine\n"
+            "dag_id": "daily_sales_load"
           },
           {
             "environment": "northwind-orchestration",
-            "dag_id": "customer_profiles",
-            "file": "gs://northwind-composer-dags/dags/customer_profiles.py",
-            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.providers.google.cloud.operators.dataproc import DataprocSubmitJobOperator\n\nwith DAG(\"customer_profiles\", schedule=\"@daily\", start_date=datetime(2026, 1, 1), catchup=False) as dag:\n    build_profiles = DataprocSubmitJobOperator(\n        task_id=\"build_profiles\",\n        project_id=\"northwind-analytics-demo\",\n        region=\"us-central1\",\n        job={\"placement\": {\"cluster_name\": \"etl-nightly\"}, \"pyspark_job\": {\"main_python_file_uri\": \"gs://northwind-landing/jobs/sessionize.py\"}},\n    )\n"
+            "dag_id": "marketing_attribution"
           },
           {
             "environment": "northwind-orchestration",
-            "dag_id": "regional_exports",
-            "file": "gs://northwind-composer-dags/dags/regional_exports.py",
-            "code": "from datetime import datetime\n\nfrom airflow import DAG\nfrom airflow.operators.empty import EmptyOperator\n\nwith DAG(\"regional_exports\", schedule=\"0 5 * * 1\", start_date=datetime(2026, 1, 1)) as dag:\n    start = EmptyOperator(task_id=\"start\")\n    for region in [\"emea\", \"apac\", \"amer\"]:\n        export = EmptyOperator(task_id=f\"export_{region}\")\n        start >> export\n"
+            "dag_id": "finance_month_end"
           },
           {
             "environment": "northwind-orchestration",
-            "dag_id": "month_end_close",
-            "file": "gs://northwind-composer-dags/dags/month_end_close.py",
-            "code": "from airflow import DAG\n\nwith DAG(\"month_end_close\", schedule=\"0 6 1 * *\"\n    close = None\n"
+            "dag_id": "logs_compaction"
           },
           {
             "environment": "northwind-orchestration",
-            "dag_id": "common_settings",
-            "file": "gs://northwind-composer-dags/dags/common_settings.py",
-            "code": "\"\"\"Shared constants for the DAG files in this folder.\"\"\"\n\nPROJECT = \"northwind-analytics-demo\"\nREGION = \"us-central1\"\n"
+            "dag_id": "ml_feature_refresh"
           },
           {
             "environment": "northwind-orchestration",
-            "dag_id": "ml_feature_refresh",
-            "file": "gs://northwind-composer-dags/dags/ml_feature_refresh.py",
-            "code": "",
-            "code_not_scanned": "HTTP 403 PERMISSION_DENIED: storage.objects.get"
+            "dag_id": "data_quality_checks"
           }
         ]
       }

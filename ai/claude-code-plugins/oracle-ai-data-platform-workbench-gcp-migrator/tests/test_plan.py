@@ -33,8 +33,8 @@ EXPECTED = {
     "dataproc_cluster": ("REPORT", "0.2"),
     "dataproc_batch": ("MIGRATE", "0.2"),
     "dataproc_workflow_template": ("MIGRATE", "0.2"),
-    "composer_environment": ("REPORT", "0.3"),
-    "composer_dag": ("MIGRATE", "0.3"),
+    "composer_environment": ("SKIP", "later"),
+    "composer_dag": ("SKIP", "later"),
     "dataform_repository": ("MIGRATE", "0.3"),
     "bq_pipeline": ("SKIP", "0.3"),
     "dataflow_job": ("SKIP", "later"),
@@ -218,9 +218,7 @@ class FailClosed(unittest.TestCase):
     def test_scan_error_is_carried_into_the_plan(self):
         m = copy.deepcopy(DEMO)
         m["sources"]["gcs"] = {"summary": {"error": "403 storage.buckets.list"}, "items": {}}
-        errors = build_plan(m)["scan_errors"]
-        self.assertEqual(errors["gcs"], "403 storage.buckets.list")
-        self.assertEqual(sorted(errors), ["composer.code of northwind-orchestration/dags/ml_feature_refresh.py", "gcs"])
+        self.assertEqual(build_plan(m)["scan_errors"], {"gcs": "403 storage.buckets.list"})
 
     def test_bucket_name_that_is_not_a_gcs_name_fails_closed(self):
         # The name goes into API calls and file paths.

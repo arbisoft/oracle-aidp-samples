@@ -447,134 +447,15 @@ DATAPROC = {
     ],
 }
 
-_BUCKET = "gs://northwind-composer-dags/dags"
-
-# DAG files as the environment's bucket holds them. Written for this fixture; Airflow is never imported.
-_DAG_REVENUE = '''from datetime import datetime
-
-from airflow import DAG
-from airflow.operators.empty import EmptyOperator
-from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
-
-default_args = {"owner": "data-eng", "email": ["data-eng@northwind.example"], "retries": 2}
-
-with DAG(
-    dag_id="revenue_rollup",
-    schedule="0 3 * * *",
-    start_date=datetime(2026, 1, 1),
-    catchup=False,
-    max_active_runs=1,
-    default_args=default_args,
-) as dag:
-    start = EmptyOperator(task_id="start")
-
-    load_daily = BigQueryInsertJobOperator(
-        task_id="load_daily_revenue",
-        configuration={
-            "query": {
-                "query": """
-                    INSERT INTO `northwind-analytics-demo.sales.daily_revenue`
-                        (report_date, dimension, metric_value, row_count, refreshed_at)
-                    SELECT order_date, 'orders', SUM(total), COUNT(*), CURRENT_TIMESTAMP()
-                    FROM `northwind-analytics-demo.sales.orders`
-                    GROUP BY order_date
-                """,
-                "useLegacySql": False,
-            }
-        },
-        location="US",
-    )
-
-    load_shipped = BigQueryInsertJobOperator(
-        task_id="load_shipped_revenue",
-        configuration={
-            "query": {
-                "query": """
-                    INSERT INTO `northwind-analytics-demo.sales.weekly_revenue`
-                        (report_date, dimension, metric_value, row_count, refreshed_at)
-                    SELECT order_date, 'shipped', SUM(total), COUNT(*), CURRENT_TIMESTAMP()
-                    FROM `northwind-analytics-demo.sales.orders`
-                    WHERE status = 'SHIPPED'
-                    GROUP BY order_date
-                """,
-                "useLegacySql": False,
-            }
-        },
-        location="US",
-    )
-
-    combine = BigQueryInsertJobOperator(
-        task_id="combine_revenue",
-        configuration={
-            "query": {
-                "query": """
-                    INSERT INTO `northwind-analytics-demo.sales.store_revenue`
-                        (report_date, dimension, metric_value, row_count, refreshed_at)
-                    SELECT report_date, 'combined', SUM(metric_value), SUM(row_count), CURRENT_TIMESTAMP()
-                    FROM `northwind-analytics-demo.sales.daily_revenue`
-                    GROUP BY report_date
-                """,
-                "useLegacySql": False,
-            }
-        },
-        location="US",
-    )
-
-    start >> [load_daily, load_shipped] >> combine
-'''
-
-_DAG_PROFILES = '''from datetime import datetime
-
-from airflow import DAG
-from airflow.providers.google.cloud.operators.dataproc import DataprocSubmitJobOperator
-
-with DAG("customer_profiles", schedule="@daily", start_date=datetime(2026, 1, 1), catchup=False) as dag:
-    build_profiles = DataprocSubmitJobOperator(
-        task_id="build_profiles",
-        project_id="northwind-analytics-demo",
-        region="us-central1",
-        job={"placement": {"cluster_name": "etl-nightly"}, "pyspark_job": {"main_python_file_uri": "gs://northwind-landing/jobs/sessionize.py"}},
-    )
-'''
-
-_DAG_PARTITIONS = '''from datetime import datetime
-
-from airflow import DAG
-from airflow.operators.empty import EmptyOperator
-
-with DAG("regional_exports", schedule="0 5 * * 1", start_date=datetime(2026, 1, 1)) as dag:
-    start = EmptyOperator(task_id="start")
-    for region in ["emea", "apac", "amer"]:
-        export = EmptyOperator(task_id=f"export_{region}")
-        start >> export
-'''
-
-_DAG_BROKEN = '''from airflow import DAG
-
-with DAG("month_end_close", schedule="0 6 1 * *"
-    close = None
-'''
-
-_HELPERS = '''"""Shared constants for the DAG files in this folder."""
-
-PROJECT = "northwind-analytics-demo"
-REGION = "us-central1"
-'''
-
 COMPOSER = {
     "environments": [{"name": "northwind-orchestration", "region": "us-central1",
-                      "image_version": "composer-2.9.7-airflow-2.9.3", "dag_prefix": _BUCKET}],
+                      "image_version": "composer-2.9.7-airflow-2.9.3"}],
     "dags": [
-        {"environment": "northwind-orchestration", "dag_id": dag_id, "file": f"{_BUCKET}/{dag_id}.py", "code": code}
-        for dag_id, code in (("revenue_rollup", _DAG_REVENUE), ("customer_profiles", _DAG_PROFILES),
-                             ("regional_exports", _DAG_PARTITIONS), ("month_end_close", _DAG_BROKEN),
-                             ("common_settings", _HELPERS))
-    ] + [{"environment": "northwind-orchestration", "dag_id": "ml_feature_refresh",
-          "file": f"{_BUCKET}/ml_feature_refresh.py", "code": "",
-          "code_not_scanned": "HTTP 403 PERMISSION_DENIED: storage.objects.get"}],
+        {"environment": "northwind-orchestration", "dag_id": dag}
+        for dag in ("daily_sales_load", "marketing_attribution", "finance_month_end",
+                    "logs_compaction", "ml_feature_refresh", "data_quality_checks")
+    ],
 }
-COMPOSER_NOT_SCANNED = {"code of northwind-orchestration/dags/ml_feature_refresh.py":
-                        "HTTP 403 PERMISSION_DENIED: storage.objects.get"}
 
 def _t(schema, name):
     return {"database": PROJECT, "schema": schema, "name": name}
@@ -663,8 +544,7 @@ def build() -> dict:
             "bigquery": {"summary": {k: len(v) for k, v in bq_items.items()}, "items": bq_items},
             "gcs": {"summary": {"buckets": len(GCS_BUCKETS)}, "items": {"buckets": GCS_BUCKETS}},
             "dataproc": {"summary": {k: len(v) for k, v in DATAPROC.items()}, "items": DATAPROC},
-            "composer": {"summary": {**{k: len(v) for k, v in COMPOSER.items()},
-                                     "not_scanned": COMPOSER_NOT_SCANNED}, "items": COMPOSER},
+            "composer": {"summary": {k: len(v) for k, v in COMPOSER.items()}, "items": COMPOSER},
             "dataform": {"summary": {k: len(v) for k, v in DATAFORM.items()}, "items": DATAFORM},
             "dataflow": {"summary": {k: len(v) for k, v in DATAFLOW.items()}, "items": DATAFLOW},
             "vertex": {"summary": {k: len(v) for k, v in VERTEX.items()}, "items": VERTEX},

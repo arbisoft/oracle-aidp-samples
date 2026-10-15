@@ -244,13 +244,6 @@ def assertion_notebook(title: str, query: str, plan_id: str) -> dict:
     return nb
 
 
-def noop_notebook(title: str, plan_id: str) -> dict:
-    """A notebook that does nothing: the task behind an empty Airflow operator."""
-    nb = sql_notebook(title, [], plan_id)
-    nb["cells"].append(_cell("code", "print('no-op task: nothing to run')"))
-    return nb
-
-
 def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
     """The AIDP jobs `publish` creates, with their task notebooks written here. A job whose
     source schedule translated carries it; `publish` creates it PAUSED.
@@ -259,8 +252,8 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
     start the whole copy at once: diagnose, structure, one copy task per
     dataset, each materialized view's snapshot, reconcile. Each materialized
     view and scheduled query also gets a job of its own, and so does each
-    Dataform repository and Composer DAG: a result whose job carries `tasks` (taskKey,
-    statements, assertion, noop, dependsOn) gets one notebook per task. Notebook
+    Dataform repository: a result whose job carries `tasks` (taskKey,
+    statements, assertion, dependsOn) gets one notebook per task. Notebook
     paths are relative to `out_dir`; `publish` maps them to the workspace.
     """
     from gcp_aidp._atomic import write_text_atomic
@@ -275,16 +268,14 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
         job = r.get("job")
         if not job or r.get("status") not in ("ok", "needs_manual_review"):
             continue
-        if "tasks" in job:  # multi-task: Dataproc steps (key), Dataform actions and Composer tasks (taskKey)
+        if "tasks" in job:  # multi-task: Dataproc steps (key), Dataform actions (taskKey)
             tasks = []
             for t in job["tasks"]:
                 if "python_file" in t:
                     out = {"taskKey": job_name(t["key"]), "python_file": t["python_file"], "arguments": t["arguments"]}
                 elif "taskKey" in t:
                     rel = f"notebooks/jobs/{job['name']}__{t['taskKey']}.ipynb"
-                    if t.get("noop"):
-                        nb = noop_notebook(t["title"], dp["plan_id"])
-                    elif t.get("assertion"):
+                    if t.get("assertion"):
                         nb = assertion_notebook(t["title"], t["statements"][0], dp["plan_id"])
                     else:
                         nb = sql_notebook(t["title"], t["statements"], dp["plan_id"])

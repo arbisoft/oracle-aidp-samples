@@ -37,9 +37,6 @@ EXPECTED = {
     "dataform.repository.northwind-transformations": "PASS",
     "dataform.repository.northwind-events-incremental": "REVIEW",  # DF04: incremental table, no job
     "composer.environment.northwind-orchestration": "SKIP",
-    "composer.dag.northwind-orchestration.revenue_rollup": "PASS",
-    "composer.dag.northwind-orchestration.customer_profiles": "REVIEW",  # C90: a Dataproc operator, no job
-    "composer.dag.northwind-orchestration.month_end_close": "REVIEW",    # C93: does not parse
     "dataproc.cluster.etl-nightly": "SKIP",             # reported, with its sizing
     "dataproc.job.us-central1/etl-nightly/sessionize.py": "PASS",    # BigQuery read + gs:// paths rewritten
     "dataproc.job.us-central1/etl-nightly/dedupe_events.py": "REVIEW",  # BigQuery write flagged
@@ -190,14 +187,6 @@ class EveryRuleHasATest(unittest.TestCase):
         reference = (ROOT / "references/dataform-translation.md").read_text()
         ids = set(rule.findall(code))
         self.assertEqual(len(ids), 15)
-        self.assertEqual(sorted(i for i in ids if f"| `{i}` |" not in reference), [])
-
-    def test_composer_rules_have_a_row_in_the_reference(self):
-        rule = re.compile(r"(?<![A-Z0-9])C\d\d(?:_[A-Z0-9]+)+")
-        code = "".join(p.read_text() for p in (ROOT / "gcp_aidp").rglob("*.py"))
-        reference = (ROOT / "references/airflow-translation.md").read_text()
-        ids = set(rule.findall(code))
-        self.assertEqual(len(ids), 17)
         self.assertEqual(sorted(i for i in ids if f"| `{i}` |" not in reference), [])
 
 

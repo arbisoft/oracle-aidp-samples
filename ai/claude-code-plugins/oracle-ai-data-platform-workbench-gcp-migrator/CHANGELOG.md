@@ -5,25 +5,11 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [0.3.0] - unreleased
 
-Dataform repositories and Composer DAGs migrate. Built on 0.2.1, below.
+Dataform repositories migrate. Built on 0.2.1, below. Composer stays inventoried and
+planned as SKIP (later): real DAGs mostly use operators and templates that do not
+translate exactly, so it is left out until it can be done well.
 
 ### Added
-- Composer (0.3): each DAG file is planned as `MIGRATE` and becomes one
-  unscheduled AIDP job, one task per Airflow task, with upstream tasks as
-  `dependsOn`. `inventory` now reads each DAG file's text from the environment's
-  bucket (Cloud Storage object read, `GET` only, 1 MB cap); a file it cannot read
-  is kept and recorded as *not scanned*. The manifest and the plan therefore hold
-  DAG source code: do not commit them. The file is parsed with `ast` and is never
-  imported, executed or evaluated. Only `BigQueryInsertJobOperator` with a
-  literal query, `EmptyOperator`/`DummyOperator` and plain dependencies are
-  translated; every other operator, loop, decorator or non-literal value is
-  flagged by name and no job is created for that DAG. Rules `C01`–`C06` and
-  `C89`–`C99`, in `references/airflow-translation.md`. Schedules are recorded in
-  the job description and never applied. Composer environments are `REPORT` rows.
-- `plan --dags a,b`: migrate only those DAGs, in any environment; the others stay
-  in the plan as SKIP. Also on the MCP `plan` tool.
-- `migrate` writes one `composer/<environment>.<dag>.sql` per DAG; a task that
-  does nothing gets a no-op notebook.
 - Dataform (0.3): each repository is planned as `MIGRATE` and becomes one
   unscheduled AIDP job, with one task per compiled action and Dataform's
   dependencies as `dependsOn`. `inventory` reads each repository's release and

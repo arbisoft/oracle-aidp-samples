@@ -35,10 +35,10 @@ def _client(response) -> tuple[GcpClient, _Session]:
 @unittest.skipIf(importlib.util.find_spec("requests") is None, "needs requests (pip install -e .)")
 class GetText(unittest.TestCase):
     def test_returns_the_raw_body_and_sends_a_get_with_the_params(self):
-        client, session = _client(_Response(200, "import airflow\nwith DAG('x'):\n    pass\n"))
-        text = client.get_text("https://storage.googleapis.com/storage/v1/b/b/o/dag.py", {"alt": "media"})
-        self.assertEqual(text, "import airflow\nwith DAG('x'):\n    pass\n")
-        self.assertEqual(session.calls, [("https://storage.googleapis.com/storage/v1/b/b/o/dag.py",
+        client, session = _client(_Response(200, "from pyspark.sql import SparkSession\nprint('job')\n"))
+        text = client.get_text("https://storage.googleapis.com/storage/v1/b/b/o/job.py", {"alt": "media"})
+        self.assertEqual(text, "from pyspark.sql import SparkSession\nprint('job')\n")
+        self.assertEqual(session.calls, [("https://storage.googleapis.com/storage/v1/b/b/o/job.py",
                                           {"alt": "media"}, 7)])
 
     def test_an_error_status_raises_like_get(self):

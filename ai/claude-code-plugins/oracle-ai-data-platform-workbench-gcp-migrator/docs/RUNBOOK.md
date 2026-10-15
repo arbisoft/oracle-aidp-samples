@@ -232,7 +232,7 @@ Every asset gets a plan row with one of three actions:
 |---|---|
 | `MIGRATE` | migrated in this version |
 | `REPORT` | inventoried and reported with an effort band; not translated (JavaScript functions, BigQuery ML models, access rules) |
-| `SKIP` | planned for a later version, with the reason (Dataflow and Vertex AI), a notebook listed but not exported, or outside `--datasets`, `--dataform-repos` or `--dags` |
+| `SKIP` | planned for a later version, with the reason (Composer, Dataflow and Vertex AI), a notebook listed but not exported, or outside `--datasets` or `--dataform-repos` |
 
 **What you choose at `plan`:** the target catalog (`--catalog`, default: the project
 id), the OCI namespace for buckets (`--namespace`), the datasets to migrate
@@ -247,10 +247,7 @@ estate, and its first lines say which datasets are in scope. A view that reads a
 table in an excluded dataset is flagged. Tables within a dataset are not chosen
 here: the copy notebook takes a `tables` parameter for a partial run.
 
-`--dataform-repos a,b` does the same for Dataform repositories, and `--dags a,b` for
-Composer DAGs, matched by DAG id in any environment. The inventory reads each DAG file
-as text and never runs it, so the inventory then contains DAG source code and the plan
-carries it too. Treat both as sensitive and do not commit them.
+`--dataform-repos a,b` does the same for Dataform repositories.
 
 Two assets that would land on the same target name (compared case-insensitively,
 as Spark does) halt the plan. The planner does not pick a winner.
@@ -397,6 +394,6 @@ need one: its translated Dataproc jobs and notebooks ran on AIDP as written.
 - 0.2.1: source schedules carried onto AIDP jobs, PAUSED (scheduled queries and Cloud
   Scheduler jobs that start Dataproc); Dataproc job Spark properties; the export route for
   large tables (`export`). Still to come: Spark JAR jobs, once an AIDP `JAR_TASK` is proven.
-- 0.3: Composer (Airflow DAGs → AIDP workflows), Dataform and BigQuery pipelines.
-- Later: Dataflow and Vertex AI.
+- 0.3: Dataform repositories; BigQuery pipelines next.
+- Later: Composer (Airflow DAGs), Dataflow and Vertex AI.
 - Under consideration: an execute-check-fix pass for migrated code.
