@@ -103,7 +103,8 @@ def plan_publish(out_dir, *, prefix="", workspace_root=DEFAULT_WORKSPACE_ROOT, c
                 task.update(type="PYTHON_TASK", filePath=path,
                             commandLineArguments=repr([path, *t.get("arguments", [])]))
             else:
-                if not t["notebook"].startswith("notebooks/jobs/"):  # the data-plane notebooks keep their reports here
+                if t["notebook"].startswith("notebooks/") and not t["notebook"].startswith("notebooks/jobs/"):
+                    # the data-plane notebooks keep their reports here
                     parameters.append({"name": "reports_dir", "value": f"{folder}/reports"})
                 task.update(type="NOTEBOOK_TASK", notebookPath=remote_of[t["notebook"]])
             if parameters:

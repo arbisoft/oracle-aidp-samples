@@ -28,5 +28,11 @@ different flags to make it green.
 
 `--job` runs another of the migration's jobs: a Dataproc job (its name is in the
 `publish` dry run, e.g. `etl_nightly_sessionize_py`), a template's job, or a
-materialized view's refresh job. `MIGRATION_REPORT.md` exists only after the migration
-job.
+materialized view's refresh job, a Dataform repository's job, or `check_notebooks`.
+`MIGRATION_REPORT.md` exists only after the migration job.
+
+`--job check_notebooks` runs every migrated notebook that BigQuery runs on demand (saved
+queries, BigQuery Studio notebooks, SQL and table functions) once, each as its own task,
+and lists the ones that fail with their error. Procedures are left out: they change data,
+so the user runs them by hand. Suggest it after the migration job, to prove the notebooks
+work on the migrated data.

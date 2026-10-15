@@ -318,7 +318,14 @@ pip install aidp-cli            # provides `aidp`; a venv keeps it apart from oc
 gcp-aidp publish migrated       # dry run: lists what would be created, sends nothing
 gcp-aidp publish migrated --apply
 gcp-aidp run migrated           # starts <prefix>_gcp_aidp_migration and polls it
+gcp-aidp run migrated --job check_notebooks   # then runs every migrated notebook once
 ```
+
+Saved queries, BigQuery Studio notebooks and SQL and table functions run on demand in
+BigQuery, so they are migrated as notebooks with no job of their own. `publish` also creates
+`<prefix>_check_notebooks`, one task per such notebook and never scheduled: run it after
+the copy, and it reports each notebook that fails on the migrated data. Procedures are
+not in it: they change data, so run each one by hand.
 
 `publish` uploads the notebooks to `/Workspace/<prefix>/` and creates the jobs,
 unscheduled or with their source schedule PAUSED; it never overwrites. It needs [Setup, step 3](#3-this-machine). The CLI

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from gcp_aidp.migrate import IN_PROGRESS_MARKER, migrate
 from gcp_aidp.plan import build_plan
+from gcp_aidp.publish import plan_publish
 from gcp_aidp.verify import verify
 
 ROOT = Path(__file__).parents[1]
@@ -63,11 +64,26 @@ class Demo(unittest.TestCase):
         self.assertEqual(self.result["summary"]["FAIL"], 0)
         self.assertEqual(sum(self.result["summary"].values()), len(self.report["results"]))
 
+    def test_the_check_job_runs_each_on_demand_notebook_once_and_leaves_procedures_out(self):
+        check = next(j for j in self.report["jobs"] if j["name"] == "check_notebooks")
+        kinds = {r["notebook"]: r["kind"] for r in self.report["results"] if r.get("notebook")}
+        checked = {kinds[t["notebook"]] for t in check["tasks"]}
+        self.assertTrue({"bq_saved_query", "bq_notebook"} <= checked)
+        self.assertNotIn("bq_procedure", checked)  # it changes data: a person runs it
+        self.assertFalse(any(t.get("dependsOn") for t in check["tasks"]))  # each runs on its own; one failing stops none
+        self.assertNotIn("schedule", check)
+        defn = next(j["definition"] for j in plan_publish(self.out, prefix="p", cluster_key="ck")["jobs"]
+                    if j["name"] == "p_check_notebooks")
+        self.assertFalse(any("parameters" in t for t in defn["tasks"]))  # reports_dir is the data-plane notebooks'
+
     def test_a_saved_query_is_published_as_a_notebook_that_shows_its_result(self):
         by_id = {r["asset_id"]: r for r in self.report["results"]}
         top = by_id["bigquery.saved_query.Top_products_last_30_days"]
-        self.assertIn(top["notebook"], self.report["notebooks"])  # publish uploads it; no job runs it
-        self.assertFalse(any(t.get("notebook") == top["notebook"] for j in self.report["jobs"] for t in j["tasks"]))
+        self.assertIn(top["notebook"], self.report["notebooks"])  # publish uploads it once
+        self.assertEqual(self.report["notebooks"].count(top["notebook"]), 1)
+        # Only the check job runs it, when someone starts it: it has no schedule of its own.
+        self.assertEqual({j["name"] for j in self.report["jobs"] for t in j["tasks"] if t.get("notebook") == top["notebook"]},
+                         {"check_notebooks"})
         cells = json.loads((self.out / top["notebook"]).read_text())["cells"]
         code = "".join(cells[-1]["source"])
         self.assertTrue(code.startswith("spark.sql(") and code.endswith(".toPandas()"), code)

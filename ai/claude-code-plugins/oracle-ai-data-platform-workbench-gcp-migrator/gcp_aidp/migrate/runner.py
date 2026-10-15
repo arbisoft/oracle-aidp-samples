@@ -560,7 +560,8 @@ def migrate(plan: dict, *, out_dir: Path, log: Callable[[str], None] | None = No
     notebooks = write_notebooks(dp, out_dir)
     jobs = write_jobs(dp, results, out_dir)
     notebooks += sorted({t["notebook"] for j in jobs for t in j["tasks"] if "notebook" in t} - set(notebooks))
-    notebooks += [r["notebook"] for r in results if r.get("notebook")]  # Studio notebooks, saved queries: no job
+    notebooks += [r["notebook"] for r in results  # Studio notebooks, saved queries: their own job is the check
+                  if r.get("notebook") and r["notebook"] not in notebooks]
     files = sorted({t["python_file"] for j in jobs for t in j["tasks"] if "python_file" in t})
     if log:
         log(f"  notebooks: {len(notebooks)} ({len(dp['tables'])} tables to copy, "

@@ -133,3 +133,6 @@ gcp-aidp run <migrated/> [--prefix NAME] [--job gcp_aidp_migration] [--wait SECO
 - Starts `<prefix>_<job>` and polls each task until it ends (default wait 6 hours).
   Stopping the command stops the polling, not the run.
 - Exit 0 when every task succeeded, 1 otherwise. A rerun skips copies that finished.
+- `--job check_notebooks`: runs each migrated saved query, BigQuery Studio notebook and SQL or
+  table function notebook once, in parallel, and reports each failure. Procedures are left
+  out (they change data). Created by `publish` like every job, and never scheduled.

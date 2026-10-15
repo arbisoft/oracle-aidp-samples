@@ -171,6 +171,10 @@ def write_notebooks(dp: dict, out_dir: Path) -> list[str]:
 
 
 MIGRATION_JOB = "gcp_aidp_migration"
+CHECK_JOB = "check_notebooks"
+# Run on demand in BigQuery, so migrated without a job; the check job runs each once. A
+# procedure changes data, so it is left to a person.
+_CHECKED = ("bq_saved_query", "bq_notebook", "bq_table_valued_function", "bq_scalar_function")
 
 
 def sql_notebook(title: str, statements: list[str], plan_id: str, *, show_last: bool = False) -> dict:
@@ -313,4 +317,18 @@ def write_jobs(dp: dict, results: list[dict], out_dir: Path) -> list[dict]:
     migration = {"name": MIGRATION_JOB, "tasks": chain,
                  "description": f"Copy BigQuery project {dp['project']} into catalog {dp['catalog']} "
                                 f"(plan {dp['plan_id']})."}
-    return [migration] + own
+    checks, taken = [], set()
+    for r in results:
+        if r.get("kind") in _CHECKED and r.get("notebook") and r.get("status") in ("ok", "needs_manual_review"):
+            key = base = job_name("check_" + Path(r["notebook"]).stem)
+            n = 1
+            while key.casefold() in taken:
+                n += 1
+                key = f"{base}_{n}"
+            taken.add(key.casefold())
+            checks.append({"taskKey": key, "notebook": r["notebook"], "parameters": []})
+    check = [{"name": CHECK_JOB, "tasks": checks,
+              "description": "Runs each migrated notebook once (saved queries, BigQuery Studio notebooks, SQL and "
+                             "table functions) to prove it works on AIDP; procedures are left out, as they change "
+                             "data. Start it with `gcp-aidp run --job check_notebooks`."}] if checks else []
+    return [migration] + own + check
