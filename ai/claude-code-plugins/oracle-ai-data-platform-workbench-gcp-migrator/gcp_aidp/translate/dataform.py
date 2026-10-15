@@ -151,14 +151,14 @@ def _translate_action(a: dict, ctx: Context, catalog: str) -> dict:
                                                         "is not translated"))
         if not flagged:
             sql = run(body.get("selectQuery", ""))
-            # A Dataform schema need not be a migrated dataset (it is created when the workflow runs).
-            schema = [ddl.create_schema(catalog, target["schema"])] if target["schema"] else []
+            if sql is not None:
+                rec["schema"] = target["schema"]
             if sql is not None and rtype == "TABLE":
-                rec.update(what="table", statements=schema + list(ddl.materialized_view(target, sql)))
+                rec.update(what="table", statements=list(ddl.materialized_view(target, sql)))
                 fs.append(_f("DF01_TABLE", "rewrite", f"{label}: CREATE TABLE IF NOT EXISTS ... AS, then "
                                                        "INSERT OVERWRITE"))
             elif sql is not None:
-                rec.update(what="view", statements=[*schema, ddl.create_view(target, sql)])
+                rec.update(what="view", statements=[ddl.create_view(target, sql)])
                 fs.append(_f("DF02_VIEW", "rewrite", f"{label}: CREATE VIEW IF NOT EXISTS"))
             if sql is not None and (body.get("partitionExpression") or body.get("clusterExpressions")):
                 fs.append(_f("DF13_LAYOUT", "info", f"{label}: partitionExpression and clusterExpressions are "
@@ -211,6 +211,20 @@ def translate_repository(repo: dict, ctx: Context, catalog: str, job: str) -> tu
         r["dependsOn"] = list(dict.fromkeys(keys[d] for d in r["deps"] if d in keys))
         tasks.append({"taskKey": key, "title": f"Dataform {r['what']} {label}", "statements": r["statements"],
                       "assertion": r["assertion"], "dependsOn": r["dependsOn"]})
+    # A Dataform schema need not be a migrated dataset: Dataform creates it when the workflow runs.
+    # One first task creates them all; created in two tasks at once, one fails (seen live on AIDP).
+    schemas = sorted({by_label[label]["schema"] for label in keys if by_label[label].get("schema")})
+    if schemas:
+        key = base = "dataform_schemas"
+        n = 1
+        while key.casefold() in taken:
+            n += 1
+            key = f"{base}_{n}"
+        for t in tasks:
+            if not t["dependsOn"]:
+                t["dependsOn"] = [key]
+        tasks.insert(0, {"taskKey": key, "title": "Dataform schemas", "assertion": False, "dependsOn": [],
+                         "statements": [ddl.create_schema(catalog, s) for s in schemas]})
     if not tasks and not extra:
         extra.append(_f("DF15_NO_TASKS", "info", "no action of this repository runs (declarations, disabled "
                                                   "or none): no job is created"))

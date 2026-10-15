@@ -250,9 +250,9 @@ class Rules(unittest.TestCase):
     def test_DF01_TABLE_creates_if_not_exists_then_overwrites_and_never_drops(self):
         ctx = Context(project=P, relations={("s", "src"): ("cat", "s", "src")})  # the declared source, migrated from BigQuery
         job, findings, ok = run(table("t", "SELECT id FROM `proj-123456.s.src`"), declaration("src"), ctx=ctx)
-        (task,) = job["tasks"]
+        schemas, task = job["tasks"]
+        self.assertEqual(schemas["statements"], ["CREATE SCHEMA IF NOT EXISTS `cat`.`s`"])
         self.assertEqual(task["statements"], [
-            "CREATE SCHEMA IF NOT EXISTS `cat`.`s`",
             "CREATE TABLE IF NOT EXISTS `cat`.`s`.`t` USING DELTA AS\nSELECT id FROM `cat`.`s`.`src`",
             "INSERT OVERWRITE TABLE `cat`.`s`.`t`\nSELECT id FROM `cat`.`s`.`src`"])
         self.assertIn(("DF01_TABLE", "rewrite"), {(f["rule"], f["severity"]) for f in findings})
@@ -263,15 +263,13 @@ class Rules(unittest.TestCase):
 
     def test_DF02_VIEW_reuses_create_view(self):
         job, findings, ok = run(view("v", "SELECT 1 AS x"))
-        # The schema first: a Dataform schema need not be a migrated dataset.
-        self.assertEqual(job["tasks"][0]["statements"], ["CREATE SCHEMA IF NOT EXISTS `cat`.`s`",
-                                                         "CREATE VIEW IF NOT EXISTS `cat`.`s`.`v` AS\nSELECT 1 AS x"])
+        self.assertEqual(job["tasks"][1]["statements"], ["CREATE VIEW IF NOT EXISTS `cat`.`s`.`v` AS\nSELECT 1 AS x"])
         self.assertIn("DF02_VIEW", rules(findings, "rewrite"))
         self.assertTrue(ok)
 
     def test_DF03_ASSERTION_task_runs_the_query_and_fails_on_a_row(self):
         job, findings, ok = run(table("t"), assertion("a", "SELECT * FROM `proj-123456.s.t` WHERE x < 0", deps=["t"]))
-        task = job["tasks"][1]
+        task = job["tasks"][2]  # after the schemas task and the table
         self.assertEqual((task["assertion"], task["dependsOn"]), (True, ["s_t"]))
         self.assertEqual(task["statements"], ["SELECT * FROM `cat`.`s`.`t` WHERE x < 0"])
         self.assertIn("DF03_ASSERTION", rules(findings, "rewrite"))
@@ -284,7 +282,7 @@ class Rules(unittest.TestCase):
         self.assertIn("not translated yet", next(f["detail"] for f in findings if f["rule"] == "DF04_INCREMENTAL"))
         self.assertFalse(ok)
         self.assertNotIn("MERGE", json.dumps(job))
-        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["s_t"])  # the incremental one has no task
+        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["dataform_schemas", "s_t"])  # the incremental one has no task
 
     def test_DF05_RELATION_TYPE_flags_materialized_external_snapshot_and_unknown(self):
         for rtype in ("MATERIALIZED_VIEW", "EXTERNAL", "SNAPSHOT", "SOMETHING_NEW", ""):
@@ -309,8 +307,8 @@ class Rules(unittest.TestCase):
     def test_DF08_DISABLED_has_no_task_and_is_info(self):
         job, findings, ok = run(table("t"), table("off", disabled=True), view("v", deps=["off"]))
         self.assertIn(("DF08_DISABLED", "info"), {(f["rule"], f["severity"]) for f in findings})
-        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["s_t", "s_v"])
-        self.assertEqual(job["tasks"][1]["dependsOn"], [])  # it depends on something that does not run
+        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["dataform_schemas", "s_t", "s_v"])
+        self.assertEqual(job["tasks"][2]["dependsOn"], ["dataform_schemas"])  # its own dependency does not run
         self.assertTrue(ok)
 
     def test_DF09_NOT_TRANSLATED_ACTION_flags_notebooks_data_preparation_and_unknown(self):
@@ -373,14 +371,14 @@ class Rules(unittest.TestCase):
                                 ctx=Context(project=P, relations={("s", "src"): ("cat", "s", "src")}))
         self.assertIn(("G18_ML_AI_GEO", "block"), {(f["rule"], f["severity"]) for f in findings})
         self.assertIn("G03_SAFE_DIVIDE", rules(findings, "caveat"))
-        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["s_t"])  # the blocked view has no task
+        self.assertEqual([t["taskKey"] for t in job["tasks"]], ["dataform_schemas", "s_t"])  # the blocked view has no task
         self.assertFalse(ok)
 
     def test_G01_REFERENCE_resolves_a_view_selecting_from_another_actions_output(self):
         job, findings, ok = run(table("t"), view("v", "SELECT x FROM `proj-123456.s.t`", deps=["t"]))
         self.assertIn("G01_REFERENCE", rules(findings, "rewrite"))
         self.assertNotIn("G01_REFERENCE", rules(findings, "flag"))
-        self.assertIn("FROM `cat`.`s`.`t`", job["tasks"][1]["statements"][1])
+        self.assertIn("FROM `cat`.`s`.`t`", job["tasks"][2]["statements"][0])
         self.assertTrue(ok)
         # a name that no action creates is still flagged, as before
         _, findings, ok = run(view("v", "SELECT x FROM `proj-123456.s.nobody`"))
@@ -400,20 +398,31 @@ class DependsOn(unittest.TestCase):
         job, _, ok = run(table("d", deps=["b", "c"]), table("c", deps=["a"]), table("b", deps=["a"]), table("a"))
         self.assertTrue(ok)
         keys = [t["taskKey"] for t in job["tasks"]]
-        self.assertEqual(keys[0], "s_a")
+        self.assertEqual(keys[:2], ["dataform_schemas", "s_a"])
         self.assertEqual(keys[-1], "s_d")
         by_key = {t["taskKey"]: t["dependsOn"] for t in job["tasks"]}
-        self.assertEqual(by_key, {"s_a": [], "s_b": ["s_a"], "s_c": ["s_a"], "s_d": ["s_b", "s_c"]})
+        self.assertEqual(by_key, {"dataform_schemas": [], "s_a": ["dataform_schemas"], "s_b": ["s_a"], "s_c": ["s_a"],
+                                  "s_d": ["s_b", "s_c"]})
+
+    def test_schemas_are_created_once_before_any_other_task(self):
+        # Two tasks creating one schema at the same time: one fails (seen live on AIDP).
+        job, _, _ = run(view("v1", "SELECT 1 AS x"), table("t"), {"target": tgt("v2", "other"), "relation": {
+            "relationType": "VIEW", "selectQuery": "SELECT 2 AS y"}})
+        first, *rest = job["tasks"]
+        self.assertEqual(first["statements"], ["CREATE SCHEMA IF NOT EXISTS `cat`.`other`",
+                                               "CREATE SCHEMA IF NOT EXISTS `cat`.`s`"])
+        self.assertTrue(all(t["dependsOn"] for t in rest))
+        self.assertFalse(any("SCHEMA" in st for t in rest for st in t["statements"]))
 
     def test_a_task_key_is_a_valid_unique_name(self):
         job, _, _ = run(table("a-b"), table("a_b"), table("9"), {"target": tgt("x", "dataform_assertions"),
                                                                  "assertion": {"selectQuery": "SELECT 1 WHERE FALSE"}})
         keys = [t["taskKey"] for t in job["tasks"]]
-        self.assertEqual(keys, ["s_a_b", "s_a_b_2", "s_9", "dataform_assertions_x"])
+        self.assertEqual(keys, ["dataform_schemas", "s_a_b", "s_a_b_2", "s_9", "dataform_assertions_x"])
 
     def test_the_target_is_the_plan_catalog_with_the_dataform_schema_and_name(self):
         job, _, _ = run(table("t"))
-        self.assertIn("`cat`.`s`.`t`", job["tasks"][0]["statements"][1])
+        self.assertIn("`cat`.`s`.`t`", job["tasks"][1]["statements"][0])
 
 
 # ── planning ──────────────────────────────────────────────────────────────────
@@ -493,7 +502,8 @@ class Migrate(unittest.TestCase):
         self.assertIn("0 4 * * * America/New_York", job["title"])
         self.assertIn("not applied", job["title"])
         self.assertEqual({t["taskKey"]: t["dependsOn"] for t in job["tasks"]}, {
-            "sales_order_totals_by_day": [],
+            "dataform_schemas": [],
+            "sales_order_totals_by_day": ["dataform_schemas"],
             "sales_v_order_totals_nonempty": ["sales_order_totals_by_day"],
             "dataform_assertions_order_totals_by_day_assertions_uniqueKey_0": ["sales_order_totals_by_day"]})
         text = (self.out / r["output_path"]).read_text()
@@ -512,7 +522,7 @@ class Migrate(unittest.TestCase):
 
     def test_the_job_notebooks_and_dependsOn_are_in_the_report(self):
         job = next(j for j in self.report["jobs"] if j["name"] == "dataform_northwind_transformations")
-        self.assertEqual(len(job["tasks"]), 3)
+        self.assertEqual(len(job["tasks"]), 4)  # the schemas task, then one per action
         for t in job["tasks"]:
             self.assertIn(t["notebook"], self.report["notebooks"])
             self.assertTrue((self.out / t["notebook"]).is_file())
@@ -634,7 +644,8 @@ class Publish(unittest.TestCase):
         self.assertFalse([n for n in jobs if "events_incremental" in n])
         tasks = {t["taskKey"]: t for t in jobs["ana_dataform_northwind_transformations"]["tasks"]}
         self.assertEqual(tasks["sales_v_order_totals_nonempty"]["dependsOn"], [{"taskKey": "sales_order_totals_by_day"}])
-        self.assertNotIn("dependsOn", tasks["sales_order_totals_by_day"])
+        self.assertEqual(tasks["sales_order_totals_by_day"]["dependsOn"], [{"taskKey": "dataform_schemas"}])
+        self.assertNotIn("dependsOn", tasks["dataform_schemas"])
         self.assertIn("0 4 * * * America/New_York", jobs["ana_dataform_northwind_transformations"]["description"])
         self.assertTrue(all(t["notebookPath"].startswith("/Workspace/ana/dataform_northwind_transformations__")
                             for t in tasks.values()))
@@ -648,7 +659,8 @@ class Publish(unittest.TestCase):
             jobs = {j["name"]: j["definition"] for j in plan_publish(d, prefix="p", cluster_key="ck")["jobs"]}
         deps = {t["taskKey"]: [x["taskKey"] for x in t.get("dependsOn", [])]
                 for t in jobs["p_dataform_d"]["tasks"]}
-        self.assertEqual(deps, {"s_a": [], "s_b": ["s_a"], "s_c": ["s_a"], "s_d": ["s_b", "s_c"]})
+        self.assertEqual(deps, {"dataform_schemas": [], "s_a": ["dataform_schemas"], "s_b": ["s_a"], "s_c": ["s_a"],
+                                "s_d": ["s_b", "s_c"]})
 
 
 if __name__ == "__main__":

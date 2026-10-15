@@ -56,9 +56,10 @@ rather than as an empty success.
 | `DF14_NOT_SCANNED` | a repository whose actions could not be read | the repository is blocked; no job | block | Reported with the reason rather than as an empty success |
 | `DF15_NO_TASKS` | a repository where nothing runs (empty, only declarations, or all disabled) | no job | info | A job needs at least one task |
 
-Each table and view task starts with `CREATE SCHEMA IF NOT EXISTS` for its target schema: a
-Dataform schema (often `dataform`) is created when the workflow runs, so it need not be a
-migrated dataset (seen live).
+The job's first task, `dataform_schemas`, runs `CREATE SCHEMA IF NOT EXISTS` for every schema
+its tables and views write to, and every other task starts after it. A Dataform schema (often
+`dataform`) is created when the workflow runs, so it need not be a migrated dataset; and two
+tasks creating the same schema at once fail on AIDP, so it is created once (both seen live).
 
 ## Names and order
 
