@@ -127,6 +127,12 @@ class Publish(unittest.TestCase):
             run(self.out, prefix="ana", client=refused, sleep=lambda s: None, log=lambda m: None)
         self.assertEqual(len(refused.started), 1)  # any other error is not retried
 
+    def test_an_escaped_newline_is_not_part_of_the_cause(self):
+        from gcp_aidp.publish import failure_cause
+        # As AIDP returns it, the newline escaped (seen live: "nAnalysisException").
+        self.assertEqual(failure_cause("failed:\\nAnalysisException: Column `MONTH` cannot be resolved"),
+                         "AnalysisException: Column `MONTH` cannot be resolved")
+
     def test_a_long_error_keeps_both_ends(self):
         java = "org.apache.spark.sql.AnalysisException: [SCHEMA_NOT_FOUND] x\n" + "\tat frame\n" * 400 + "last line"
         clipped = clip_trace(java)

@@ -210,7 +210,8 @@ def with_reports_dir(text: str, reports_dir: str) -> str:
 
 def failure_cause(text: str) -> str:
     """The exception that failed a task, past AIDP's and Py4J's wrappers; "" if none is named."""
-    causes = [(name.rsplit(".", 1)[-1], msg.strip()) for name, msg in _EXCEPTION.findall(text or "")
+    text = (text or "").replace("\\n", "\n").replace("\\t", "\t")  # escaped in JSON: `\nAnalysisException`
+    causes = [(name.rsplit(".", 1)[-1], msg.strip()) for name, msg in _EXCEPTION.findall(text)
               if not msg.strip().startswith(_WRAPPERS)]
     return f"{causes[-1][0]}: {causes[-1][1]}" if causes else ""
 
