@@ -8,7 +8,12 @@ import unittest
 from pathlib import Path
 
 from gcp_aidp.gcp_client import READ_ONLY_SCOPE, GcpClient, GcpError
-from gcp_aidp.inventory.manifest import ALL_SOURCES, BROAD_SCOPE_SOURCES, build_manifest
+from gcp_aidp.inventory.manifest import (
+    ALL_SOURCES,
+    BROAD_SCOPE_SOURCES,
+    build_manifest,
+    summarize,
+)
 from gcp_aidp.migrate import migrate
 from gcp_aidp.plan import build_plan
 
@@ -348,6 +353,15 @@ class LiveInventory(unittest.TestCase):
         bq = m["sources"]["bigquery"]
         self.assertEqual(bq["items"]["saved_queries"], [{"name": "Top products", "query": "SELECT 1"}])
         self.assertNotIn("saved_queries", bq["summary"]["not_scanned"])
+
+
+class Summary(unittest.TestCase):
+    def test_sources_only_listed_say_so(self):
+        m = {"sources": {"dataform": {"summary": {"repositories": 1}},
+                         "composer": {"summary": {"environments": 0, "dags": 0, "api_disabled": True}}}}
+        lines = summarize(m).splitlines()
+        self.assertNotIn("listed only", next(x for x in lines if "dataform" in x))
+        self.assertTrue(next(x for x in lines if "composer" in x).endswith("(listed only: not migrated)"))
 
 
 class Retry(unittest.TestCase):

@@ -111,6 +111,10 @@ def write_manifest(manifest: dict, out_path: str | Path) -> Path:
     return write_text_atomic(out_path, json.dumps(manifest, indent=2, default=str))
 
 
+# Listed so the plan shows what is left to move by hand; nothing from them is migrated.
+LISTED_ONLY = ("composer", "dataflow", "vertex")
+
+
 def summarize(manifest: dict) -> str:
     """One-screen summary string for the user."""
     lines = [
@@ -124,7 +128,8 @@ def summarize(manifest: dict) -> str:
             lines.append(f"  {src:10s}  ERROR: {s['error']}")
             continue
         counts = ", ".join(f"{k}={v}" for k, v in s.items() if isinstance(v, int) and not isinstance(v, bool))
-        lines.append(f"  {src:10s}  {counts}" + ("  (API not enabled: none)" if s.get("api_disabled") else ""))
+        lines.append(f"  {src:10s}  {counts}" + ("  (API not enabled: none)" if s.get("api_disabled") else "")
+                     + ("  (listed only: not migrated)" if src in LISTED_ONLY else ""))
         for what, why in (s.get("not_scanned") or {}).items():
             lines.append(f"  {'':10s}  ! {what} not scanned: {why}")
         for w in s.get("warnings") or []:

@@ -66,7 +66,8 @@ def cmd_inventory(args: argparse.Namespace) -> int:
         log = lambda line: print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
         if args.scan_services:
             print("# --scan-services: Dataproc (with its Cloud Scheduler jobs), Composer, Dataform (with BigQuery "
-                  "Studio notebooks), Dataflow and Vertex AI are listed with a cloud-platform token (GET calls only)")
+                  "Studio notebooks), Dataflow and Vertex AI are listed with a cloud-platform token (GET calls only); "
+                  "Composer, Dataflow and Vertex AI are listed only, not migrated")
         manifest = build_manifest(client, sources, regions=regions, saved_queries_dir=args.saved_queries_dir,
                                   notebooks_dir=args.notebooks_dir,
                                   scan_services=args.scan_services, log=log)
